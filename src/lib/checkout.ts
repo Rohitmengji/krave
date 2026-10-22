@@ -1,5 +1,6 @@
 import { BRAND_THEME_PRESETS, COUPON_OFFERS, RESTAURANTS_DATA, SAVED_ADDRESSES } from "@/data/zomatoReconstructedData";
 import { addOrIncrementCartItem, calculateCartQuote, findDishAcrossRestaurants } from "./cartEngine";
+import { newId } from "./ids";
 import type {
   CartLineItem,
   CrystalOrderState,
@@ -275,7 +276,7 @@ export function createDemoOrder(input: unknown): CrystalOrderState {
   const { items, quote, address, restaurant, paymentMethod, scheduledSlot, handling } =
     validateCheckout(input);
   return {
-    orderId: `KRV-${crypto.randomUUID()}`,
+    orderId: `KRV-${newId()}`,
     resId: restaurant.resId,
     restaurantName: restaurant.name,
     restaurantLocality: restaurant.locality,
@@ -376,7 +377,7 @@ export function createValidatedReservation(input: unknown): DiningReservation {
       : "LUXE";
 
   return {
-    bookingId: `TBL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+    bookingId: `TBL-${newId().slice(0, 8).toUpperCase()}`,
     resId: restaurant.resId,
     restaurantName: restaurant.name,
     locality: restaurant.locality,
@@ -477,7 +478,7 @@ export function createValidatedReview(
   const verifiedPurchase = options.verifiedPurchase === true;
 
   return {
-    id: `rev_${crypto.randomUUID().slice(0, 8)}`,
+    id: `rev_${newId().slice(0, 8)}`,
     userName,
     userAvatar: initials,
     userHandle: `@${userName.toLowerCase().replace(/[^a-z0-9]+/g, ".")}`,
@@ -716,7 +717,7 @@ export function createNotification(
   body: string
 ): KraveNotification {
   return {
-    id: `ntf_${crypto.randomUUID().slice(0, 8)}`,
+    id: `ntf_${newId().slice(0, 8)}`,
     kind,
     title: title.trim().slice(0, 90),
     body: body.trim().slice(0, 240),

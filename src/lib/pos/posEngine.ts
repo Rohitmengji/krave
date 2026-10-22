@@ -1,4 +1,5 @@
 import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
+import { newId } from "@/lib/ids";
 import type { DietaryType } from "@/types/krave";
 
 export const POS_STORAGE_KEY = "krave.pos.v1";
@@ -236,7 +237,7 @@ export function openTableSession(input: {
   }
 
   return {
-    sessionId: `POS-${crypto.randomUUID()}`,
+    sessionId: `POS-${newId()}`,
     outletId: outlet.outletId,
     outletName: outlet.name,
     tableId: input.tableId,
@@ -288,7 +289,7 @@ export function addItemToSession(
     lines: [
       ...session.lines,
       {
-        lineId: `L-${crypto.randomUUID()}`,
+        lineId: `L-${newId()}`,
         itemId: item.itemId,
         name: item.name,
         unitPrice: Math.round(item.price),
@@ -775,7 +776,7 @@ export function openShift(input: {
   }
 
   return {
-    shiftId: `SHIFT-${crypto.randomUUID()}`,
+    shiftId: `SHIFT-${newId()}`,
     outletId: outlet.outletId,
     outletName: outlet.name,
     openedBy,

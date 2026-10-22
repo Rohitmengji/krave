@@ -70,17 +70,6 @@ function windowStart(): string {
   return new Date(Date.now() - LOGIN_WINDOW_MINUTES * 60 * 1000).toISOString();
 }
 
-function recordLoginAttempt(attemptKey: string, succeeded: boolean): void {
-  const db = getDb();
-  db.prepare(
-    "INSERT INTO login_attempts (attempt_key, attempted_at, succeeded) VALUES (?, ?, ?)"
-  ).run(attemptKey, new Date().toISOString(), succeeded ? 1 : 0);
-  // A success clears the streak so a legitimate user is not punished for earlier typos.
-  if (succeeded) {
-    db.prepare("DELETE FROM login_attempts WHERE attempt_key = ? AND succeeded = 0").run(attemptKey);
-  }
-}
-
 function assertNotThrottled(attemptKey: string, limit = MAX_LOGIN_ATTEMPTS): void {
   const row = getDb()
     .prepare(
@@ -91,6 +80,47 @@ function assertNotThrottled(attemptKey: string, limit = MAX_LOGIN_ATTEMPTS): voi
     throw new Error(
       `Too many sign-in attempts. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
     );
+  }
+}
+
+/**
+ * Check every limit and count this attempt as a failure in one transaction, *before* the slow
+ * password hash. Checking first and recording after the `await` let a burst of concurrent
+ * requests all pass the check while their hashes were queued: 500 parallel guesses, not 8.
+ * Returns the reserved row ids so a success can be marked afterwards.
+ */
+function reserveLoginAttempt(limits: ReadonlyArray<readonly [key: string, limit: number]>): number[] {
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const [key, limit] of limits) assertNotThrottled(key, limit);
+    const insert = db.prepare(
+      "INSERT INTO login_attempts (attempt_key, attempted_at, succeeded) VALUES (?, ?, 0)"
+    );
+    const now = new Date().toISOString();
+    const ids = limits.map(([key]) => Number(insert.run(key, now).lastInsertRowid));
+    db.exec("COMMIT");
+    return ids;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function settleLoginSuccess(reservedIds: number[], email: string): void {
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const mark = db.prepare("UPDATE login_attempts SET succeeded = 1 WHERE id = ?");
+    for (const id of reservedIds) mark.run(id);
+    // A success clears the account's streak so a legitimate user is not punished for earlier
+    // typos. Client failures are left to age out: an attacker spraying many accounts could
+    // otherwise sign in to their own account to wipe the client counter and keep going.
+    db.prepare("DELETE FROM login_attempts WHERE attempt_key = ? AND succeeded = 0").run(`email:${email}`);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 }
 
@@ -131,8 +161,10 @@ export async function verifyCredentials(
   const email = normalizeEmail(body.email);
   const password = typeof body.password === "string" ? body.password : "";
 
-  assertNotThrottled(`email:${email}`);
-  assertNotThrottled(`client:${clientKey}`, MAX_CLIENT_LOGIN_ATTEMPTS);
+  const reserved = reserveLoginAttempt([
+    [`email:${email}`, MAX_LOGIN_ATTEMPTS],
+    [`client:${clientKey}`, MAX_CLIENT_LOGIN_ATTEMPTS],
+  ]);
 
   const row = getDb()
     .prepare("SELECT * FROM users WHERE email = ?")
@@ -148,13 +180,11 @@ export async function verifyCredentials(
   const matches =
     candidate.length === expected.length && timingSafeEqual(candidate, expected);
   if (!row || !matches) {
-    recordLoginAttempt(`email:${email}`, false);
-    recordLoginAttempt(`client:${clientKey}`, false);
+    // The reserved rows already count as failures.
     throw new Error("Email or password is incorrect.");
   }
 
-  recordLoginAttempt(`email:${email}`, true);
-  recordLoginAttempt(`client:${clientKey}`, true);
+  settleLoginSuccess(reserved, email);
   return rowToUser(row);
 }
 
@@ -239,30 +269,40 @@ export async function resetPassword(
   const password = assertPassword(newPassword);
 
   const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM password_resets WHERE token_hash = ?")
-    .get(hashToken(token)) as Record<string, unknown> | undefined;
-  if (!row || row.used_at !== null || String(row.expires_at) <= new Date().toISOString()) {
+  const tokenHash = hashToken(token);
+  // Cheap pre-check so an invalid link is refused without paying for a hash. It is not the
+  // authority: the claim inside the transaction below is.
+  const pending = db
+    .prepare("SELECT 1 FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?")
+    .get(tokenHash, new Date().toISOString());
+  if (!pending) {
     throw new Error("That reset link has expired or was already used.");
   }
 
   const salt = randomBytes(16).toString("hex");
   const hash = await hashPassword(password, salt);
-  const userId = String(row.user_id);
-  const owner = db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as
-    | Record<string, unknown>
-    | undefined;
 
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
+    // Claimed atomically after the slow hash: a concurrent reset with the same token, or a
+    // newer token issued meanwhile (which deletes this one), must make this attempt fail.
+    const now = new Date().toISOString();
+    const claimed = db
+      .prepare(
+        "UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING user_id"
+      )
+      .get(now, tokenHash, now) as Record<string, unknown> | undefined;
+    if (!claimed) {
+      throw new Error("That reset link has expired or was already used.");
+    }
+    const userId = String(claimed.user_id);
+    const owner = db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as
+      | Record<string, unknown>
+      | undefined;
     db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?").run(
       hash,
       salt,
       userId
-    );
-    db.prepare("UPDATE password_resets SET used_at = ? WHERE token_hash = ?").run(
-      new Date().toISOString(),
-      String(row.token_hash)
     );
     // A reset is also how a user recovers a stolen session, so every device is signed out.
     db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);

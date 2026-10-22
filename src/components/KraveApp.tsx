@@ -23,6 +23,13 @@ import {
   type KitchenHandling,
 } from "@/lib/checkout";
 import { POS_SEAT_HANDOFF_KEY } from "@/lib/pos/posEngine";
+import {
+  checkoutFingerprint,
+  readCheckoutIntent,
+  resolveCheckoutIntent,
+  writeCheckoutIntent,
+  type CheckoutIntent,
+} from "@/lib/checkoutIntent";
 import type { DineInBill } from "@/lib/server/dineInStore";
 import type { Dispute } from "@/lib/server/disputeStore";
 import {
@@ -167,6 +174,8 @@ export function KraveApp({
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const checkoutLock = useRef(false);
+  // In-memory copy of the pending checkout intent; sessionStorage covers a reload.
+  const checkoutIntent = useRef<CheckoutIntent | null>(null);
 
   useEffect(() => {
     try {
@@ -516,27 +525,36 @@ export function KraveApp({
     checkoutLock.current = true;
     setCheckoutPending(true);
     setCheckoutError(null);
+    const request = {
+      items: cartItems.map((line) => ({ itemId: line.item.id, quantity: line.quantity,
+        optionIds: line.selectedOptions.map((option) => option.id), cookingInstruction: line.cookingInstruction })),
+      addressId: currentAddress.id, paymentMethod, couponCode: cartQuote.couponCode,
+      isGoldMember, riderTip, scheduledSlot, handling,
+      priceLock: priceLock?.token ?? null,
+    };
+    // Same order, same key: a retry after a lost response replays the original order.
+    const intent = resolveCheckoutIntent(
+      checkoutFingerprint(request),
+      checkoutIntent.current ?? readCheckoutIntent()
+    );
+    checkoutIntent.current = intent;
+    writeCheckoutIntent(intent);
     try {
       const response = await fetch("/api/webroutes/order/makeOrder", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // Lets a retried submit return the original order instead of creating a second one.
-          "Idempotency-Key": crypto.randomUUID(),
+          "Idempotency-Key": intent.key,
         },
         signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({
-          items: cartItems.map((line) => ({ itemId: line.item.id, quantity: line.quantity,
-            optionIds: line.selectedOptions.map((option) => option.id), cookingInstruction: line.cookingInstruction })),
-          addressId: currentAddress.id, paymentMethod, couponCode: cartQuote.couponCode,
-          isGoldMember, riderTip, scheduledSlot, handling,
-          priceLock: priceLock?.token ?? null,
-        }),
+        body: JSON.stringify(request),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result?.message === "string" ? result.message : "Checkout failed. Please try again.");
       const order = restoreOrderHistory(JSON.stringify([result.order]))[0];
       if (!order) throw new Error("Checkout returned an invalid confirmation. Your cart was kept.");
+      checkoutIntent.current = null;
+      writeCheckoutIntent(null);
       setOrderHistory((previous) => [order, ...previous].slice(0, 50));
       setActiveCrystalOrder(order);
       setCartItems([]);
@@ -551,7 +569,14 @@ export function KraveApp({
       );
       showToast("Demo order confirmed. No payment was collected.");
     } catch (error) {
-      setCheckoutError(error instanceof Error ? error.message : "Checkout unavailable. Please try again.");
+      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+      setCheckoutError(
+        timedOut
+          ? account
+            ? "We couldn't confirm your order in time. Placing it again is safe; it won't be duplicated."
+            : "We couldn't confirm your order in time. It may still have gone through, so wait a moment before ordering again."
+          : error instanceof Error ? error.message : "Checkout unavailable. Please try again."
+      );
     } finally {
       checkoutLock.current = false;
       setCheckoutPending(false);

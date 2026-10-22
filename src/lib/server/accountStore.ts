@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { withdrawUnstartedTicket } from "./kitchenStore";
 import {
   createDemoOrder,
   createNotification,
@@ -123,16 +124,24 @@ export function advanceOrderStage(userId: string, orderId: string, stage: string
 
 export function deleteOrder(userId: string, orderId: string): void {
   const db = getDb();
-  const row = db
-    .prepare("SELECT stage FROM orders WHERE id = ? AND user_id = ?")
-    .get(orderId, userId) as Record<string, unknown> | undefined;
-  if (!row) {
-    throw new Error("That order is no longer in your history.");
+  // The order and its kitchen ticket go together, or neither does.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db
+      .prepare("SELECT stage FROM orders WHERE id = ? AND user_id = ?")
+      .get(orderId, userId) as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new Error("That order is no longer in your history.");
+    }
+    if (String(row.stage) !== "ORDER_CONFIRMED" || !withdrawUnstartedTicket(orderId)) {
+      throw new Error("This order has already reached the kitchen and cannot be cancelled.");
+    }
+    db.prepare("DELETE FROM orders WHERE id = ? AND user_id = ?").run(orderId, userId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
-  if (String(row.stage) !== "ORDER_CONFIRMED") {
-    throw new Error("This order has already reached the kitchen and cannot be cancelled.");
-  }
-  db.prepare("DELETE FROM orders WHERE id = ? AND user_id = ?").run(orderId, userId);
 }
 
 export function saveReservation(userId: string, reservation: DiningReservation): void {

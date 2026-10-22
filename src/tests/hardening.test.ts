@@ -10,6 +10,13 @@ import {
   verifyCredentials,
 } from "@/lib/server/auth";
 import { newId } from "@/lib/ids";
+import { createDemoOrder, DEMO_PAYMENT_METHODS } from "@/lib/checkout";
+import { deleteOrder, listOrders, saveOrder } from "@/lib/server/accountStore";
+import {
+  advanceDeliveryTicket,
+  createDeliveryTicket,
+  listDeliveryTickets,
+} from "@/lib/server/kitchenStore";
 import {
   addItemToSession,
   getPosMenu,
@@ -213,5 +220,52 @@ describe("auth under concurrency", () => {
     await expect(verifyCredentials(CREDENTIALS, "10.2.2.2")).resolves.toMatchObject({
       email: CREDENTIALS.email,
     });
+  });
+});
+
+describe("cancelling an order reaches the kitchen", () => {
+  const CHECKOUT = {
+    items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"] }],
+    addressId: "addr_cp_514",
+    paymentMethod: DEMO_PAYMENT_METHODS[0],
+    couponCode: null,
+    isGoldMember: false,
+    riderTip: 0,
+  };
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    useTestDb(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  async function placeOrder() {
+    const user = await registerUser(CREDENTIALS);
+    const order = createDemoOrder(CHECKOUT);
+    createDeliveryTicket(order);
+    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    return { user, order };
+  }
+
+  it("takes a ticket nobody accepted off the counter, so it is not cooked", async () => {
+    const { user, order } = await placeOrder();
+    deleteOrder(user.id, order.orderId);
+
+    expect(listOrders(user.id)).toHaveLength(0);
+    expect(listDeliveryTickets(order.resId)).toHaveLength(0);
+    expect(() => advanceDeliveryTicket(order.orderId, "ACCEPTED")).toThrow(/not on this counter/i);
+  });
+
+  it("refuses once the kitchen has accepted the ticket and leaves both records intact", async () => {
+    const { user, order } = await placeOrder();
+    advanceDeliveryTicket(order.orderId, "ACCEPTED");
+
+    expect(() => deleteOrder(user.id, order.orderId)).toThrow(/already reached the kitchen/i);
+    expect(listOrders(user.id)).toHaveLength(1);
+    expect(listDeliveryTickets(order.resId)[0]).toMatchObject({ status: "ACCEPTED" });
   });
 });

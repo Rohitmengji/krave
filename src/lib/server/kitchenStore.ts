@@ -140,6 +140,22 @@ export function advanceDeliveryTicket(orderId: unknown, next: unknown): Delivery
   );
 }
 
+/**
+ * Takes a cancelled order off the counter if nobody has accepted it yet. Returns false once
+ * the kitchen has accepted it, because cooking may already be under way. An order with no
+ * ticket has nothing to withdraw.
+ */
+export function withdrawUnstartedTicket(orderId: string): boolean {
+  const db = getDb();
+  const row = db.prepare("SELECT status FROM delivery_tickets WHERE order_id = ?").get(orderId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return true;
+  if (String(row.status) !== "NEW") return false;
+  db.prepare("DELETE FROM delivery_tickets WHERE order_id = ? AND status = 'NEW'").run(orderId);
+  return true;
+}
+
 export interface PrepTimeStats {
   sampleSize: number;
   medianMinutes: number | null;

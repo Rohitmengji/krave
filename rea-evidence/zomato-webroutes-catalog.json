@@ -1,0 +1,314 @@
+{
+  "source_bundle": "https://zwstatic.zomato.com/main-e6c9fe541e8ed0c4264b.js",
+  "source_sha256": "adcfc022f117d847e55e8b15ff54bf42bebae2aa4102f0ca90b67921960aa940",
+  "zpaykit_bundle": "https://www.zomato.com/zpaykit/js/v4/hook.js",
+  "zpaykit_sha256": "7936cbcc97d6bc5cb80089f6915cdf38c342b8b3a51a15093d7f153f70bbfc58",
+  "android_package": "com.application.zomato",
+  "android_cert_sha256": "37:72:2D:88:CC:9F:04:F8:3F:F7:BE:CA:29:18:58:E5:B0:CE:A8:D3:92:50:D1:29:32:B3:89:FF:A6:31:38:45",
+  "webmcp_tools": [
+    {
+      "name": "zomato_search_restaurants",
+      "params": [
+        "context",
+        "limit"
+      ],
+      "category": "Discovery"
+    },
+    {
+      "name": "zomato_get_restaurant_menu",
+      "params": [
+        "restaurantId",
+        "limit"
+      ],
+      "category": "Menu"
+    },
+    {
+      "name": "zomato_get_dish_options",
+      "params": [
+        "itemId",
+        "restaurantId"
+      ],
+      "category": "Menu"
+    },
+    {
+      "name": "zomato_add_item_to_cart",
+      "params": [
+        "itemId",
+        "quantity",
+        "addOnIds",
+        "restaurantId"
+      ],
+      "category": "Cart"
+    },
+    {
+      "name": "zomato_set_item_quantity",
+      "params": [
+        "lineItemId",
+        "quantity",
+        "restaurantId"
+      ],
+      "category": "Cart"
+    },
+    {
+      "name": "zomato_remove_cart_line",
+      "params": [
+        "lineItemId",
+        "restaurantId"
+      ],
+      "category": "Cart"
+    },
+    {
+      "name": "zomato_get_cart",
+      "params": [],
+      "category": "Cart"
+    },
+    {
+      "name": "zomato_clear_cart",
+      "params": [],
+      "category": "Cart"
+    },
+    {
+      "name": "zomato_quote_cart",
+      "params": [
+        "restaurantId"
+      ],
+      "category": "Checkout"
+    },
+    {
+      "name": "zomato_prepare_checkout",
+      "params": [
+        "quoteId",
+        "restaurantId"
+      ],
+      "category": "Checkout"
+    },
+    {
+      "name": "zomato_get_session",
+      "params": [],
+      "category": "Auth"
+    },
+    {
+      "name": "zomato_request_login_otp",
+      "params": [
+        "phone"
+      ],
+      "category": "Auth"
+    },
+    {
+      "name": "zomato_verify_login_otp",
+      "params": [
+        "otp"
+      ],
+      "category": "Auth"
+    },
+    {
+      "name": "zomato_open_login_dialog",
+      "params": [],
+      "category": "Auth"
+    },
+    {
+      "name": "zomato_list_addresses",
+      "params": [],
+      "category": "Location"
+    },
+    {
+      "name": "zomato_select_address",
+      "params": [
+        "addressId"
+      ],
+      "category": "Location"
+    },
+    {
+      "name": "zomato_add_address",
+      "params": [
+        "place",
+        "template",
+        "fields",
+        "tag"
+      ],
+      "category": "Location"
+    }
+  ],
+  "zpaykit_topics": [
+    "widget_on_load",
+    "widget_status",
+    "change_billing_details",
+    "pay_button_clicked"
+  ],
+  "redux_root_slices": [
+    "pages",
+    "entities",
+    "user",
+    "uiLogic",
+    "location",
+    "apiState",
+    "cartV2Config",
+    "pageConfig",
+    "networkState",
+    "deviceSpecificInfo",
+    "footer",
+    "langKeys"
+  ],
+  "redux_entity_tables": [
+    "RESTAURANTS",
+    "COLLECTIONS",
+    "ORDER",
+    "ADDRESSES",
+    "USER",
+    "REVIEWS",
+    "IMAGES",
+    "VIDEOS",
+    "RATING",
+    "EVENTS",
+    "AD_BANNERS",
+    "CDNG_ORDER",
+    "DOTE_ORDER",
+    "ZLIVE_EVENTS"
+  ],
+  "webroutes_count": 143,
+  "webroutes": [
+    "/webroutes/ads",
+    "/webroutes/auth/csrf",
+    "/webroutes/awards/winners/",
+    "/webroutes/blog/posts",
+    "/webroutes/bloggers/submitForm",
+    "/webroutes/book/cancelBooking",
+    "/webroutes/book/checkPhoneVerification",
+    "/webroutes/book/getTimeSlots",
+    "/webroutes/book/makeBooking",
+    "/webroutes/book/modifyBooking",
+    "/webroutes/book/verifyPhone",
+    "/webroutes/business/report-fraud",
+    "/webroutes/business/submit-contact",
+    "/webroutes/business/submit-contact-celebrations",
+    "/webroutes/careers/filter",
+    "/webroutes/cdng/callServer",
+    "/webroutes/cdng/fetchQRData",
+    "/webroutes/cdng/getCallServerState",
+    "/webroutes/cdng/getDiningCart",
+    "/webroutes/cdng/getTransactionStatus",
+    "/webroutes/cdng/invalidateUserVisit",
+    "/webroutes/cdng/makePayment",
+    "/webroutes/cdng/reviewOrder",
+    "/webroutes/cdng/sendOrder",
+    "/webroutes/collection/saveCollection",
+    "/webroutes/contact/submitForm",
+    "/webroutes/contactlessDining/submitLeads",
+    "/webroutes/contest/vote",
+    "/webroutes/cupcake/register",
+    "/webroutes/dote/address",
+    "/webroutes/dote/cart",
+    "/webroutes/dote/home",
+    "/webroutes/dote/orderDetails",
+    "/webroutes/dote/placeOrder",
+    "/webroutes/feeding/getTotalAmount",
+    "/webroutes/getPage",
+    "/webroutes/gift/getCrystalData",
+    "/webroutes/home/o2quickLinks",
+    "/webroutes/home/quickLinks",
+    "/webroutes/hygiene",
+    "/webroutes/investorRelations/newsletterEmails/insert",
+    "/webroutes/kitchen/city",
+    "/webroutes/kitchen/leads",
+    "/webroutes/location/get",
+    "/webroutes/location/locationGeoData",
+    "/webroutes/location/search",
+    "/webroutes/loyalty/submit-contact",
+    "/webroutes/loyaltyqrscan/getResList",
+    "/webroutes/loyaltyqrscan/mapQrToRes",
+    "/webroutes/loyaltyqrscan/unmapQR",
+    "/webroutes/loyaltyqrscan/validateQR",
+    "/webroutes/menu/viewMenu",
+    "/webroutes/order/address",
+    "/webroutes/order/autoVerifyPhone",
+    "/webroutes/order/cart",
+    "/webroutes/order/deleteAddress",
+    "/webroutes/order/details",
+    "/webroutes/order/makeOrder",
+    "/webroutes/order/markFavorite",
+    "/webroutes/order/receipt",
+    "/webroutes/order/resOffer",
+    "/webroutes/order/valid",
+    "/webroutes/orderShare/getCrystalData",
+    "/webroutes/partnerships/complete-payment",
+    "/webroutes/partnerships/loginV2",
+    "/webroutes/partnerships/validateUser",
+    "/webroutes/partnerships/verify-payment-status",
+    "/webroutes/payment/blockedPayment",
+    "/webroutes/payment/verifyPayment",
+    "/webroutes/payment/zpaykitCode",
+    "/webroutes/photos/comment/delete",
+    "/webroutes/photos/comment/post",
+    "/webroutes/photos/like",
+    "/webroutes/photos/loadMore",
+    "/webroutes/photos/submitPhoto",
+    "/webroutes/photos/upload",
+    "/webroutes/photos/viewGallery",
+    "/webroutes/placeorder",
+    "/webroutes/postCdng/getOrderDetails",
+    "/webroutes/postOrder/crystalPromoCard",
+    "/webroutes/postOrder/deliveryFeedback",
+    "/webroutes/postOrder/deliveryRating",
+    "/webroutes/postOrder/dishRating",
+    "/webroutes/postOrder/getRiderStatus",
+    "/webroutes/postOrder/markOrderDelivered",
+    "/webroutes/postOrder/orderRating",
+    "/webroutes/postOrder/pollCrystalData",
+    "/webroutes/postOrder/requestCallback",
+    "/webroutes/postOrder/riderVaccineCertificate",
+    "/webroutes/promo/info",
+    "/webroutes/restaurant/bookmark",
+    "/webroutes/restaurant/getHygieneDetails",
+    "/webroutes/restaurant/getHyperpureDetails",
+    "/webroutes/restaurant/info",
+    "/webroutes/restaurant/rate",
+    "/webroutes/restaurant/share",
+    "/webroutes/restaurant/userModalInfo",
+    "/webroutes/reviews/comment/delete",
+    "/webroutes/reviews/comment/loadMore",
+    "/webroutes/reviews/comment/loadMoreManagement",
+    "/webroutes/reviews/comment/post",
+    "/webroutes/reviews/delete",
+    "/webroutes/reviews/follow",
+    "/webroutes/reviews/likeReview",
+    "/webroutes/reviews/loadMore",
+    "/webroutes/reviews/post",
+    "/webroutes/reviews/sortReviews",
+    "/webroutes/reviews/suggestTags",
+    "/webroutes/reviews/switchTab",
+    "/webroutes/sauce/subscribe",
+    "/webroutes/sauce/tag/",
+    "/webroutes/search/applyFilter",
+    "/webroutes/search/autoSuggest",
+    "/webroutes/search/home",
+    "/webroutes/share/link",
+    "/webroutes/sneakpeek",
+    "/webroutes/user/address",
+    "/webroutes/user/auth/verification/init",
+    "/webroutes/user/blogs",
+    "/webroutes/user/booking",
+    "/webroutes/user/booking/info",
+    "/webroutes/user/bookmarks",
+    "/webroutes/user/cdngOrders",
+    "/webroutes/user/coverPhoto",
+    "/webroutes/user/deleteAccount",
+    "/webroutes/user/deleteProfilePic",
+    "/webroutes/user/editProfile",
+    "/webroutes/user/network",
+    "/webroutes/user/notifications",
+    "/webroutes/user/nutritionOrders",
+    "/webroutes/user/orders",
+    "/webroutes/user/photos",
+    "/webroutes/user/profilePic",
+    "/webroutes/user/reviews",
+    "/webroutes/whatsappAgentDashboard/getO2Url",
+    "/webroutes/zlive/bookTickets",
+    "/webroutes/zlive/buildCart",
+    "/webroutes/zlive/paymentResponse",
+    "/webroutes/zomaland/cancel-ticket",
+    "/webroutes/zomaland/get-order",
+    "/webroutes/zomaland/submit-contact",
+    "/webroutes/zomaland/ticket-history",
+    "/webroutes/zoomBackgrounds/downloadImage"
+  ]
+}

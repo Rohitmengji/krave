@@ -1,0 +1,29 @@
+import type { Metadata, Viewport } from "next";
+import "./globals.css";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+
+export const metadata: Metadata = {
+  title: "KRAVE — Artisanal Delivery, Curated Dining & Midnight Lounge",
+  description:
+    "Independent food delivery and dining prototype informed by public website observations. Demo checkout and tracking.",
+  appleWebApp: { capable: true, title: "KRAVE", statusBarStyle: "black-translucent" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#10B981",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <ServiceWorkerRegistrar />
+      </body>
+    </html>
+  );
+}

@@ -1,0 +1,13 @@
+node_modules/
+.next/
+tsconfig.tsbuildinfo
+
+# Local SQLite database. Contains demo accounts and password hashes; never commit it.
+.data/
+
+# Throwaway database and artifacts from the browser suite.
+.data-e2e/
+.data-sec/
+playwright-report/
+test-results/
+blob-report/

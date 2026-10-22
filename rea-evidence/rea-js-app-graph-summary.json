@@ -1,0 +1,65 @@
+{
+  "evidence_id": "ev_8fd03cdb539a895b30faece20b25ac50b2ca24060d2e533716da8c37740753af",
+  "subject": {
+    "name": "rea-zomato-app-chunks",
+    "digest": {
+      "sha256": "2e79ce0b4ebfe6909535e2a2c8030b0a335f8104c5fb063886491896520325c9"
+    },
+    "local_path": "/private/tmp/rea-zomato-app-chunks",
+    "format": "directory",
+    "architecture": null
+  },
+  "provider": {
+    "id": "rea-javascript-application",
+    "name": "REA JavaScript application analyzer",
+    "version": "1"
+  },
+  "predicate_type": "rea.javascript-application-analysis",
+  "operation": "analyze_javascript_application",
+  "root_artifact_sha256": "2e79ce0b4ebfe6909535e2a2c8030b0a335f8104c5fb063886491896520325c9",
+  "inventory_manifest_id": "agm_df7f2f0e01465c2da82ebde37f67b35dce46fd9b9e93d88c25231f154d5deb5b",
+  "inventory_graph_sha256": "682959cf99b083dcd138d2d4003e4fa42688786464e345dd250ce2753fb99618",
+  "summary": {
+    "browser_windows": 0,
+    "explicit_web_preferences": 0,
+    "preload_entrypoints": 0,
+    "context_bridge_apis": 0,
+    "exposed_api_members": 0,
+    "ipc": {
+      "operations": 0,
+      "literal_channels": 0,
+      "dynamic_channel_operations": 0,
+      "renderer_transmissions": 0,
+      "renderer_listeners": 0,
+      "main_handlers": 0,
+      "paired_renderer_transmissions": 0,
+      "ambiguous_renderer_transmissions": 0,
+      "unpaired_literal_renderer_transmissions": 0
+    },
+    "sender_validation_observations": 0,
+    "utility_processes": 0,
+    "resolved_utility_entrypoints": 0,
+    "native_addon_bindings": 0,
+    "resolved_native_addon_bindings": 0
+  },
+  "statistics": {
+    "relevant_files": 14,
+    "nested_asar_containers": 0,
+    "text_bytes_read": 624818,
+    "invalid_utf8_files": 0,
+    "parsed_javascript_files": 14,
+    "skipped_javascript_files": 0,
+    "visited_ast_nodes": 155680,
+    "findings": 16,
+    "modules": 0,
+    "parse_failures": 0
+  },
+  "limitations": [
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+    "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+  ]
+}

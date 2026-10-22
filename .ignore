@@ -1,0 +1,13 @@
+# Search-tool ignore list (ripgrep, VS Code search, AI agents).
+# This folder is not a git repo, so .gitignore is not applied by search tools;
+# without this file a search scans ~18k vendored/build files instead of ~70 source files.
+# To search an ignored folder deliberately, pass its path directly (or use rg --no-ignore).
+node_modules/
+.next/
+.data/
+.data-e2e/
+.data-sec/
+playwright-report/
+test-results/
+blob-report/
+tsconfig.tsbuildinfo

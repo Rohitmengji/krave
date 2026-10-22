@@ -1,0 +1,1332 @@
+{
+  "evidence_id": "ev_23fda2f25c8f19e70598604c371e9b2f9350930fa03dc61a7de31cb88991659b",
+  "provider": {
+    "id": "rea-cdp-browser",
+    "name": "REA Chrome DevTools Protocol observation provider",
+    "version": "2"
+  },
+  "predicate_type": "rea.web-page-inspection",
+  "operation": "inspect_web_page",
+  "browser": {
+    "product": "Chrome/155.0.8059.85",
+    "protocol_version": "1.3",
+    "revision": "537.36 (@0e66b94549a8bd85f03fbdf189b752d6e7b63c32)",
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+    "js_version": "15.5.35.25"
+  },
+  "target": {
+    "target_id": "25A544A18CF3573A1761D897734E34EB",
+    "type": "page",
+    "title": "Checkout Best Food Places To Eat In Delhi NCR | Zomato",
+    "url": "https://www.zomato.com/ncr",
+    "origin": "https://www.zomato.com",
+    "attached": null
+  },
+  "dom_total_nodes": 4926,
+  "accessibility_total_nodes": 4284,
+  "storage": {
+    "origin": "https://www.zomato.com",
+    "usage_bytes": 0,
+    "quota_bytes": 596797550592,
+    "local_storage_keys": [
+      "lastExternalReferrer",
+      "_gcl_ls",
+      "lastExternalReferrerTime"
+    ],
+    "session_storage_keys": [],
+    "indexed_db_names": [],
+    "cache_names": [],
+    "content_fingerprints": [],
+    "fingerprint_algorithm": "sha256",
+    "fingerprints_complete": false,
+    "values_redacted": true
+  },
+  "exported_manifest": {
+    "capture_path": "/tmp/rea-zomato-full-capture.json",
+    "capture_sha256": "6d911a3329d42813f13d916b2864ed4ca37bdea0f8aac06fd2b95ccc8301d67f",
+    "capture_kind": "page-inspection",
+    "source_evidence_id": "ev_a0620a2ffb47d60a00ffaf2e3b5599403d1d25c1ed0a3ece16ac8b68cd2562a6",
+    "capture_completeness": {
+      "status": "policy_filtered",
+      "conditions": [
+        "attach_limited",
+        "policy_filtered"
+      ],
+      "policy_filtered_sections": [
+        "console_text",
+        "metadata",
+        "resources",
+        "scripts",
+        "websocket_shapes"
+      ],
+      "attach_limited_sections": [
+        "console_events",
+        "metadata",
+        "network_requests",
+        "websocket_connections",
+        "websocket_frames"
+      ],
+      "truncated_sections": [],
+      "unavailable_sections": [],
+      "excluded": [
+        {
+          "section": "console_text",
+          "reason": "not_approved",
+          "count": null
+        },
+        {
+          "section": "metadata",
+          "reason": "disallowed_origin",
+          "count": 48
+        },
+        {
+          "section": "metadata",
+          "reason": "unsupported_url",
+          "count": 9
+        },
+        {
+          "section": "resources",
+          "reason": "disallowed_origin",
+          "count": 14
+        },
+        {
+          "section": "resources",
+          "reason": "unsupported_url",
+          "count": 9
+        },
+        {
+          "section": "scripts",
+          "reason": "disallowed_origin",
+          "count": 17
+        },
+        {
+          "section": "scripts",
+          "reason": "unattributed_origin",
+          "count": 4
+        },
+        {
+          "section": "websocket_shapes",
+          "reason": "not_approved",
+          "count": null
+        }
+      ],
+      "dropped_events": {
+        "scripts": 0,
+        "network_requests": 0,
+        "console_events": 0,
+        "websocket_connections": 0,
+        "websocket_frames": 0,
+        "webmcp_tools": 0,
+        "timeline_events": 0,
+        "total": 0
+      }
+    },
+    "output_directory": "/private/tmp/rea-zomato-full-scripts",
+    "analysis_input": {
+      "input_path": "/private/tmp/rea-zomato-full-scripts/files",
+      "format": "directory"
+    },
+    "scripts": [
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_00906dfc25b9d51a4d0378258d334bfcf799bb2a991e49e6450887f2715c481f",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/zwebmolecules-dist-Login-41c4358de88f41df5ee5.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/zwebmolecules-dist-Login-41c4358de88f41df5ee5.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "1c1a210e48c13a7d69948017e689a9920af1c45424c8068e156b9adfc6802edb",
+          "bytes": 37916,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_0241e0ffb3c0abe2eced95ae84ff27ed7411d2897309e575eea021dbfd20d798",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/4304-486941507c54aafdef6d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/4304-486941507c54aafdef6d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "a19a905b5d9f360b1d15e5b6db3542465026bf11b326d1425fbd8ba9f2e3cc0a",
+          "bytes": 13707,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_092a837f1343c608b5259a41616c218c546d87d7980deffbb343fa18af59da78",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/babel-a2f319aca208859e4fea.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/babel-a2f319aca208859e4fea.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "3c3a8cd19e610e6e45da82930eebc69ca53ec79a27623d8dd67b192536dea53a",
+          "bytes": 19337,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_0eafe29514f1fbff845d17b5e4a545fe292c00844d6c7ed51a9754e8cba037dc",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/5197-ead4be94f19d6224ad86.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/5197-ead4be94f19d6224ad86.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "5bde154a099f77ec762198678411fb09b7d4e18b3c37dfb682431ee570267fbe",
+          "bytes": 21179,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_14853e0bf4349069c73e72b6c09aefd2b1ba0bbb848a2189faf9abb73ae88650",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/PageBlocker-d24ae4e693f43bba6cba.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/PageBlocker-d24ae4e693f43bba6cba.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "e45c3fc7d26b74c3248ccd042317e110027a94b4bd5473b7e21ceae52b968479",
+          "bytes": 4725,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_1d24a8aa33fc3f43706cfd77f7710e1a1d8d773bdc07db5737be337fb1828680",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/styled-components-6334ba19011d513ce06c.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/styled-components-6334ba19011d513ce06c.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "6d3b58599ccd3a89ee905c9e3038106966f6efa5293066118857a452088e045f",
+          "bytes": 24181,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_1de036286620fb5740b5cc7bf5650525f81a07aea53f73329f3fdf233c7debaa",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/recompose-4afbbfffbf9356f5b7c8.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/recompose-4afbbfffbf9356f5b7c8.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "0b00a764ad7501cff78823acebeba6db7c1f51ad6486e338b982626466a39fce",
+          "bytes": 12501,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_20f1ccdbf2a6b1edfdd91fbc6f3789409a16efec61ce862bc890e912257c1f6b",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://www.zomato.com/bangalore/restaurants",
+        "content": {
+          "state": "exported",
+          "relative_path": "isolated/source-8-0b0c3aba7b0715c40f22a6d1c3e7133c48f28ef8e4c9b1a6571e2def2cb9ab28.js",
+          "layout": "isolated",
+          "layout_reason": "URL path is not an ordinary portable JavaScript module path.",
+          "sha256": "7574551525ed499afdcdf5549f8e796dd947df0110d3877e414d2b71a05d250c",
+          "bytes": 442,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_211206cb17940aca74146c651dae90c4c5310e2f1aaa3ce56449a02db7fa8a59",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://www.zomato.com/zpaykit/js/v4/hook.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/2c857c5ae0de6ece1663f06b5b49820e77eedb12aa9ccea2d5e55345a891db73/zpaykit/js/v4/hook.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "7936cbcc97d6bc5cb80089f6915cdf38c342b8b3a51a15093d7f153f70bbfc58",
+          "bytes": 4176,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_266560b4ba7d911f5227e6d8eff645f383cca78b4bb518f039ad9b161bca3e79",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/StructuredData-8c099db1dcbd9195cf3f.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/StructuredData-8c099db1dcbd9195cf3f.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "77ade6fae66758fce4944cf0d3d622cfa495f5bb6a8286ec602075ee56d5f914",
+          "bytes": 11774,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_2bb5f7b5fea735e4d2d74f4e1019d76069fe6452d161ffa34957cb5bc9cff637",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/2051-80568c8a79e7ddb1e06d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/2051-80568c8a79e7ddb1e06d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "52a62baf68549dd860cf1eb246b7d8c4c4a39904b6124ff07116f0cb2acca662",
+          "bytes": 33546,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_308ac4e51620906521dd42ad30a1b2a5cbc3193989c4af51e6bc71b29e99d7d8",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/6434-893dc065221850effa4d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/6434-893dc065221850effa4d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "766a8f80316ba820b13d731c0bb1f69e3624fd10affbf7dbcdaf3c4d6219a0fa",
+          "bytes": 27224,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_328b46c3026712f5332f3ebe45aee257e9b2254f4ce15c4e6f92c3885afacaf8",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/layoutEntries-CCPDesktopTiles-630eb9f99ed25ba333d5.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/layoutEntries-CCPDesktopTiles-630eb9f99ed25ba333d5.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "ba7b53580f1f5ba6b6d487ec457e5c656c9602d318caee944f93cca77c8bed94",
+          "bytes": 1628,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_335ba82f5455bf4dc8c70b2354c24ccc07bc5e070439e917a3057fc3f3daa9ab",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/layoutEntries-searchDesktopIndex-dc423479412fc1cc3c30.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/layoutEntries-searchDesktopIndex-dc423479412fc1cc3c30.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "9d3ca820753d609fbd275fd786da7c932517df13471dc7bf88973249444c5f58",
+          "bytes": 14925,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_34f2b7a7d3eb6aa089c749b022b121bd78e2f8e22bf60055c52888f3c34811a1",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/9955-30938bf5fb26cba7dc84.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/9955-30938bf5fb26cba7dc84.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "a850d0431c0f5e63f4c2aff582067ddd31836327e8d43f638cd8e7d604eebcaa",
+          "bytes": 21889,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_409f89b3a531fd0889479fd5ad3d7e4dc1f0f6235f5aa71fac64c6b151f5e96a",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/pages-common-Navbar-5e0061991cc49ac3dd6d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/pages-common-Navbar-5e0061991cc49ac3dd6d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "2357bd7148b0d93966d0f2b7f212eed5137362037be48a50ad13b0390cb0b9ce",
+          "bytes": 10178,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_431919d0428ae6446c5e2b6d513de8abb13d9dd1d6ad60c842abe30b20e6cb33",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/289-18f9686cf8f7fdee6f28.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/289-18f9686cf8f7fdee6f28.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "75219b2efe91882b7667eda7290a52a51282408b7e6f7c7a075c85235e7dae2c",
+          "bytes": 13725,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_4accfcac712233dfbdbf2849d4f8042cd3f3b96d43619d6ef92e6264939ef1f2",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/runtime-9488cb5bb99052084562.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/runtime-9488cb5bb99052084562.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "ace1584f89204ef8f729614551440836cf161fe27a01e73890523899e9ee212b",
+          "bytes": 25786,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_4b072c9b9e967356fbf9a173f690d8c9edaa5322231bd75338fb459ad642cd8a",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3439-8a802eed5b501c3ab275.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3439-8a802eed5b501c3ab275.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "0cc832a8147d51d0b064d1f5dc910c64c1844b83a0718389d3a62f319904ee0f",
+          "bytes": 27008,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_575b72729c714ac6a3cf6570b3611507cac9bb0005ec2aeac4aac1453159182d",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/pages-Search-ecde454ad1fac4463ce4.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/pages-Search-ecde454ad1fac4463ce4.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "8d2a43367d17acf4a1ac09c4675b96243469ef084e39b12ced6e1aff3e59a779",
+          "bytes": 5790,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_59086169cbca2f91b4f74a228e5699701f7d762daf6a274ce0c698b0e314e8d6",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/styled-system-59c1d0bd459af849e773.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/styled-system-59c1d0bd459af849e773.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "741b5ac311037f27fff5e87bcdfe427174b7e96d4040b65e3f8448b50524387a",
+          "bytes": 13173,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_5d9823568403af7ab6a2814bfad89f662455d00b7b0a87e72c7dca6cea9d49f0",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/redux-550069b68e09ab2fee2d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/redux-550069b68e09ab2fee2d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "cea816ce7db24f0a3692c477ce9125be6900f54130b2bb8ee3466ca3367e7f1d",
+          "bytes": 3211,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_690c2b5d86b79d8e6016e48e789dadff307014946bf1fd2678f42bdb16ebe636",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3940-6c6e90153c8d52bbe941.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3940-6c6e90153c8d52bbe941.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "dc6b5589b5172bafdd7c688edf563eebc037ff7efd272455c9e18d4867876230",
+          "bytes": 12595,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_6bf78d0e55c9d807cceeb29e7e2af5758c3867f2f97447c812cc69cd3f9636b4",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/main-e6c9fe541e8ed0c4264b.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/main-e6c9fe541e8ed0c4264b.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "adcfc022f117d847e55e8b15ff54bf42bebae2aa4102f0ca90b67921960aa940",
+          "bytes": 444004,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_7b314413dd2dc132faea9a19f5289a8d5bd23e3f2a987562bd25d99287089a77",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/jss-431561ebd409b584e665.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/jss-431561ebd409b584e665.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "57f0ae7d7bf55f3959c43443c78c630a41dee8b1906ef2c8740b60bce045cca4",
+          "bytes": 20566,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_7bc7d5304782aaab88e20818a0373f09d38ad6a1bef1001b26b8d58d8f9b7c21",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/4526-1a53c495f1df6335f982.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/4526-1a53c495f1df6335f982.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "38fd1d55c58820b59b44280b0767898560fb5b06f91620c7445ec686b4e782a0",
+          "bytes": 513570,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_7fba8f46789b6343094242100b39f02eea78c7e2cb18d4172ae22446c25562e9",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/RestaurantCardV2-8514e8764c02f001f2ae.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/RestaurantCardV2-8514e8764c02f001f2ae.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "9734c8a42a84dfc4dab18485fdfdda6652026662050525f020e9cfc217f92f04",
+          "bytes": 17811,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_8b2aba8a4dce1c68f89078ff9a4fe63c7a3bfd33f0a20f16d5d743dfc7ad8f61",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3813-a7f7196b74aa09a649d8.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3813-a7f7196b74aa09a649d8.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "bce6b6602741df57ecb1dd9049abfa113c821994d94039e56e25f35496c57535",
+          "bytes": 12109,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_9146405ae462b3b5d321d60d93451b45352ec0d3f502811b8a185aabdbb95ab2",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/9765-682409f0d5dc44b83dcf.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/9765-682409f0d5dc44b83dcf.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "614eb637fef8fcf309801fdfa4ffc20adeb5ee00e7abf7c60fc968b4017789c6",
+          "bytes": 13432,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_9295602f5c6efef7ce5a99e22b4c9bd1136cd71ca1949f78b68fd5605efc59e5",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/react-dom-bab557d044befef6a2bb.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/react-dom-bab557d044befef6a2bb.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "0ca011e61181335156d4d91e9582d3c83ad5fb47ce023bb8897a5e9ce8388b0e",
+          "bytes": 128918,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_969b9a2cddf3f6f806917c41dcadb24df5f382c0af7a431fc37fe7b9b3ae6878",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/9358-6992402b8c86ecefd39a.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/9358-6992402b8c86ecefd39a.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "a889dd5a8d5166e88a9b4ab67a44de6cc5db74d29ac88db2cf51d7b128e37bcb",
+          "bytes": 19511,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_97740eee7ff407897ac5fe40b26292714f1ddfd1154c1dc5912e7aa10a2e54d3",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3550-f59fe92ee3071a918bf6.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3550-f59fe92ee3071a918bf6.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "1d898209267d9d8f97bf3fee65669d7b52bb02e1ee5c7c128304a93263a3c32c",
+          "bytes": 10565,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_9a76ba47f72b46df279eae8e163f31ea7cdc3022b62606a9a6839e94322db99c",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/8640-3ef9e746c2e7d9456f77.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/8640-3ef9e746c2e7d9456f77.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "b0873b9c55d1a5739fcbc5c0e52fdfcfc2673fa2cef3f64434a98085dea5d599",
+          "bytes": 23297,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_a65f912d7bae71cef0203a4e0ac4c31dbe01f53fae6ec073f50a4509f0af2ddb",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3088-54e4d9b888124e3862e7.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3088-54e4d9b888124e3862e7.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "4c013f142c29bac9141bfbae4c8a2d042972d5c9c043d5af054aa48e4c7afe56",
+          "bytes": 87028,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_a689ed555854be433357e8445b1747878a355ff538c1bf06776418f4161c6055",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/layoutEntries-LocationTooltip-5e5251078bad804038f5.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/layoutEntries-LocationTooltip-5e5251078bad804038f5.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "233099c48d6fd2ba65749ae992e0c49ccce8a9cf4e31a38dc47e86d59f5786bf",
+          "bytes": 5066,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_ae6f227f6d56e9e907103baeb2269a27dac887ebb80198b538cfa0227f1aa818",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/lodash-es-ad9cc4b7cac38a5cfe0d.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/lodash-es-ad9cc4b7cac38a5cfe0d.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "3e7ada2df3df2c113bb987bf027d9095fb9d93f28f53862a0cbfee00fda7a2d2",
+          "bytes": 43378,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_b3555181e26718f169a85efe3d362bfb4af493326730b2d50a45262878c99ac5",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/6810-0bfd08cea4571af43e32.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/6810-0bfd08cea4571af43e32.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "3da4ff718a2b43dd5c210ef58e2369dc8f854c0d588798e55e32929f3ffbf6d2",
+          "bytes": 16007,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_b3accf5b1825e9d99aed9611a8b96c1f269a6e80670658e3a82b3fbc326e699c",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/redux-saga-9383c04fdf48aaac136a.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/redux-saga-9383c04fdf48aaac136a.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "22cadea91855a64da4083c6142e75dfb671fbaaed85e6e9cbff021321eeedb34",
+          "bytes": 16368,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_b583df270189328fdae81a41a689dffdcfa32ae3661090558270be1d1f41ba20",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3598-158b97b5f98114b60058.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3598-158b97b5f98114b60058.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "21f7a0a9bfdd72ab737ef64cd56d06194c5ae0fe0904030e1cf6c3f686a95406",
+          "bytes": 127559,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_bbbdc4ee5ef781d3a5c78d6b79885190078fa84c3ca44a95316a3be950c35bb8",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/ZomatoFooter-32d6971b25d17d45adee.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/ZomatoFooter-32d6971b25d17d45adee.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "9b087ed96b4cb9129b385ca0af69afaff7879f0786fe2589d8f2af289c066b09",
+          "bytes": 57599,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_c4ab5a56e74e500a8943536b6345551ceb5dbcc5bd24586ccfaeba63695225c6",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/layoutEntries-uniSearchDesContainer-a105a76fa4d68a81add7.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/layoutEntries-uniSearchDesContainer-a105a76fa4d68a81add7.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "f0e3b567a8443276b5a3adaf0a9c8bc205aa06108508948348387ea4a45884af",
+          "bytes": 6141,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_c9e37f63cc4b290e6b4a89a30d6cf8b6961c369ea9835c3e1fdd421c19ca1432",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/6347-942bf2612b8cba7457d3.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/6347-942bf2612b8cba7457d3.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "38858953a5daef568512dbdf2472366b8bcac21e93f626b253cf538e81c00060",
+          "bytes": 13415,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_cdbe15af7285e36c3d025883739326b27c09c114c19b1e2312f2e7b8badfefc5",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/3419-760b3498c94bc55b0397.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/3419-760b3498c94bc55b0397.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "6263550f11b2ce5cb68aecd00ce8d3c1b8a13e949a7ccd9ead3087a45add2b5f",
+          "bytes": 64488,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_cdf395752609f27e81590dd2a0ae030d7e1eda1ee89468151197eb90bbba0f96",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/zomato-4c37679738b736b8d056.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/zomato-4c37679738b736b8d056.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "81b221c7ea9db2ef74c5e2dcd3b42a695aa423266e90aabf18e3271eadd8ec5b",
+          "bytes": 161487,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_ce69d40fdfd8055eed682bab8f5be0daeccf1aee9087dce13ddfd2810ebf0974",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/react-redux-92f13dcd66cfc2e855ca.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/react-redux-92f13dcd66cfc2e855ca.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "a79a097a1a0db29a5b14e03d8b7ef21012b0316fb1b364b745ecdd87b8e469e5",
+          "bytes": 9661,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_d728cf17fe2548d72044c57ef4708b53aab8e8702a7ed30c0bd6485d15571b16",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://www.zomato.com/bangalore/restaurants",
+        "content": {
+          "state": "exported",
+          "relative_path": "isolated/source-46-010bb6d6a4e315cf3c937a5d3df76dc551bb57ea42cc87acf9f6e30fa6bf31cd.js",
+          "layout": "isolated",
+          "layout_reason": "URL path is not an ordinary portable JavaScript module path.",
+          "sha256": "8eea351e204af40caff7d329b5c3f4ced290705316b7ab082920e7d195d18cc9",
+          "bytes": 378,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_d7e8664afddcd3f2e2257015e9128007a09040492eefc4f591b4553f9385c29a",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/193-adc90b0bd8f5c054b164.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/193-adc90b0bd8f5c054b164.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "b79f21b97a25677595b61a631b3c1857c762d8d21e4eb4ba2675546352a1ea0f",
+          "bytes": 17571,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_ddfe6971a59590e26dd7d92ffcf4825e18168dccbbe3600514816b64feac4712",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/material-ui-b67658f3c4abc8d935d7.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/material-ui-b67658f3c4abc8d935d7.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "a1d4da10dc472c67dcb7704218462b5881ba71377d389f658917f695b0450c3a",
+          "bytes": 38886,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_e4c17badcf6f38103705b06a5c90721d92def1f4ccbbf71298260225492bfed3",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://b.zmtcdn.com/data/file_assets/133088f1818bf78ca2b5d49c094e43631727442706.javascript",
+        "content": {
+          "state": "exported",
+          "relative_path": "isolated/source-49-d13a8e9247dc1f90b98b8f6d05eceb239435b30657df4968426177ce72767e57.js",
+          "layout": "isolated",
+          "layout_reason": "URL path is not an ordinary portable JavaScript module path.",
+          "sha256": "b04ec8c9eb05db40d9ec440ee8128a4cf2547dc7daf7eb7e946255de9f3068b1",
+          "bytes": 282955,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_e865f25edd57ff8441caee58655c667cdc69761cd7ad535336e605f8064de18f",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/9693-a8cec1e245e3e83b671a.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/9693-a8cec1e245e3e83b671a.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "983066073690fec88a704d1b6e81b5db6dc17d4dcbf519eea859e17cb54495fd",
+          "bytes": 12890,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_eef7f7835a3a2da976359389e08f89cbfd73b892537c0e4a34809369b760d540",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/Footers-a6d960459440832ef2aa.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/Footers-a6d960459440832ef2aa.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "7c03fe6571e30c1016c7e30a8469cfa53d898db308487e4ae41cbd21b23a49a0",
+          "bytes": 3085,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_f06c173a67a59baca31b1efcebc944b5d04850a9521c7e2eb48d9e091092f704",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/7991-2f1252cdf797c00c6b32.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/7991-2f1252cdf797c00c6b32.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "02de06a262060ef7455c72b58375c8e443386e630a8c8c37ac4f85d5ba77193a",
+          "bytes": 12583,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_f7275112e5fc08d61c72d5b283d74c7903b19d33beb2c24200a7ee2c54c9fd1f",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/5879-97af0073e8c874efd878.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/5879-97af0073e8c874efd878.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "1e492f2b1dbdd7cd665dc695c5f381109d9799d44d0155d8c58c0b855bb12918",
+          "bytes": 14286,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      },
+      {
+        "source": {
+          "kind": "page-script",
+          "script_key": "scr_fc8fc63bb70869a9bbc6e8d7d3201e839fa7ef1b35e8713e3b784cf52fe5df51",
+          "frame_id": "91676AF93BDE87E1C6E0C742CB804ACB",
+          "is_module": false,
+          "language": "JavaScript",
+          "source_map_url": null
+        },
+        "url": "https://zwstatic.zomato.com/rxjs-7de11e88aa174c028f16.js",
+        "content": {
+          "state": "exported",
+          "relative_path": "origins/62774287ba2554e9956ee58d21f9ffba813d84b2f6e74479878ecbfb57433878/rxjs-7de11e88aa174c028f16.js",
+          "layout": "url-path",
+          "layout_reason": null,
+          "sha256": "02132854060fdd2b80766e981dc5b2e3c57b2b083bb1da3ed0361db525bce22b",
+          "bytes": 20750,
+          "media_type": "text/javascript",
+          "redacted": null,
+          "representation": "debugger-source-utf8"
+        }
+      }
+    ],
+    "limitations": [
+      "Observation starts when REA attaches; prior network and console activity is unavailable.",
+      "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
+      "Source maps are reported only as declarative URLs and are not fetched.",
+      "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
+      "CDP discovery omitted the target attachment state; attached is reported as unknown.",
+      "Only script bytes retained in this capture are exported. Sources are not refetched or executed, and a response or Debugger source does not prove execution.",
+      "Ordinary unambiguous URL paths preserve relative module layouts by origin, including case-distinct spellings. Query variants, exact path collisions, file/directory prefixes, inline sources, and unrepresentable paths are isolated. A case-distinct pair is isolated only when the destination filesystem cannot store both spellings; the record names that pair. Browser module relationships of isolated paths remain unknown.",
+      "Local JavaScript analysis does not implement browser import maps, root-relative URL resolution, remote URL loading, or browser runtime behavior. It may strip import queries and fragments; isolated variants are not canonical targets.",
+      "Source-map declarations are retained as metadata. No source maps or missing dependencies are fetched or reconstructed.",
+      "Scenario response bytes preserve the output of Playwright's Response.body() API; any source-body provenance caveat from the capture is retained in this manifest. Debugger sources are the exposed text encoded as UTF-8. Redacted bytes are exported exactly as retained, and may no longer parse as JavaScript."
+    ]
+  }
+}

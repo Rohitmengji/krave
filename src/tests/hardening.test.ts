@@ -17,6 +17,7 @@ import { newId } from "@/lib/ids";
 import { createDemoOrder, DEMO_PAYMENT_METHODS } from "@/lib/checkout";
 import { deleteOrder, listOrders, saveOrder } from "@/lib/server/accountStore";
 import { grantOutletStaff } from "@/lib/server/staff";
+import { getPool, one } from "@/lib/server/pg";
 import {
   advanceDeliveryTicket,
   createDeliveryTicket,
@@ -224,9 +225,38 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
     await registerUser(CREDENTIALS);
     const { token } = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
-    const inFlight = resetPassword(token, "attacker-chosen-password");
-    // A newer request discards every unused token, including the one in flight.
-    await createPasswordReset({ email: CREDENTIALS.email });
+    // Left to timing, a cold connection decides which request reaches the row first. A held
+    // row lock fixes the order: the newer request's DELETE queues first, the in-flight
+    // reset passes its pre-check and hashes, then queues its claim behind the DELETE.
+    async function lockWaiters(count: number) {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const row = await one<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        );
+        if ((row?.n ?? 0) >= count) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`Expected ${count} lock waiter(s)`);
+    }
+    const holder = await getPool().connect();
+    let inFlight: Promise<void> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT 1 FROM password_resets WHERE used_at IS NULL FOR UPDATE");
+
+      const newer = createPasswordReset({ email: CREDENTIALS.email });
+      await lockWaiters(1);
+      inFlight = resetPassword(token, "attacker-chosen-password");
+      // Keeps a rejection from going unhandled before it is awaited below.
+      inFlight.catch(() => undefined);
+      await lockWaiters(2);
+
+      await holder.query("COMMIT");
+      await newer;
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+    }
 
     await expect(inFlight).rejects.toThrow(/expired|already used/i);
     await expect(verifyCredentials(CREDENTIALS, "10.2.2.2")).resolves.toMatchObject({

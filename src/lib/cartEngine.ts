@@ -458,6 +458,30 @@ export function calculateCartQuote(
   };
 }
 
+export const DINING_PAY_LIMITS = { minBill: 100, maxBill: 500_000 } as const;
+
+/**
+ * Reads the table bill as typed. `amount` stays null, with a reason in `problem`, until
+ * the text is a whole-rupee bill DiningPay accepts. Grouping commas and a ₹ sign are fine.
+ */
+export function readDiningPayBill(raw: string): { amount: number | null; problem: string | null } {
+  const text = raw.replace(/[₹,\s]/g, "");
+  if (text === "") return { amount: null, problem: "Enter your table bill amount." };
+  if (/^\d+\.\d*$/.test(text)) return { amount: null, problem: "Enter the bill in whole rupees." };
+  if (!/^\d+$/.test(text)) return { amount: null, problem: "Enter the bill as a number of rupees." };
+  const amount = Number(text);
+  if (amount < DINING_PAY_LIMITS.minBill) {
+    return { amount: null, problem: `DiningPay starts at ₹${DINING_PAY_LIMITS.minBill}.` };
+  }
+  if (amount > DINING_PAY_LIMITS.maxBill) {
+    return {
+      amount: null,
+      problem: `DiningPay covers bills up to ₹${DINING_PAY_LIMITS.maxBill.toLocaleString("en-IN")}.`,
+    };
+  }
+  return { amount, problem: null };
+}
+
 export function calculateDiningPayBill(
   billAmount: number,
   restaurant: Pick<RestaurantEntity, "walkinOffer">,

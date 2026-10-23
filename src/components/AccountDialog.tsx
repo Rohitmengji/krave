@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { LogIn, UserPlus, X } from "lucide-react";
 import { OverlayDialog } from "./OverlayDialog";
+import { requestJson } from "@/lib/requestJson";
 import type { BrandThemePreset } from "@/types/krave";
 
 export interface AccountUser {
@@ -42,18 +43,12 @@ export function AccountDialog({
     setPending(true);
     setError(null);
     try {
-      const response = await fetch(`/api/webroutes/auth/${mode}`, {
+      const result = await requestJson(`/api/webroutes/auth/${mode}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ email, password, displayName }),
+        body: { email, password, displayName },
+        timeoutMs: 10000,
+        fallbackMessage: "Could not sign you in.",
       });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          typeof result?.message === "string" ? result.message : "Could not sign you in."
-        );
-      }
       setPassword("");
       onAuthenticated(result);
       onClose();

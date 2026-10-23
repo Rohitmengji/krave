@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   MapPin,
@@ -84,6 +84,11 @@ export function Navbar({
   const [locationOpen, setLocationOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
   const [detectingGps, setDetectingGps] = useState(false);
+  // Both the lock against repeat taps and the handle to cancel on unmount.
+  const gpsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (gpsTimer.current !== null) clearTimeout(gpsTimer.current);
+  }, []);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const matchingRestaurants = normalizedQuery
@@ -116,8 +121,10 @@ export function Navbar({
   }
 
   const handleDetectGps = () => {
+    if (gpsTimer.current !== null) return;
     setDetectingGps(true);
-    setTimeout(() => {
+    gpsTimer.current = setTimeout(() => {
+      gpsTimer.current = null;
       setDetectingGps(false);
       onSelectAddress(addresses[0]);
       setLocationOpen(false);
@@ -250,7 +257,9 @@ export function Navbar({
               <button
                 type="button"
                 onClick={handleDetectGps}
-                className="w-full flex items-center gap-3 p-3 rounded-xl border border-dashed mb-3 text-left transition hover:opacity-90"
+                disabled={detectingGps}
+                aria-busy={detectingGps}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-dashed mb-3 text-left transition hover:opacity-90 disabled:cursor-wait"
                 style={{
                   borderColor: `${theme.primaryHex}66`,
                   backgroundColor: `${theme.primaryHex}12`,

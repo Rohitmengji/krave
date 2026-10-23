@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import { X, Palette, Check, Sparkles } from "lucide-react";
 import { BRAND_THEME_PRESETS } from "@/data/zomatoReconstructedData";
 import { BrandThemePreset } from "@/types/krave";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
 
 interface BrandThemeModalProps {
   isOpen: boolean;
@@ -22,30 +23,19 @@ export function BrandThemeModal({
   onUpdateCustomBrand,
   isDark,
 }: BrandThemeModalProps) {
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
   if (!isOpen) return null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Brand and Theme Studio"
-      data-testid="brand-studio-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
+    <OverlayDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      label="Brand and Theme Studio"
+      testId="brand-studio-modal"
+      closeOnBackdrop={false}
+      className={`${FULL_SCREEN_DIALOG} open:flex items-center justify-center bg-black/75 backdrop-blur-md p-4`}
     >
       <div
-        className={`w-full max-w-2xl rounded-3xl border shadow-2xl overflow-hidden ${
+        className={`w-full max-w-2xl my-auto rounded-3xl border shadow-2xl overflow-hidden ${
           isDark
             ? "bg-[#0E131D] border-white/15 text-white"
             : "bg-white border-slate-200 text-slate-900"
@@ -217,6 +207,6 @@ export function BrandThemeModal({
           </div>
         </div>
       </div>
-    </div>
+    </OverlayDialog>
   );
 }

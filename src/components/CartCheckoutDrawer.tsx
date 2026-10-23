@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useEffectEvent, useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   allergenLabels,
   DELIVERY_SLOTS,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/checkout";
 import { CART_LIMITS } from "@/lib/cartEngine";
 import { useMinuteClock } from "@/lib/useMinuteClock";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
 import {
   X,
   ShoppingBag,
@@ -96,22 +97,6 @@ export function CartCheckoutDrawer({
   onChangeHandling,
   priceLockExpiresAt,
 }: CartCheckoutDrawerProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const handleEscape = useEffectEvent((event: KeyboardEvent) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    if (!checkoutPending) onClose();
-  });
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!isOpen || !dialog) return;
-    if (!dialog.open) dialog.showModal();
-    document.addEventListener("keydown", handleEscape, true);
-    return () => {
-      document.removeEventListener("keydown", handleEscape, true);
-      if (dialog.open) dialog.close();
-    };
-  }, [isOpen]);
   const [zpayEvents, setZpayEvents] = useState<ZPayKitEventRecord[]>([
     {
       id: "zp_init",
@@ -183,12 +168,15 @@ export function CartCheckoutDrawer({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      data-testid="cart-checkout-drawer"
-      aria-label="Checkout"
-      onCancel={(event) => { event.preventDefault(); if (!checkoutPending) onClose(); }}
-      className="fixed inset-0 z-50 m-0 p-0 border-0 w-screen h-dvh max-w-none max-h-none flex justify-end bg-black/70 backdrop-blur-sm"
+    <OverlayDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      // An order in flight keeps the drawer, so its outcome and any error stay on screen.
+      onDismiss={() => { if (!checkoutPending) onClose(); }}
+      label="Checkout"
+      testId="cart-checkout-drawer"
+      closeOnBackdrop={false}
+      className={`${FULL_SCREEN_DIALOG} p-0 open:flex justify-end bg-black/70 backdrop-blur-sm`}
     >
       <div
         className={`w-full max-w-xl h-full flex flex-col border-l shadow-2xl ${
@@ -742,6 +730,6 @@ export function CartCheckoutDrawer({
           </div>
         )}
       </div>
-    </dialog>
+    </OverlayDialog>
   );
 }

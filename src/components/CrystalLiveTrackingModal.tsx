@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import {
   X,
   Bike,
@@ -17,6 +17,7 @@ import {
   CrystalOrderStage,
   CrystalOrderState,
 } from "@/types/krave";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
 
 interface CrystalLiveTrackingModalProps {
   order: CrystalOrderState | null;
@@ -77,15 +78,6 @@ export function CrystalLiveTrackingModal({
   onClose,
   onAdvanceStage,
 }: CrystalLiveTrackingModalProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  // Keyed on the order's identity, not the object: a stage update must not close and
-  // reopen the dialog.
-  const openOrderId = order?.orderId;
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (openOrderId && dialog && !dialog.open) dialog.showModal();
-    return () => { if (dialog?.open) dialog.close(); };
-  }, [openOrderId]);
   if (!order) return null;
 
   const currentStageIndex = STAGE_SEQUENCE.findIndex(
@@ -94,13 +86,15 @@ export function CrystalLiveTrackingModal({
   const currentMeta = STAGE_SEQUENCE[currentStageIndex] || STAGE_SEQUENCE[0];
 
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label="Demo order tracking"
-      onCancel={(event) => { event.preventDefault(); onClose(); }}
-      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }}
-      data-testid="crystal-tracking-modal"
-      className="fixed inset-0 z-50 m-0 border-0 w-screen h-dvh max-w-none max-h-none flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto"
+    // Open for as long as there is an order: a stage update or a newer order swaps the
+    // content without closing and reopening the dialog.
+    <OverlayDialog
+      isOpen
+      onClose={onClose}
+      label="Demo order tracking"
+      testId="crystal-tracking-modal"
+      closeOnBackdrop={false}
+      className={`${FULL_SCREEN_DIALOG} open:flex items-center justify-center bg-black/80 backdrop-blur-md p-4`}
     >
       <div
         className={`w-full max-w-3xl rounded-3xl border shadow-2xl overflow-hidden my-auto ${
@@ -326,6 +320,6 @@ export function CrystalLiveTrackingModal({
           </div>
         </div>
       </div>
-    </dialog>
+    </OverlayDialog>
   );
 }

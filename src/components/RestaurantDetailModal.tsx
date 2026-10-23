@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useActionState, useEffect, useReducer, useRef, useState } from "react";
+import React, { useActionState, useId, useReducer, useRef, useState } from "react";
 import {
   X,
   Star,
@@ -28,11 +28,13 @@ import {
   RestaurantEntity,
   RestaurantReview,
 } from "@/types/krave";
-import { calculateDiningPayBill, CART_LIMITS, dishModifierGroups } from "@/lib/cartEngine";
+import { calculateDiningPayBill, CART_LIMITS, dishModifierGroups, readDiningPayBill } from "@/lib/cartEngine";
 import { customiserProblem, customiserReducer } from "@/lib/dishCustomiser";
 import { ALLERGENS, allergenLabels, dishAllergenStatus, portionSummary } from "@/lib/checkout";
 import { bookingDateOptions, bookingTimeProblem, formatBookingDate } from "@/lib/outletClock";
 import { useMinuteClock } from "@/lib/useMinuteClock";
+import { RequestFailure, requestJson } from "@/lib/requestJson";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
 
 interface ReviewFormState {
   error: string | null;
@@ -91,8 +93,10 @@ export function RestaurantDetailModal({
   const [specialRequest, setSpecialRequest] = useState("");
   const [latestBooking, setLatestBooking] = useState<DiningReservation | null>(null);
 
-  // DiningPay Calculator State
-  const [diningBillInput, setDiningBillInput] = useState(2500);
+  // DiningPay Calculator State. The draft is the text as typed, so clearing the field or a
+  // half-typed value is never read as ₹0 behind the customer's back.
+  const [diningBillDraft, setDiningBillDraft] = useState("2500");
+  const diningBillId = useId();
   const [diningBillPaid, setDiningBillPaid] = useState(false);
 
   // Reviews State
@@ -103,21 +107,6 @@ export function RestaurantDetailModal({
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const bookingLock = useRef(false);
-
-  // Dismiss nested dish customizer first on Escape; otherwise close the restaurant modal.
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (customiser) {
-        dispatchCustomiser({ type: "CLOSE" });
-      } else {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [customiser, onClose]);
 
   const openDishCustomizer = (dish: DishItem) => {
     dispatchCustomiser({ type: "OPEN", dish, groups: dishModifierGroups(restaurant, dish) });
@@ -166,11 +155,11 @@ export function RestaurantDetailModal({
     try {
       // Not aborted when the modal closes: the table may already be held, and the reply
       // still has to reach the reservation list, which outlives this modal.
-      const response = await fetch("/api/webroutes/user/booking", {
+      const result = (await requestJson("/api/webroutes/user/booking", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({
+        timeoutMs: 10000,
+        fallbackMessage: "Could not complete table reservation.",
+        body: {
           resId: restaurant.resId,
           date: bookingDate,
           timeSlot: selectedSlot,
@@ -180,22 +169,14 @@ export function RestaurantDetailModal({
           specialRequest,
           isGoldMember,
           membershipName: theme.membershipName,
-        }),
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.reservation) {
-        throw new Error(
-          typeof result?.message === "string"
-            ? result.message
-            : "Could not complete table reservation."
-        );
-      }
+        },
+      })) as { reservation?: DiningReservation } | null;
+      if (!result?.reservation) throw new Error("Could not complete table reservation.");
       setLatestBooking(result.reservation);
       onCreateReservation(result.reservation);
     } catch (error) {
-      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       setBookingError(
-        timedOut
+        error instanceof RequestFailure && error.outcomeUnknown
           ? "We couldn't confirm this booking in time. It may still have gone through, so check your reservations before booking again."
           : error instanceof Error
           ? error.message
@@ -211,36 +192,27 @@ export function RestaurantDetailModal({
     async (_previous: ReviewFormState, formData: FormData): Promise<ReviewFormState> => {
       const comment = String(formData.get("comment") ?? "");
       try {
-        const response = await fetch("/api/webroutes/reviews/post", {
+        const result = (await requestJson("/api/webroutes/reviews/post", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(8000),
-          body: JSON.stringify({
+          fallbackMessage: "Please enter a review of at least 5 characters.",
+          body: {
             resId: restaurant.resId,
             rating: Number(formData.get("rating")),
             comment,
             userName: guestName,
             reviewType: "DINING",
-          }),
-        });
-        const result = await response.json().catch(() => null);
-        if (!response.ok || !result?.review) {
-          throw new Error(
-            typeof result?.message === "string"
-              ? result.message
-              : "Please enter a review of at least 5 characters."
-          );
-        }
-        const review = result.review as RestaurantReview;
+          },
+        })) as { review?: RestaurantReview } | null;
+        if (!result?.review) throw new Error("Could not submit review.");
+        const review = result.review;
         setLocalReviews((previous) => [
           review,
           ...previous.filter((entry) => entry.id !== review.id),
         ]);
         return { error: null, comment: "" };
       } catch (error) {
-        const timedOut = error instanceof DOMException && error.name === "TimeoutError";
         return {
-          error: timedOut
+          error: error instanceof RequestFailure && error.outcomeUnknown
             ? "Posting took too long. Your review may still appear, so check the list before posting again."
             : error instanceof Error
             ? error.message
@@ -253,8 +225,9 @@ export function RestaurantDetailModal({
     { error: null, comment: "" }
   );
 
+  const diningBill = readDiningPayBill(diningBillDraft);
   const diningPayBreakdown = calculateDiningPayBill(
-    diningBillInput,
+    diningBill.amount ?? 0,
     restaurant,
     isGoldMember
   );
@@ -283,12 +256,13 @@ export function RestaurantDetailModal({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={restaurant.name}
-      data-testid="restaurant-detail-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-2 sm:p-6 overflow-y-auto"
+    <OverlayDialog
+      isOpen
+      onClose={onClose}
+      label={restaurant.name}
+      testId="restaurant-detail-modal"
+      closeOnBackdrop={false}
+      className={`${FULL_SCREEN_DIALOG} open:flex items-center justify-center bg-black/75 backdrop-blur-md p-2 sm:p-6`}
     >
       <div
         className={`relative w-full max-w-5xl rounded-3xl border shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col ${
@@ -960,22 +934,33 @@ export function RestaurantDetailModal({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold mb-1.5 opacity-75">
+                  <label
+                    htmlFor={`${diningBillId}-amount`}
+                    className="block text-xs font-bold mb-1.5 opacity-75"
+                  >
                     Enter Restaurant Table Bill Amount (₹)
                   </label>
                   <input
-                    type="number"
-                    min={100}
-                    step={100}
-                    value={diningBillInput}
+                    id={`${diningBillId}-amount`}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={diningBillDraft}
+                    aria-invalid={diningBill.problem !== null}
+                    aria-describedby={diningBill.problem ? `${diningBillId}-problem` : undefined}
                     onChange={(e) => {
-                      setDiningBillInput(Number(e.target.value));
+                      setDiningBillDraft(e.target.value);
                       setDiningBillPaid(false);
                     }}
                     className={`w-full p-3 rounded-xl border text-base font-black ${
                       isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                     }`}
                   />
+                  {diningBill.problem && (
+                    <p id={`${diningBillId}-problem`} className="mt-1.5 text-[11px] font-semibold text-amber-400">
+                      {diningBill.problem}
+                    </p>
+                  )}
                 </div>
 
                 <div
@@ -1018,7 +1003,8 @@ export function RestaurantDetailModal({
                 <button
                   type="button"
                   onClick={() => setDiningBillPaid(true)}
-                  className="w-full py-3 rounded-xl text-xs font-black text-white shadow-lg transition hover:opacity-95"
+                  disabled={diningBill.problem !== null}
+                  className="w-full py-3 rounded-xl text-xs font-black text-white shadow-lg transition hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ backgroundColor: theme.primaryHex }}
                 >
                   Pay ₹{diningPayBreakdown.finalPayable} & Save ₹{diningPayBreakdown.totalSaved} Instantly
@@ -1175,14 +1161,16 @@ export function RestaurantDetailModal({
           )}
         </div>
 
-        {/* Nested Dish Customization Modal */}
+        {/* Nested Dish Customization Modal: a second top-layer dialog, so Escape and the
+            focus trap belong to it until it closes. */}
         {customiser && (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Customise ${customiser.dish.name}`}
-            data-testid="dish-customization-modal"
-            className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          <OverlayDialog
+            isOpen
+            onClose={() => dispatchCustomiser({ type: "CLOSE" })}
+            label={`Customise ${customiser.dish.name}`}
+            testId="dish-customization-modal"
+            closeOnBackdrop={false}
+            className="m-auto w-full max-w-lg bg-transparent p-4 backdrop:bg-black/80 backdrop:backdrop-blur-sm"
           >
             <div
               className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto ${
@@ -1314,9 +1302,9 @@ export function RestaurantDetailModal({
                 </button>
               </div>
             </div>
-          </div>
+          </OverlayDialog>
         )}
       </div>
-    </div>
+    </OverlayDialog>
   );
 }

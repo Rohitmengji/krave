@@ -19,6 +19,7 @@ import {
 } from "@/lib/checkout";
 import { POS_SEAT_HANDOFF_KEY } from "@/lib/pos/posEngine";
 import { formatBookingDate } from "@/lib/outletClock";
+import { RequestFailure, requestJson } from "@/lib/requestJson";
 import {
   checkoutFingerprint,
   readCheckoutIntent,
@@ -64,7 +65,6 @@ import {
   Cpu,
   Calendar,
   Clock,
-  CheckCircle2,
   Store,
   X,
 } from "lucide-react";
@@ -108,6 +108,7 @@ import { ReaInspectorModal } from "./ReaInspectorModal";
 import { BrandThemeModal } from "./BrandThemeModal";
 import { OverlayDialog } from "./OverlayDialog";
 import { AccountDialog } from "./AccountDialog";
+import { Toast } from "./Toast";
 
 const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
   "ORDER_CONFIRMED",
@@ -139,24 +140,13 @@ function useHydrated(): boolean {
   );
 }
 
-async function postJson(
+function postJson(
   url: string,
   body: unknown,
   fallbackMessage = "The server did not accept that.",
   timeoutMs = 8000
 ): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(timeoutMs),
-    body: JSON.stringify(body),
-  });
-  const result: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = (result as { message?: unknown } | null)?.message;
-    throw new Error(typeof message === "string" ? message : fallbackMessage);
-  }
-  return result;
+  return requestJson(url, { method: "POST", body, fallbackMessage, timeoutMs });
 }
 
 /** GET the account view. Null when offline, timed out, superseded or refused. */
@@ -282,7 +272,9 @@ export function KraveApp({
   const [crystalModalOpen, setCrystalModalOpen] = useState(false);
   const [reaInspectorOpen, setReaInspectorOpen] = useState(false);
   const [brandStudioOpen, setBrandStudioOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Each toast has its own id, so a repeated message restarts the full display time.
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const toastSeq = useRef(0);
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   // Part of the quote, not just the drawer: some offers are bound to how the customer pays.
@@ -329,12 +321,16 @@ export function KraveApp({
     document.getElementById("order-history-heading")?.scrollIntoView({ block: "start" });
   }, [initialView, hydrated]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 3200);
+  const showToast = (message: string) => {
+    toastSeq.current += 1;
+    setToast({ id: toastSeq.current, message });
   };
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   /** Pull the account view again after something changed it on the server. */
   function refreshAccount(): Promise<void> {
@@ -543,18 +539,14 @@ export function KraveApp({
     checkoutIntent.current = intent;
     writeCheckoutIntent(intent);
     try {
-      const response = await fetch("/api/webroutes/order/makeOrder", {
+      const result = (await requestJson("/api/webroutes/order/makeOrder", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": intent.key,
-        },
-        signal: AbortSignal.timeout(10000),
-        body: JSON.stringify(request),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(typeof result?.message === "string" ? result.message : "Checkout failed. Please try again.");
-      const order = restoreOrderHistory(JSON.stringify([result.order]))[0];
+        headers: { "Idempotency-Key": intent.key },
+        timeoutMs: 10000,
+        body: request,
+        fallbackMessage: "Checkout failed. Please try again.",
+      })) as { order?: unknown } | null;
+      const order = restoreOrderHistory(JSON.stringify([result?.order]))[0];
       if (!order) throw new Error("Checkout returned an invalid confirmation. Your cart was kept.");
       checkoutIntent.current = null;
       writeCheckoutIntent(null);
@@ -578,9 +570,10 @@ export function KraveApp({
       );
       showToast("Demo order confirmed. No payment was collected.");
     } catch (error) {
-      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+      // No answer is not a refusal: the order may exist, so say so rather than "try again".
+      const outcomeUnknown = error instanceof RequestFailure && error.outcomeUnknown;
       setCheckoutError(
-        timedOut
+        outcomeUnknown
           ? placedByAccount
             ? "We couldn't confirm your order in time. Placing it again is safe; it won't be duplicated."
             : "We couldn't confirm your order in time. It may still have gone through, so wait a moment before ordering again."
@@ -938,12 +931,7 @@ export function KraveApp({
       />
 
       {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-24 right-6 z-50 px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-extrabold shadow-2xl flex items-center gap-2 border border-white/20">
-          <CheckCircle2 className="w-4 h-4" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
+      {toast && <Toast key={toast.id} message={toast.message} />}
 
       {/* Main Content Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-10 pb-28">
@@ -1643,37 +1631,44 @@ export function KraveApp({
         </section>
       </main>
 
-      {/* Floating Bottom Cart Bar */}
-      {cartItems.length > 0 && !cartOpen && (
-        <div className="fixed bottom-5 left-4 right-4 z-30 max-w-3xl mx-auto">
-          <div
+      {/* Floating cart bar. Stays mounted (faded) while checkout is open: it is the
+          drawer's opener, and the browser can only hand focus back to an element that
+          still exists. */}
+      {cartItems.length > 0 && (
+        <div
+          className={`fixed bottom-5 left-4 right-4 z-30 max-w-3xl mx-auto transition-opacity ${
+            cartOpen ? "opacity-0" : ""
+          }`}
+        >
+          <button
+            type="button"
             onClick={() => setCartOpen(true)}
             data-testid="floating-cart-bar"
-            className="p-4 rounded-2xl text-white shadow-2xl flex items-center justify-between cursor-pointer border border-white/25 transition hover:scale-[1.01]"
+            className="w-full text-left p-4 rounded-2xl text-white shadow-2xl flex items-center justify-between cursor-pointer border border-white/25 transition hover:scale-[1.01]"
             style={{ backgroundColor: theme.primaryHex }}
           >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-black/25 flex items-center justify-center">
+            <span className="flex items-center gap-3">
+              <span className="w-10 h-10 rounded-xl bg-black/25 flex items-center justify-center">
                 <ShoppingBag className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-xs font-black uppercase tracking-wider">
+              </span>
+              <span>
+                <span className="block text-xs font-black uppercase tracking-wider">
                   {cartQuote.itemCount}{" "}
                   {cartQuote.itemCount === 1 ? "Item" : "Items"} • ₹
                   {cartQuote.grandTotal}
-                </div>
-                <div className="text-[11px] opacity-90">
+                </span>
+                <span className="block text-[11px] opacity-90">
                   From {cartItems[0].restaurantName} • Saving ₹
                   {cartQuote.totalSavings}
-                </div>
-              </div>
-            </div>
+                </span>
+              </span>
+            </span>
 
-            <div className="flex items-center gap-2 font-black text-xs bg-black/25 px-4 py-2.5 rounded-xl">
+            <span className="flex items-center gap-2 font-black text-xs bg-black/25 px-4 py-2.5 rounded-xl">
               <span>View Cart & Checkout</span>
               <ArrowRight className="w-4 h-4" />
-            </div>
-          </div>
+            </span>
+          </button>
         </div>
       )}
 
@@ -1925,7 +1920,9 @@ export function KraveApp({
               <div>
                 <h2 className="text-lg font-black">Notifications</h2>
                 <p className="text-xs opacity-65">
-                  Saved on this device only. Nothing is pushed or emailed.
+                  {account
+                    ? "Saved to your account. Nothing is pushed or emailed."
+                    : "Saved on this device only. Nothing is pushed or emailed."}
                 </p>
               </div>
               <div className="flex items-center gap-2">

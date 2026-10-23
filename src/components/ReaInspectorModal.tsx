@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   X,
   Cpu,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { REA_EVIDENCE_SUMMARY } from "@/data/zomatoReconstructedData";
 import { BrandThemePreset } from "@/types/krave";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
 
 interface ReaInspectorModalProps {
   isOpen: boolean;
@@ -62,18 +63,6 @@ export function ReaInspectorModal({
   );
   const [lastToolName, setLastToolName] = useState<string>("");
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
   if (!isOpen) return null;
 
   const handleRunTool = (name: string) => {
@@ -83,12 +72,13 @@ export function ReaInspectorModal({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="REA Evidence and WebMCP Inspector"
-      data-testid="rea-inspector-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto"
+    <OverlayDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      label="REA Evidence and WebMCP Inspector"
+      testId="rea-inspector-modal"
+      closeOnBackdrop={false}
+      className={`${FULL_SCREEN_DIALOG} open:flex items-center justify-center bg-black/80 backdrop-blur-md p-4`}
     >
       <div
         className={`w-full max-w-4xl rounded-3xl border shadow-2xl overflow-hidden my-auto max-h-[90vh] flex flex-col ${
@@ -335,6 +325,6 @@ export function ReaInspectorModal({
           )}
         </div>
       </div>
-    </div>
+    </OverlayDialog>
   );
 }

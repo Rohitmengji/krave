@@ -1,3 +1,4 @@
+import { attachDatabasePool } from "@vercel/functions";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 /**
@@ -81,9 +82,16 @@ export function getPool(): Pool {
     ssl: isLocal(url) ? false : { rejectUnauthorized: true },
     // Neon scales to zero; a cold start costs a few seconds on the first query.
     connectionTimeoutMillis: 15_000,
-    idleTimeoutMillis: 30_000,
+    // On Vercel the instance is kept awake until idle clients close (see below), so a
+    // short window keeps that cheap while one burst of requests still shares connections.
+    idleTimeoutMillis: process.env.VERCEL ? 5_000 : 30_000,
     max: 10,
   });
+
+  // A suspended Vercel instance keeps its sockets while Neon drops them, which would hand
+  // the next request a dead connection. This holds the instance until the pool drains.
+  // Outside Vercel it does nothing.
+  attachDatabasePool(pool);
 
   // Without this, a dropped Neon connection surfaces as an unhandled rejection that
   // takes the process down instead of being retried on the next query.

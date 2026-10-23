@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/webroutes/[...slug]/route";
+import { closePool, getPool } from "@/lib/server/pg";
 import {
   BRAND_THEME_PRESETS,
   COLLECTIONS_DATA,
@@ -63,3 +64,40 @@ describe("public build", () => {
   });
 });
 
+describe("database pool on Vercel", () => {
+  const requestContext = Symbol.for("@vercel/request-context");
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    delete (globalThis as Record<symbol, unknown>)[requestContext];
+    vi.unstubAllEnvs();
+    await closePool();
+  });
+
+  // A suspended instance keeps its sockets; Neon drops them meanwhile, so the next request
+  // would be handed a dead connection unless the pool drained before the suspend.
+  it("keeps the instance awake until released connections have idled out", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("DATABASE_URL", "postgresql://krave:secret@db.example.invalid/krave");
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL_URL", "krave.vercel.app");
+    vi.stubEnv("VERCEL_REGION", "sin1");
+    const pending: Promise<unknown>[] = [];
+    (globalThis as Record<symbol, unknown>)[requestContext] = {
+      get: () => ({ waitUntil: (promise: Promise<unknown>) => pending.push(promise) }),
+    };
+
+    const pool = getPool();
+    // Short, so an idle instance is not billed for long before it may suspend.
+    expect(pool.options.idleTimeoutMillis).toBeLessThanOrEqual(5_000);
+
+    pool.emit("release", undefined, {});
+    expect(pending).toHaveLength(1);
+    let drained = false;
+    void pending[0].then(() => {
+      drained = true;
+    });
+    await vi.advanceTimersByTimeAsync((pool.options.idleTimeoutMillis ?? 0) + 100);
+    expect(drained).toBe(true);
+  });
+});

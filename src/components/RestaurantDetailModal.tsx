@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useActionState, useEffect, useRef, useState } from "react";
+import React, { useActionState, useEffect, useReducer, useRef, useState } from "react";
 import {
   X,
   Star,
@@ -27,7 +27,8 @@ import {
   RestaurantEntity,
   RestaurantReview,
 } from "@/types/krave";
-import { calculateDiningPayBill } from "@/lib/cartEngine";
+import { calculateDiningPayBill, CART_LIMITS, dishModifierGroups } from "@/lib/cartEngine";
+import { customiserProblem, customiserReducer } from "@/lib/dishCustomiser";
 import { ALLERGENS, allergenLabels, dishAllergenStatus, portionSummary } from "@/lib/checkout";
 
 interface ReviewFormState {
@@ -74,11 +75,7 @@ export function RestaurantDetailModal({
   const [bestsellerOnly, setBestsellerOnly] = useState(false);
   const [avoiding, setAvoiding] = useState<string[]>([]);
 
-  // Dish Customization Modal State
-  const [customizingDish, setCustomizingDish] = useState<DishItem | null>(null);
-  const [selectedOptions, setSelectedOptions] = useState<ModifierOption[]>([]);
-  const [dishQty, setDishQty] = useState(1);
-  const [cookingNote, setCookingNote] = useState("");
+  const [customiser, dispatchCustomiser] = useReducer(customiserReducer, null);
 
   // Dining Table Reservation State
   const [bookingDate, setBookingDate] = useState("Today, Oct 22");
@@ -111,64 +108,32 @@ export function RestaurantDetailModal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      if (customizingDish) {
-        setCustomizingDish(null);
+      if (customiser) {
+        dispatchCustomiser({ type: "CLOSE" });
       } else {
         onClose();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [customizingDish, onClose]);
+  }, [customiser, onClose]);
 
   const openDishCustomizer = (dish: DishItem) => {
-    setCustomizingDish(dish);
-    setDishQty(1);
-    setCookingNote("");
-    const defaults: ModifierOption[] = [];
-    for (const groupId of dish.modifier_group_ids) {
-      const group = restaurant.modifierGroups[groupId];
-      if (group) {
-        const defOpt = group.options.find((o) => o.isDefault) || (group.required ? group.options[0] : undefined);
-        if (defOpt) defaults.push(defOpt);
-      }
-    }
-    setSelectedOptions(defaults);
+    dispatchCustomiser({ type: "OPEN", dish, groups: dishModifierGroups(restaurant, dish) });
   };
 
-  const toggleModifierOption = (groupId: string, option: ModifierOption) => {
-    const group = restaurant.modifierGroups[groupId];
-    if (!group) return;
-
-    if (group.maxSelect === 1) {
-      const otherIds = new Set(group.options.map((o) => o.id));
-      const withoutGroup = selectedOptions.filter((o) => !otherIds.has(o.id));
-      setSelectedOptions([...withoutGroup, option]);
-    } else {
-      const exists = selectedOptions.some((o) => o.id === option.id);
-      if (exists) {
-        setSelectedOptions(selectedOptions.filter((o) => o.id !== option.id));
-      } else {
-        const countInGroup = selectedOptions.filter((o) =>
-          group.options.some((go) => go.id === o.id)
-        ).length;
-        if (countInGroup < group.maxSelect) {
-          setSelectedOptions([...selectedOptions, option]);
-        }
-      }
-    }
-  };
+  const customiserBlocked = customiser ? customiserProblem(customiser) : null;
 
   const confirmDishCustomization = () => {
-    if (!customizingDish) return;
+    if (!customiser || customiserBlocked) return;
     onAddToCart(
       restaurant,
-      customizingDish,
-      dishQty,
-      selectedOptions,
-      cookingNote.trim() || undefined
+      customiser.dish,
+      customiser.quantity,
+      customiser.options,
+      customiser.note.trim() || undefined
     );
-    setCustomizingDish(null);
+    dispatchCustomiser({ type: "CLOSE" });
   };
 
   const handleConfirmBooking = async (e: React.FormEvent) => {
@@ -1154,11 +1119,11 @@ export function RestaurantDetailModal({
         </div>
 
         {/* Nested Dish Customization Modal */}
-        {customizingDish && (
+        {customiser && (
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={`Customise ${customizingDish.name}`}
+            aria-label={`Customise ${customiser.dish.name}`}
             data-testid="dish-customization-modal"
             className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
@@ -1174,29 +1139,26 @@ export function RestaurantDetailModal({
                   <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">
                     Customise Your Dish
                   </span>
-                  <h4 className="font-black text-lg">{customizingDish.name}</h4>
-                  <p className="text-xs opacity-65">Base Price: ₹{customizingDish.price}</p>
+                  <h4 className="font-black text-lg">{customiser.dish.name}</h4>
+                  <p className="text-xs opacity-65">Base Price: ₹{customiser.dish.price}</p>
                 </div>
                 <button
                   type="button"
                   aria-label="Close dish customisation"
-                  onClick={() => setCustomizingDish(null)}
+                  onClick={() => dispatchCustomiser({ type: "CLOSE" })}
                   className="p-1.5 rounded-full hover:bg-white/10"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {customizingDish.modifier_group_ids.length === 0 ? (
+              {customiser.groups.length === 0 ? (
                 <p className="text-xs opacity-70">
                   Prepared to chef&apos;s signature specification. Add any special cooking note below.
                 </p>
               ) : (
                 <div className="space-y-4">
-                  {customizingDish.modifier_group_ids.map((groupId) => {
-                    const group = restaurant.modifierGroups[groupId];
-                    if (!group) return null;
-                    return (
+                  {customiser.groups.map((group) => (
                       <div key={group.id} className="space-y-2">
                         <div>
                           <div className="text-xs font-extrabold">{group.title}</div>
@@ -1204,12 +1166,15 @@ export function RestaurantDetailModal({
                         </div>
                         <div className="space-y-1.5">
                           {group.options.map((opt) => {
-                            const checked = selectedOptions.some((o) => o.id === opt.id);
+                            const checked = customiser.options.some((o) => o.id === opt.id);
                             return (
                               <button
                                 key={opt.id}
                                 type="button"
-                                onClick={() => toggleModifierOption(group.id, opt)}
+                                aria-pressed={checked}
+                                onClick={() =>
+                                  dispatchCustomiser({ type: "TOGGLE_OPTION", groupId: group.id, option: opt })
+                                }
                                 className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-xs transition ${
                                   checked
                                     ? "border-emerald-500 bg-emerald-500/15 font-bold"
@@ -1228,8 +1193,7 @@ export function RestaurantDetailModal({
                           })}
                         </div>
                       </div>
-                    );
-                  })}
+                  ))}
                 </div>
               )}
 
@@ -1239,8 +1203,9 @@ export function RestaurantDetailModal({
                 </label>
                 <input
                   type="text"
-                  value={cookingNote}
-                  onChange={(e) => setCookingNote(e.target.value)}
+                  maxLength={CART_LIMITS.maxInstructionLength}
+                  value={customiser.note}
+                  onChange={(e) => dispatchCustomiser({ type: "SET_NOTE", note: e.target.value })}
                   placeholder="e.g. Less spicy, pack chutneys separately"
                   className={`w-full p-2.5 rounded-xl border text-xs ${
                     isDark ? "bg-[#0E131D] border-white/15" : "bg-slate-50 border-slate-200"
@@ -1248,20 +1213,30 @@ export function RestaurantDetailModal({
                 />
               </div>
 
+              {customiserBlocked && (
+                <p role="status" data-testid="customiser-problem" className="text-[11px] font-bold text-amber-400">
+                  {customiserBlocked}
+                </p>
+              )}
+
               <div className="flex items-center justify-between gap-3 pt-2">
                 <div className="flex items-center border border-current/20 rounded-xl overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => setDishQty((q) => Math.max(1, q - 1))}
-                    className="px-3 py-2 text-sm font-black hover:bg-white/10"
+                    aria-label="One fewer"
+                    disabled={customiser.quantity <= 1}
+                    onClick={() => dispatchCustomiser({ type: "STEP_QUANTITY", delta: -1 })}
+                    className="px-3 py-2 text-sm font-black hover:bg-white/10 disabled:opacity-40"
                   >
                     -
                   </button>
-                  <span className="px-3 py-2 text-xs font-black">{dishQty}</span>
+                  <span className="px-3 py-2 text-xs font-black">{customiser.quantity}</span>
                   <button
                     type="button"
-                    onClick={() => setDishQty((q) => q + 1)}
-                    className="px-3 py-2 text-sm font-black hover:bg-white/10"
+                    aria-label="One more"
+                    disabled={customiser.quantity >= CART_LIMITS.maxLineQuantity}
+                    onClick={() => dispatchCustomiser({ type: "STEP_QUANTITY", delta: 1 })}
+                    className="px-3 py-2 text-sm font-black hover:bg-white/10 disabled:opacity-40"
                   >
                     +
                   </button>
@@ -1270,14 +1245,15 @@ export function RestaurantDetailModal({
                 <button
                   type="button"
                   onClick={confirmDishCustomization}
+                  disabled={customiserBlocked !== null}
                   data-testid="confirm-add-to-cart-btn"
-                  className="flex-1 py-3 px-4 rounded-xl text-xs font-black text-white shadow-lg"
+                  className="flex-1 py-3 px-4 rounded-xl text-xs font-black text-white shadow-lg disabled:opacity-50"
                   style={{ backgroundColor: theme.primaryHex }}
                 >
                   Add Item to Cart • ₹
-                  {(customizingDish.price +
-                    selectedOptions.reduce((s, o) => s + o.price, 0)) *
-                    dishQty}
+                  {(customiser.dish.price +
+                    customiser.options.reduce((s, o) => s + o.price, 0)) *
+                    customiser.quantity}
                 </button>
               </div>
             </div>

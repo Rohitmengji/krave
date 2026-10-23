@@ -214,6 +214,10 @@ export interface CouponOffer {
   value: number;
   maxDiscount: number;
   minOrder: number;
+  membersOnly?: boolean;
+  /** Must match one of `DEMO_PAYMENT_METHODS`. */
+  requiresPaymentMethod?: string;
+  firstOrderOnly?: boolean;
 }
 
 export interface CartQuote {

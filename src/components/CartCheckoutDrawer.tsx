@@ -2,6 +2,7 @@
 
 import React, { useEffect, useEffectEvent, useRef, useState } from "react";
 import { allergenLabels, DELIVERY_SLOTS, DEMO_PAYMENT_METHODS, KITCHEN_FLAGS, type KitchenHandling } from "@/lib/checkout";
+import { CART_LIMITS } from "@/lib/cartEngine";
 import {
   X,
   ShoppingBag,
@@ -34,6 +35,8 @@ interface CartCheckoutDrawerProps {
   quote: CartQuote;
   coupons: CouponOffer[];
   appliedCoupon: string | null;
+  /** Why the applied coupon cannot be used by this customer right now, if it cannot. */
+  couponBlockedReason: string | null;
   onApplyCoupon: (code: string | null) => void;
   riderTip: number;
   onSelectRiderTip: (tip: number) => void;
@@ -43,6 +46,8 @@ interface CartCheckoutDrawerProps {
   onUpdateQuantity: (lineItemId: string, quantity: number) => void;
   onClearCart: () => void;
   onPlaceOrder: (paymentMethod: string, zpayEvents: ZPayKitEventRecord[]) => Promise<void>;
+  paymentMethod: string;
+  onSelectPaymentMethod: (method: string) => void;
   checkoutPending: boolean;
   checkoutError: string | null;
   scheduledSlot: string;
@@ -62,6 +67,7 @@ export function CartCheckoutDrawer({
   quote,
   coupons,
   appliedCoupon,
+  couponBlockedReason,
   onApplyCoupon,
   riderTip,
   onSelectRiderTip,
@@ -71,6 +77,8 @@ export function CartCheckoutDrawer({
   onUpdateQuantity,
   onClearCart,
   onPlaceOrder,
+  paymentMethod: selectedPayment,
+  onSelectPaymentMethod,
   checkoutPending,
   checkoutError,
   scheduledSlot,
@@ -96,9 +104,6 @@ export function CartCheckoutDrawer({
       if (dialog.open) dialog.close();
     };
   }, [isOpen]);
-  const [selectedPayment, setSelectedPayment] = useState<string>(
-    DEMO_PAYMENT_METHODS[0]
-  );
   const [zpayEvents, setZpayEvents] = useState<ZPayKitEventRecord[]>([
     {
       id: "zp_init",
@@ -146,7 +151,7 @@ export function CartCheckoutDrawer({
   };
 
   const handleSelectPaymentMethod = (method: string) => {
-    setSelectedPayment(method);
+    onSelectPaymentMethod(method);
     pushZpayEvent("HOST_TO_WIDGET", "change_billing_details", {
       paymentMethod: method,
       quoteId: quote.quoteId,
@@ -417,6 +422,7 @@ export function CartCheckoutDrawer({
                     <div className="flex items-center border border-current/20 rounded-xl overflow-hidden">
                       <button
                         type="button"
+                        aria-label={`One fewer ${li.item.name}`}
                         onClick={() =>
                           onUpdateQuantity(li.lineItemId, li.quantity - 1)
                         }
@@ -429,10 +435,12 @@ export function CartCheckoutDrawer({
                       </span>
                       <button
                         type="button"
+                        aria-label={`One more ${li.item.name}`}
+                        disabled={li.quantity >= CART_LIMITS.maxLineQuantity}
                         onClick={() =>
                           onUpdateQuantity(li.lineItemId, li.quantity + 1)
                         }
-                        className="px-2.5 py-1 text-xs font-black hover:bg-white/10"
+                        className="px-2.5 py-1 text-xs font-black hover:bg-white/10 disabled:opacity-40"
                       >
                         +
                       </button>
@@ -526,7 +534,9 @@ export function CartCheckoutDrawer({
 
               {appliedCoupon && quote.couponCode !== appliedCoupon && (
                 <p className="text-[11px] text-amber-400" data-testid="coupon-not-applied">
-                  {appliedCoupon} is not applied: this cart does not meet its conditions yet.
+                  {couponBlockedReason
+                    ? `${couponBlockedReason} It will apply once that changes.`
+                    : `${appliedCoupon} is not applied: this cart does not meet its conditions yet.`}
                 </p>
               )}
             </div>

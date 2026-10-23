@@ -4,6 +4,7 @@ import {
   CartQuote,
   DiscoveryTabKey,
   DishItem,
+  ModifierGroup,
   ModifierOption,
   RestaurantEntity,
 } from "@/types/krave";
@@ -122,6 +123,135 @@ function validateQuantity(quantity: number, allowZero = false): void {
   if (!Number.isSafeInteger(quantity) || quantity < (allowZero ? 0 : 1)) {
     throw new Error("Quantity must be a positive whole number; use zero to remove a cart line.");
   }
+}
+
+/**
+ * Limits checked when an order is placed, never when a stored order is replayed: tightening
+ * a limit must not erase history that was valid when it was written.
+ */
+export const CART_LIMITS = {
+  maxLineQuantity: 50,
+  maxLines: 30,
+  maxInstructionLength: 200,
+  maxRiderTip: 500,
+} as const;
+
+/** Why this cart cannot be placed as it stands, or null. */
+export function cartLimitViolation(items: CartLineItem[], riderTip = 0): string | null {
+  if (items.length > CART_LIMITS.maxLines) {
+    return `A cart can hold up to ${CART_LIMITS.maxLines} different dishes.`;
+  }
+  for (const line of items) {
+    if (line.quantity > CART_LIMITS.maxLineQuantity) {
+      return `You can order up to ${CART_LIMITS.maxLineQuantity} of ${line.item.name} at a time.`;
+    }
+    if ((line.cookingInstruction?.length ?? 0) > CART_LIMITS.maxInstructionLength) {
+      return `Keep the note for ${line.item.name} to ${CART_LIMITS.maxInstructionLength} characters.`;
+    }
+  }
+  if (riderTip > CART_LIMITS.maxRiderTip) {
+    return `Rider tips are capped at ₹${CART_LIMITS.maxRiderTip}.`;
+  }
+  return null;
+}
+
+export interface CouponContext {
+  isGoldMember: boolean;
+  /** Payment-bound offers are only judged once a method is known. */
+  paymentMethod?: string;
+  /** First-order offers are only judged when the customer's history is known. */
+  hasOrderedBefore?: boolean;
+}
+
+/**
+ * Why this customer cannot use a coupon, or null. Cart-size rules (`minOrder`) stay in
+ * `calculateCartQuote`; these are about who is paying and how, so they are checked at
+ * placement and in the browser's quote, but not when a stored order is replayed.
+ */
+export function couponIneligibility(
+  code: string | null | undefined,
+  context: CouponContext
+): string | null {
+  if (!code) return null;
+  const coupon = COUPON_OFFERS.find((offer) => offer.code === code.trim().toUpperCase());
+  if (!coupon) return null;
+  if (coupon.membersOnly && !context.isGoldMember) {
+    return `${coupon.code} is a members-only offer.`;
+  }
+  if (
+    coupon.requiresPaymentMethod &&
+    context.paymentMethod !== undefined &&
+    context.paymentMethod !== coupon.requiresPaymentMethod
+  ) {
+    return `${coupon.code} applies only when you pay with ${coupon.requiresPaymentMethod}.`;
+  }
+  if (coupon.firstOrderOnly && context.hasOrderedBefore === true) {
+    return `${coupon.code} is a welcome offer for a first order.`;
+  }
+  return null;
+}
+
+/** The options a dish starts with: each group's defaults, topped up to its minimum. */
+export function defaultModifierSelection(groups: ModifierGroup[]): ModifierOption[] {
+  return groups.flatMap((group) => {
+    const chosen = group.options.filter((option) => option.isDefault).slice(0, group.maxSelect);
+    for (const option of group.options) {
+      if (chosen.length >= group.minSelect) break;
+      if (!chosen.includes(option)) chosen.push(option);
+    }
+    return chosen;
+  });
+}
+
+/**
+ * Select or clear one option. A single choice swaps; a required single choice cannot be
+ * emptied; a multi-choice stops at its maximum. Returns `selected` itself when nothing changes.
+ */
+export function applyModifierToggle(
+  group: ModifierGroup,
+  selected: ModifierOption[],
+  option: ModifierOption
+): ModifierOption[] {
+  const inGroup = new Set(group.options.map((candidate) => candidate.id));
+  if (!inGroup.has(option.id)) return selected;
+  if (selected.some((candidate) => candidate.id === option.id)) {
+    if (group.maxSelect === 1 && group.minSelect >= 1) return selected;
+    return selected.filter((candidate) => candidate.id !== option.id);
+  }
+  if (group.maxSelect === 1) {
+    return [...selected.filter((candidate) => !inGroup.has(candidate.id)), option];
+  }
+  const countInGroup = selected.filter((candidate) => inGroup.has(candidate.id)).length;
+  return countInGroup < group.maxSelect ? [...selected, option] : selected;
+}
+
+/** The first group whose selection breaks its rules, as a message for the customer. */
+export function modifierSelectionProblem(
+  groups: ModifierGroup[],
+  selectedIds: ReadonlySet<string>
+): string | null {
+  for (const group of groups) {
+    const count = group.options.filter((option) => selectedIds.has(option.id)).length;
+    if (count < group.minSelect) {
+      return group.minSelect === 1
+        ? `Choose an option for ${group.title}.`
+        : `Choose at least ${group.minSelect} for ${group.title}.`;
+    }
+    if (count > group.maxSelect) {
+      return `Choose up to ${group.maxSelect} for ${group.title}.`;
+    }
+  }
+  return null;
+}
+
+export function dishModifierGroups(
+  restaurant: Pick<RestaurantEntity, "modifierGroups">,
+  dish: Pick<DishItem, "modifier_group_ids">
+): ModifierGroup[] {
+  return dish.modifier_group_ids.flatMap((id) => {
+    const group = restaurant.modifierGroups[id];
+    return group ? [group] : [];
+  });
 }
 
 export function addOrIncrementCartItem(

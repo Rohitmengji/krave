@@ -78,8 +78,14 @@ import {
 import {
   addOrIncrementCartItem,
   calculateCartQuote,
+  CART_LIMITS,
+  cartLimitViolation,
+  couponIneligibility,
+  defaultModifierSelection,
+  dishModifierGroups,
   filterAndSortRestaurants,
   findDishAcrossRestaurants,
+  modifierSelectionProblem,
   removeOrderedLines,
   updateCartLineQuantity,
 } from "@/lib/cartEngine";
@@ -278,6 +284,8 @@ export function KraveApp({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  // Part of the quote, not just the drawer: some offers are bound to how the customer pays.
+  const [paymentMethod, setPaymentMethod] = useState<string>(DEMO_PAYMENT_METHODS[0]);
   const checkoutLock = useRef(false);
   // In-memory copy of the pending checkout intent; sessionStorage covers a reload.
   const checkoutIntent = useRef<CheckoutIntent | null>(null);
@@ -407,15 +415,22 @@ export function KraveApp({
     [activeMode]
   );
 
+  // The applied code stays saved; it is simply not quoted while this customer cannot use it,
+  // so switching to a card or turning on membership brings it straight back.
+  const couponBlockedReason = couponIneligibility(appliedCoupon, { isGoldMember, paymentMethod });
+  const usableCoupon = couponBlockedReason ? null : appliedCoupon;
+
   const cartQuote = useMemo(
     () =>
       calculateCartQuote(cartItems, {
-        couponCode: appliedCoupon,
+        couponCode: usableCoupon,
         isGoldMember,
         riderTip,
       }),
-    [cartItems, appliedCoupon, isGoldMember, riderTip]
+    [cartItems, usableCoupon, isGoldMember, riderTip]
   );
+  // The lock must be issued for exactly what placement will send, or it can never apply.
+  const quotedCoupon = cartQuote.couponCode;
 
   // The lock is issued by the server against the exact cart, so it is refreshed whenever
   // the cart changes. Stale replies are dropped: a lock for a cart the user has already
@@ -439,8 +454,8 @@ export function KraveApp({
               optionIds: line.selectedOptions.map((option) => option.id),
             })),
             addressId: currentAddress.id,
-            paymentMethod: DEMO_PAYMENT_METHODS[0],
-            couponCode: appliedCoupon,
+            paymentMethod,
+            couponCode: quotedCoupon,
             isGoldMember,
             riderTip,
           }),
@@ -459,13 +474,14 @@ export function KraveApp({
       }
     })();
     return () => controller.abort();
-  }, [cartItems, appliedCoupon, isGoldMember, riderTip, currentAddress.id]);
+  }, [cartItems, quotedCoupon, paymentMethod, isGoldMember, riderTip, currentAddress.id]);
 
   const handleAddToCart = (
     restaurant: RestaurantEntity,
     dish: DishItem,
     quantity: number,
-    selectedOptions: ModifierOption[] = [],
+    // Omitted by quick-add, which takes the defaults. An empty array is a real choice.
+    selectedOptions?: ModifierOption[],
     cookingInstruction?: string
   ) => {
     if (checkoutLock.current) return;
@@ -473,30 +489,31 @@ export function KraveApp({
       showToast(`${dish.name} is marked unavailable right now.`);
       return;
     }
+    const groups = dishModifierGroups(restaurant, dish);
+    const options = selectedOptions ?? defaultModifierSelection(groups);
+    const selectionProblem = modifierSelectionProblem(groups, new Set(options.map((option) => option.id)));
+    if (selectionProblem) {
+      showToast(selectionProblem);
+      return;
+    }
     if (cartItems.length && cartItems[0].resId !== restaurant.resId &&
         !window.confirm(`Replace your ${cartItems[0].restaurantName} cart with items from ${restaurant.name}?`)) return;
-    const options = selectedOptions.length ? selectedOptions : dish.modifier_group_ids.flatMap((id) => {
-      const group = restaurant.modifierGroups[id];
-      return group.required ? group.options.filter((option) => option.isDefault).slice(0, group.maxSelect) : [];
+    // Judged against the cart as stored now, which another tab may have changed since render.
+    const outcome = { refusal: null as string | null };
+    updateSession("cartItems", (prev) => {
+      const next = addOrIncrementCartItem(prev, restaurant, dish, quantity, options, cookingInstruction);
+      outcome.refusal = cartLimitViolation(next);
+      return outcome.refusal ? prev : next;
     });
-    updateSession("cartItems", (prev) =>
-      addOrIncrementCartItem(
-        prev,
-        restaurant,
-        dish,
-        quantity,
-        options,
-        cookingInstruction
-      )
-    );
-    showToast(`Added ${quantity}× ${dish.name} to ${restaurant.name} cart`);
+    showToast(outcome.refusal ?? `Added ${quantity}× ${dish.name} to ${restaurant.name} cart`);
   };
 
   const handleUpdateCartQuantity = (lineItemId: string, quantity: number) => {
-    updateSession("cartItems", (prev) => updateCartLineQuantity(prev, lineItemId, quantity));
+    const bounded = Math.min(quantity, CART_LIMITS.maxLineQuantity);
+    updateSession("cartItems", (prev) => updateCartLineQuantity(prev, lineItemId, bounded));
   };
 
-  const handlePlaceOrder = async (paymentMethod: string) => {
+  const handlePlaceOrder = async () => {
     if (checkoutLock.current || !cartItems.length) return;
     const blocked = cartItems.find((line) => unavailableItemIds.includes(line.item.id));
     if (blocked) {
@@ -819,7 +836,7 @@ export function KraveApp({
       case "zomato_add_item_to_cart": {
         const found = findDishAcrossRestaurants("ctl_dal_bukhara");
         if (found) {
-          handleAddToCart(found.restaurant, found.dish, 1, []);
+          handleAddToCart(found.restaurant, found.dish, 1);
         }
         return {
           ok: true,
@@ -892,7 +909,7 @@ export function KraveApp({
         onSelectRestaurant={(res, tab = "menu") =>
           setSelectedRestaurant({ restaurant: res, initialTab: tab })
         }
-        onQuickAddDish={(res, dish) => handleAddToCart(res, dish, 1, [])}
+        onQuickAddDish={(res, dish) => handleAddToCart(res, dish, 1)}
         isGoldMember={isGoldMember}
         onToggleGold={handleToggleGold}
         cartCount={cartQuote.itemCount}
@@ -1766,6 +1783,7 @@ export function KraveApp({
         quote={cartQuote}
         coupons={COUPON_OFFERS}
         appliedCoupon={appliedCoupon}
+        couponBlockedReason={couponBlockedReason}
         onApplyCoupon={(code) => updateSession("couponCode", code)}
         riderTip={riderTip}
         onSelectRiderTip={(tip) => updateSession("riderTip", tip)}
@@ -1774,7 +1792,9 @@ export function KraveApp({
         currentAddress={currentAddress}
         onUpdateQuantity={handleUpdateCartQuantity}
         onClearCart={() => updateSession("cartItems", [])}
-        onPlaceOrder={(method) => handlePlaceOrder(method)}
+        onPlaceOrder={() => handlePlaceOrder()}
+        paymentMethod={paymentMethod}
+        onSelectPaymentMethod={setPaymentMethod}
         checkoutPending={checkoutPending}
         checkoutError={checkoutError}
         scheduledSlot={scheduledSlot}

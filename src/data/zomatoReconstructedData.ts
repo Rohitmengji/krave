@@ -246,6 +246,7 @@ export const COUPON_OFFERS: CouponOffer[] = [
     value: 50,
     maxDiscount: 175,
     minOrder: 299,
+    firstOrderOnly: true,
   },
   {
     code: "GOLDVIP",
@@ -256,6 +257,7 @@ export const COUPON_OFFERS: CouponOffer[] = [
     value: 250,
     maxDiscount: 250,
     minOrder: 999,
+    membersOnly: true,
   },
   {
     code: "ZPAYAXIS",
@@ -266,6 +268,7 @@ export const COUPON_OFFERS: CouponOffer[] = [
     value: 20,
     maxDiscount: 300,
     minOrder: 750,
+    requiresPaymentMethod: "Card (demo)",
   },
   {
     code: "MIDNIGHT120",

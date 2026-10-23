@@ -1,5 +1,13 @@
 import { BRAND_THEME_PRESETS, COUPON_OFFERS, RESTAURANTS_DATA, SAVED_ADDRESSES } from "@/data/zomatoReconstructedData";
-import { addOrIncrementCartItem, calculateCartQuote, findDishAcrossRestaurants } from "./cartEngine";
+import {
+  addOrIncrementCartItem,
+  calculateCartQuote,
+  CART_LIMITS,
+  cartLimitViolation,
+  couponIneligibility,
+  findDishAcrossRestaurants,
+  modifierSelectionProblem,
+} from "./cartEngine";
 import { newId } from "./ids";
 import type {
   CartLineItem,
@@ -18,7 +26,7 @@ export const AVAILABILITY_KEY = "krave.availability.v1";
 export const NOTIFICATIONS_KEY = "krave.notifications.v1";
 export const ORDER_STAGES = ["ORDER_CONFIRMED", "KITCHEN_PREPARING", "RIDER_ASSIGNED", "OUT_FOR_DELIVERY", "ARRIVED"] as const;
 export const DISCOVERY_MODES = ["delivery", "dineout", "nightlife"] as const;
-export const MAX_RIDER_TIP = 500;
+export const MAX_RIDER_TIP = CART_LIMITS.maxRiderTip;
 
 /**
  * Fixed demo windows rather than clock-derived ones, so the server and the browser always
@@ -202,8 +210,11 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** Rebuild prices and options from the local catalog, never from client totals. */
-export function validateCheckout(input: unknown) {
+/**
+ * Structural checks and catalog pricing only. Shared by placement and by the replay of stored
+ * orders, so it must never gain a rule that an order already on record could fail.
+ */
+function parseCheckout(input: unknown) {
   const body = record(input);
   if (!Array.isArray(body.items) || body.items.length === 0) {
     throw new Error("Add at least one item before checkout.");
@@ -244,12 +255,8 @@ export function validateCheckout(input: unknown) {
     if (optionIds.size !== line.optionIds.length || options.length !== optionIds.size) {
       throw new Error("A selected dish option is invalid.");
     }
-    for (const group of groups) {
-      const count = group.options.filter((option) => optionIds.has(option.id)).length;
-      if (count < group.minSelect || count > group.maxSelect) {
-        throw new Error(`Check your selection for ${group.title}.`);
-      }
-    }
+    const selectionProblem = modifierSelectionProblem(groups, optionIds);
+    if (selectionProblem) throw new Error(selectionProblem);
     if (line.cookingInstruction !== undefined && typeof line.cookingInstruction !== "string") {
       throw new Error("Cooking instructions must be text.");
     }
@@ -267,14 +274,47 @@ export function validateCheckout(input: unknown) {
     address,
     restaurant,
     paymentMethod: String(body.paymentMethod),
+    isGoldMember: body.isGoldMember === true,
     scheduledSlot,
     handling: validateKitchenHandling(body.handling),
   };
 }
 
+export interface PlacementContext {
+  /** Known only for signed-in customers; when given, first-order offers are enforced. */
+  hasOrderedBefore?: boolean;
+}
+
+/**
+ * The gate for a new order: catalog pricing plus the rules that only apply going forward
+ * (size limits, tip cap, who may use which coupon). Prices are rebuilt from the catalog,
+ * never taken from client totals.
+ */
+export function validateCheckout(input: unknown, context: PlacementContext = {}) {
+  const body = record(input);
+  // Bounded before the per-line catalog lookups, so an oversized request costs nothing.
+  if (Array.isArray(body.items) && body.items.length > CART_LIMITS.maxLines) {
+    throw new Error(`A cart can hold up to ${CART_LIMITS.maxLines} different dishes.`);
+  }
+  const checkout = parseCheckout(body);
+  const limit = cartLimitViolation(checkout.items, checkout.quote.riderTip);
+  if (limit) throw new Error(limit);
+  const couponProblem = couponIneligibility(checkout.quote.couponCode, {
+    isGoldMember: checkout.isGoldMember,
+    paymentMethod: checkout.paymentMethod,
+    hasOrderedBefore: context.hasOrderedBefore,
+  });
+  if (couponProblem) throw new Error(couponProblem);
+  return checkout;
+}
+
+/**
+ * Builds an order from input `validateCheckout` has already accepted. It is also how stored
+ * orders are replayed, so it deliberately skips the placement-only rules.
+ */
 export function createDemoOrder(input: unknown): CrystalOrderState {
   const { items, quote, address, restaurant, paymentMethod, scheduledSlot, handling } =
-    validateCheckout(input);
+    parseCheckout(input);
   return {
     orderId: `KRV-${newId()}`,
     resId: restaurant.resId,
@@ -377,7 +417,9 @@ export function createValidatedReservation(input: unknown): DiningReservation {
       : "LUXE";
 
   return {
-    bookingId: `TBL-${newId().slice(0, 8).toUpperCase()}`,
+    // Read aloud at the host stand, so it stays short; 48 random bits still makes a clash on
+    // the primary key vanishingly rare, and one would fail the insert before anything else.
+    bookingId: `TBL-${newId().replace(/-/g, "").slice(0, 12).toUpperCase()}`,
     resId: restaurant.resId,
     restaurantName: restaurant.name,
     locality: restaurant.locality,
@@ -478,7 +520,7 @@ export function createValidatedReview(
   const verifiedPurchase = options.verifiedPurchase === true;
 
   return {
-    id: `rev_${newId().slice(0, 8)}`,
+    id: `rev_${newId()}`,
     userName,
     userAvatar: initials,
     userHandle: `@${userName.toLowerCase().replace(/[^a-z0-9]+/g, ".")}`,
@@ -563,13 +605,21 @@ export function restoreSessionState(serialized: string | null): KraveSessionStat
           found.dish,
           line.quantity,
           options,
-          typeof line.cookingInstruction === "string" ? line.cookingInstruction : undefined
+          typeof line.cookingInstruction === "string"
+            ? line.cookingInstruction.slice(0, CART_LIMITS.maxInstructionLength)
+            : undefined
         );
       } catch {
         continue;
       }
     }
   }
+  // A cart saved before the limits existed is trimmed to one that can still be placed.
+  cartItems = cartItems.slice(0, CART_LIMITS.maxLines).map((line) =>
+    line.quantity > CART_LIMITS.maxLineQuantity
+      ? { ...line, quantity: CART_LIMITS.maxLineQuantity }
+      : line
+  );
 
   const address = SAVED_ADDRESSES.find((candidate) => candidate.id === body.addressId);
   const theme = BRAND_THEME_PRESETS.find((candidate) => candidate.id === body.themeId);
@@ -717,7 +767,8 @@ export function createNotification(
   body: string
 ): KraveNotification {
   return {
-    id: `ntf_${newId().slice(0, 8)}`,
+    // Full length: a clash on this primary key used to fail after the order was already saved.
+    id: `ntf_${newId()}`,
     kind,
     title: title.trim().slice(0, 90),
     body: body.trim().slice(0, 240),

@@ -1,4 +1,5 @@
-import { one, rows, run, transaction } from "./pg";
+import { one, rows, run, transaction, type Queryable } from "./pg";
+import { createDeliveryTicket } from "./kitchenStore";
 import {
   createDemoOrder,
   createNotification,
@@ -15,48 +16,85 @@ import type { CrystalOrderState, DiningReservation } from "@/types/krave";
  * Orders are stored as the inputs that produced them, never as client totals. Reading an
  * order replays it through the same validator the API uses, so a row cannot inflate a price.
  */
+/**
+ * Writes the order row and its lines on the caller's transaction.
+ *
+ * Returns false, having written nothing, when this user already has an order under the
+ * same idempotency key. The partial unique index decides, so two concurrent retries of
+ * one checkout cannot both get through a check-then-insert.
+ */
+async function insertOrder(
+  client: Queryable,
+  userId: string,
+  order: CrystalOrderState,
+  input: { addressId: string; idempotencyKey: string | null }
+): Promise<boolean> {
+  const inserted = await client.query(
+    `INSERT INTO orders (id, user_id, res_id, address_id, payment_method, coupon_code,
+       is_gold_member, rider_tip, scheduled_slot, due_at, stage, grand_total, placed_at,
+       idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
+    [
+      order.orderId,
+      userId,
+      order.resId,
+      input.addressId,
+      order.paymentMethod,
+      order.quote.couponCode,
+      order.quote.deliveryFee === 0 ? 1 : 0,
+      order.quote.riderTip,
+      order.scheduledSlot,
+      scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
+      order.stage,
+      order.quote.grandTotal,
+      order.placedAt,
+      input.idempotencyKey,
+    ]
+  );
+  if (inserted.rowCount === 0) return false;
+
+  for (const item of order.items) {
+    await client.query(
+      `INSERT INTO order_lines (order_id, item_id, quantity, option_ids, cooking_instruction)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        order.orderId,
+        item.item.id,
+        item.quantity,
+        JSON.stringify(item.selectedOptions.map((option) => option.id)),
+        item.cookingInstruction ?? null,
+      ]
+    );
+  }
+  return true;
+}
+
 export async function saveOrder(
   userId: string,
   order: CrystalOrderState,
   input: { addressId: string; idempotencyKey: string | null }
-): Promise<void> {
-  await transaction(async (client) => {
-    await client.query(
-      `INSERT INTO orders (id, user_id, res_id, address_id, payment_method, coupon_code,
-         is_gold_member, rider_tip, scheduled_slot, due_at, stage, grand_total, placed_at,
-         idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [
-        order.orderId,
-        userId,
-        order.resId,
-        input.addressId,
-        order.paymentMethod,
-        order.quote.couponCode,
-        order.quote.deliveryFee === 0 ? 1 : 0,
-        order.quote.riderTip,
-        order.scheduledSlot,
-        scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
-        order.stage,
-        order.quote.grandTotal,
-        order.placedAt,
-        input.idempotencyKey,
-      ]
-    );
+): Promise<boolean> {
+  return transaction((client) => insertOrder(client, userId, order, input));
+}
 
-    for (const item of order.items) {
-      await client.query(
-        `INSERT INTO order_lines (order_id, item_id, quantity, option_ids, cooking_instruction)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          order.orderId,
-          item.item.id,
-          item.quantity,
-          JSON.stringify(item.selectedOptions.map((option) => option.id)),
-          item.cookingInstruction ?? null,
-        ]
-      );
-    }
+/**
+ * A signed-in checkout: the order, its kitchen ticket and the confirmation commit together.
+ *
+ * Returns false when the idempotency key was already used; nothing is written then, so a
+ * retry can never leave a second ticket in the kitchen.
+ */
+export async function placeOrder(
+  userId: string,
+  order: CrystalOrderState,
+  input: { addressId: string; idempotencyKey: string | null },
+  confirmation: { title: string; body: string }
+): Promise<boolean> {
+  return transaction(async (client) => {
+    if (!(await insertOrder(client, userId, order, input))) return false;
+    await createDeliveryTicket(order, client);
+    await insertNotification(client, userId, createNotification("ORDER", confirmation.title, confirmation.body));
+    return true;
   });
 }
 
@@ -122,19 +160,32 @@ export async function listOrders(userId: string): Promise<CrystalOrderState[]> {
   });
 }
 
+/**
+ * Moves an order forward to `stage`. Skipping ahead is allowed; moving back is not.
+ *
+ * Tracking updates are fire-and-forget from the browser, so they can arrive out of order.
+ * A late "KITCHEN_PREPARING" after "ARRIVED" is therefore a no-op rather than an error,
+ * and a backwards move can never reopen the cancel window.
+ */
 export async function advanceOrderStage(
   userId: string,
   orderId: string,
   stage: string
 ): Promise<void> {
-  const changed = await run("UPDATE orders SET stage = $1 WHERE id = $2 AND user_id = $3", [
-    stage,
-    orderId,
-    userId,
-  ]);
-  if (changed === 0) {
+  const target = ORDER_STAGES.findIndex((candidate) => candidate === stage);
+  if (target === -1) throw new Error("Provide a known stage.");
+  const found = await one<Record<string, unknown>>(
+    "SELECT 1 FROM orders WHERE id = $1 AND user_id = $2",
+    [orderId, userId]
+  );
+  if (!found) {
     throw new Error("That order is not in your history.");
   }
+  await run(
+    `UPDATE orders SET stage = $1
+     WHERE id = $2 AND user_id = $3 AND array_position($4::text[], stage) < $5`,
+    [stage, orderId, userId, [...ORDER_STAGES], target + 1]
+  );
 }
 
 export async function deleteOrder(userId: string, orderId: string): Promise<void> {
@@ -300,12 +351,20 @@ export async function addNotification(
   body: string
 ): Promise<KraveNotification> {
   const entry = createNotification(kind, title, body);
-  await run(
-    `INSERT INTO notifications (id, user_id, kind, title, body, created_at, read_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
-    [entry.id, userId, entry.kind, entry.title, entry.body, entry.createdAt]
-  );
+  await insertNotification(null, userId, entry);
   return entry;
+}
+
+async function insertNotification(
+  client: Queryable | null,
+  userId: string,
+  entry: KraveNotification
+): Promise<void> {
+  const sql = `INSERT INTO notifications (id, user_id, kind, title, body, created_at, read_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL)`;
+  const params = [entry.id, userId, entry.kind, entry.title, entry.body, entry.createdAt];
+  if (client) await client.query(sql, params);
+  else await run(sql, params);
 }
 
 export async function listNotifications(userId: string): Promise<KraveNotification[]> {

@@ -1,5 +1,4 @@
-import type { PoolClient } from "pg";
-import { one, rows, transaction } from "./pg";
+import { one, rows, transaction, type Queryable } from "./pg";
 import { findDishAcrossRestaurants } from "@/lib/cartEngine";
 import {
   calculatePosBill,
@@ -42,7 +41,7 @@ function repriceSession(session: PosTableSession): PosTableSession {
 class StaleRevisionError extends Error {}
 
 async function writeSession(
-  client: PoolClient,
+  client: Queryable,
   userId: string,
   session: PosTableSession
 ): Promise<void> {

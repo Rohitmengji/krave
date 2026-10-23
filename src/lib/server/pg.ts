@@ -1,4 +1,4 @@
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 /**
  * Postgres access for Neon and for a local Postgres in tests.
@@ -8,6 +8,37 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
  */
 
 let pool: Pool | null = null;
+
+/**
+ * A driver, connection or configuration failure.
+ *
+ * Store code throws plain `Error`s whose messages are written for the customer. Anything
+ * from the driver (constraint names, hostnames, "DATABASE_URL is not set") is not, so it
+ * is wrapped here and the route answers with a generic 500 instead of echoing it. The
+ * driver's message is kept for logs, since the type alone keeps it from the browser.
+ */
+export class DatabaseFault extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "The database request failed.", { cause });
+    this.name = "DatabaseFault";
+  }
+}
+
+/** What a transaction body may do: run queries on the transaction's own connection. */
+export interface Queryable {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>;
+}
+
+async function guarded<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw error instanceof DatabaseFault ? error : new DatabaseFault(error);
+  }
+}
 
 function connectionString(): string {
   const url = process.env.DATABASE_URL;
@@ -79,7 +110,7 @@ export async function rows<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] = []
 ): Promise<T[]> {
-  const result = await getPool().query<T>(text, params);
+  const result = await guarded(() => getPool().query<T>(text, params));
   return result.rows;
 }
 
@@ -88,13 +119,13 @@ export async function one<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] = []
 ): Promise<T | undefined> {
-  const result = await getPool().query<T>(text, params);
+  const result = await guarded(() => getPool().query<T>(text, params));
   return result.rows[0];
 }
 
 /** Number of rows affected, for guarded updates that must detect a no-op. */
 export async function run(text: string, params: unknown[] = []): Promise<number> {
-  const result = await getPool().query(text, params);
+  const result = await guarded(() => getPool().query(text, params));
   return result.rowCount ?? 0;
 }
 
@@ -104,17 +135,26 @@ export async function run(text: string, params: unknown[] = []): Promise<number>
  * Reads and writes that must agree with each other have to share a connection; pooled
  * queries can otherwise land on different sessions and interleave.
  */
-export async function transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
+export async function transaction<T>(work: (client: Queryable) => Promise<T>): Promise<T> {
+  const client = await guarded(() => getPool().connect());
+  const tx: Queryable = {
+    query: <R extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]) =>
+      guarded(() => client.query<R>(text, params)),
+  };
+  let broken = false;
   try {
-    await client.query("BEGIN");
-    const result = await work(client);
-    await client.query("COMMIT");
+    await tx.query("BEGIN");
+    const result = await work(tx);
+    await tx.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK");
+    // A failed ROLLBACK (the connection dropped) must not replace the error that caused it;
+    // the connection is then discarded rather than handed to the next request.
+    await client.query("ROLLBACK").catch(() => {
+      broken = true;
+    });
     throw error;
   } finally {
-    client.release();
+    client.release(broken);
   }
 }

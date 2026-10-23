@@ -1,4 +1,4 @@
-import { one, rows, run } from "./pg";
+import { one, rows, run, type Queryable } from "./pg";
 import { assertOutletStaff } from "./staff";
 import { isCriticalFlag, scheduledDueAt, type KitchenFlagId } from "@/lib/checkout";
 import type { CrystalOrderState } from "@/types/krave";
@@ -59,7 +59,11 @@ function toTicket(row: Record<string, unknown>): DeliveryTicket {
 }
 
 /** Project a placed order onto the outlet's counter. Idempotent per order. */
-export async function createDeliveryTicket(order: CrystalOrderState): Promise<void> {
+/** Pass `client` to write the ticket inside the caller's transaction (see placeOrder). */
+export async function createDeliveryTicket(
+  order: CrystalOrderState,
+  client?: Queryable
+): Promise<void> {
   const lines: DeliveryTicketLine[] = order.items.map((line) => ({
     name: line.item.name,
     quantity: line.quantity,
@@ -68,22 +72,22 @@ export async function createDeliveryTicket(order: CrystalOrderState): Promise<vo
     allergens: line.item.allergens ?? null,
   }));
 
-  await run(
-    `INSERT INTO delivery_tickets (order_id, outlet_id, placed_at, scheduled_slot, due_at,
+  const sql = `INSERT INTO delivery_tickets (order_id, outlet_id, placed_at, scheduled_slot, due_at,
        flags, allergy_note, lines_json, status, accepted_at, ready_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'NEW', NULL, NULL)
-     ON CONFLICT (order_id) DO NOTHING`,
-    [
-      order.orderId,
-      order.resId,
-      order.placedAt,
-      order.scheduledSlot,
-      scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
-      JSON.stringify(order.handling.flags),
-      order.handling.allergyNote,
-      JSON.stringify(lines),
-    ]
-  );
+     ON CONFLICT (order_id) DO NOTHING`;
+  const params = [
+    order.orderId,
+    order.resId,
+    order.placedAt,
+    order.scheduledSlot,
+    scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
+    JSON.stringify(order.handling.flags),
+    order.handling.allergyNote,
+    JSON.stringify(lines),
+  ];
+  if (client) await client.query(sql, params);
+  else await run(sql, params);
 }
 
 export async function listDeliveryTickets(outletId: number): Promise<DeliveryTicket[]> {

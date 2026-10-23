@@ -194,10 +194,11 @@ describe("Accounts and durable orders", () => {
     expect(await findOrderByIdempotencyKey(user.id, "key-2")).toBeNull();
     expect(await findOrderByIdempotencyKey(user.id, null)).toBeNull();
 
+    // A reused key is reported, not thrown, so a racing retry can fall back to replaying.
     await expect(saveOrder(user.id, createDemoOrder(CHECKOUT), {
         addressId: CHECKOUT.addressId,
         idempotencyKey: "key-1",
-      })).rejects.toThrow();
+      })).resolves.toBe(false);
     expect(await listOrders(user.id)).toHaveLength(1);
   });
 
@@ -222,11 +223,19 @@ describe("Accounts and durable orders", () => {
     expect((await listOrders(user.id))[0].stage).toBe("KITCHEN_PREPARING");
     await expect(deleteOrder(user.id, order.orderId)).rejects.toThrow();
 
+    // Stages only move forward, so stepping back cannot reopen cancellation.
     await advanceOrderStage(user.id, order.orderId, "ORDER_CONFIRMED");
-    await deleteOrder(user.id, order.orderId);
-    expect(await listOrders(user.id)).toHaveLength(0);
+    expect((await listOrders(user.id))[0].stage).toBe("KITCHEN_PREPARING");
+    await expect(deleteOrder(user.id, order.orderId)).rejects.toThrow();
+
+    const fresh = createDemoOrder(CHECKOUT);
+    await saveOrder(user.id, fresh, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await deleteOrder(user.id, fresh.orderId);
+    expect(await listOrders(user.id)).toHaveLength(1);
     // Lines are removed with the order rather than left behind.
-    expect(await one("SELECT COUNT(*)::int AS n FROM order_lines")).toMatchObject({ n: 0 });
+    expect(
+      await one("SELECT COUNT(*)::int AS n FROM order_lines WHERE order_id = $1", [fresh.orderId])
+    ).toMatchObject({ n: 0 });
   });
 
   it("stores reservations and revalidates them against the catalog on read", async () => {

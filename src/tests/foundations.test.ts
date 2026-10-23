@@ -128,9 +128,14 @@ describe("Scheduled-order sweep", () => {
       FOR EACH ROW EXECUTE FUNCTION notifications_down();
     `);
 
-    await expect(sweepScheduledOrders(user.id)).rejects.toThrow(/disk I\/O/);
+    // Dropped in `finally`: truncation between tests does not remove a trigger, so one left
+    // behind by a failing assertion would break every later insert on the shared branch.
+    try {
+      await expect(sweepScheduledOrders(user.id)).rejects.toThrow(/disk I\/O/);
+    } finally {
+      await run("DROP TRIGGER IF EXISTS notifications_down ON notifications");
+    }
     // Still due, so the next read retries and announces it rather than starting it silently.
-    await run("DROP TRIGGER notifications_down ON notifications");
     expect(await sweepScheduledOrders(user.id)).toEqual([order.orderId]);
     expect(await listNotifications(user.id)).toHaveLength(1);
   });

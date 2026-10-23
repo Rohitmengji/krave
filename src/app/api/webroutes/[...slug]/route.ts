@@ -43,7 +43,7 @@ import {
   listBookmarks,
   listOrders,
   listReservations,
-  saveOrder,
+  placeOrder,
   saveReservation,
   setBookmarks,
   addNotification,
@@ -122,7 +122,19 @@ function withSessionCookie(
   return response;
 }
 
+/**
+ * Store and validation code throws plain `Error`s whose messages are written for the
+ * customer. Anything else (a DatabaseFault, a TypeError from a bug) is logged and answered
+ * with a generic 500, so connection strings and constraint names never reach the browser.
+ */
 function failed(error: unknown, fallback: string, status = 400) {
+  if (error instanceof Error && Object.getPrototypeOf(error) !== Error.prototype) {
+    console.error(`[krave] ${fallback}`, error);
+    return NextResponse.json(
+      { status: "error", message: "Something went wrong on our side. Please try again." },
+      { status: 500 }
+    );
+  }
   return NextResponse.json(
     { status: "error", message: error instanceof Error ? error.message : fallback },
     { status }
@@ -321,9 +333,20 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/auth/forgot") {
+    // There is no mail provider yet. Outside production the token goes to the server log
+    // so the flow can be exercised locally; in production that log would hand anyone with
+    // log access a way into every account, so no token is created at all.
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        {
+          status: "error",
+          message: "Password reset by email is not available yet.",
+        },
+        { status: 503 }
+      );
+    }
     const reset = await createPasswordReset(body);
     if (reset) {
-      // No mail provider here. A real deployment emails this instead of logging it.
       console.info(
         `[krave] password reset token (expires ${reset.expiresAt.toISOString()}): ${reset.token}`
       );
@@ -542,7 +565,7 @@ export async function POST(
         demo: true,
       });
     } catch (error) {
-      return NextResponse.json({ status: "error", message: error instanceof Error ? error.message : "Invalid cart." }, { status: 400 });
+      return failed(error, "Invalid cart.");
     }
   }
 
@@ -577,20 +600,30 @@ export async function POST(
       order.quote.totalSavings += order.quote.lockAdjustment;
 
       // The outlet's counter gets the ticket whether or not the customer has an account.
-      await createDeliveryTicket(order);
+      // For an account, the ticket commits with the order, so a replayed key adds neither.
       if (user) {
-        await saveOrder(user.id, order, {
-          addressId: String((body as Record<string, unknown>).addressId),
-          idempotencyKey,
-        });
-        await addNotification(
+        const placed = await placeOrder(
           user.id,
-          "ORDER",
-          `Demo order confirmed at ${order.restaurantName}`,
-          order.scheduledSlot === "ASAP"
-            ? `Arriving in about ${order.etaMinutes} minutes. No payment was collected.`
-            : `Scheduled for ${order.scheduledSlot}. No payment was collected.`
+          order,
+          { addressId: String((body as Record<string, unknown>).addressId), idempotencyKey },
+          {
+            title: `Demo order confirmed at ${order.restaurantName}`,
+            body:
+              order.scheduledSlot === "ASAP"
+                ? `Arriving in about ${order.etaMinutes} minutes. No payment was collected.`
+                : `Scheduled for ${order.scheduledSlot}. No payment was collected.`,
+          }
         );
+        if (!placed) {
+          // A concurrent retry with this key won the insert while this one was validating.
+          const existing = await findOrderByIdempotencyKey(user.id, idempotencyKey);
+          if (existing) {
+            return NextResponse.json({ status: "success", order: existing, replayed: true });
+          }
+          return failed(null, "This order was already placed.", 409);
+        }
+      } else {
+        await createDeliveryTicket(order);
       }
       return NextResponse.json(
         { status: "success", order, persisted: Boolean(user), demo: true },
@@ -647,13 +680,7 @@ export async function POST(
         { status: 201 }
       );
     } catch (error) {
-      return NextResponse.json(
-        {
-          status: "error",
-          message: error instanceof Error ? error.message : "Invalid review submission.",
-        },
-        { status: 400 }
-      );
+      return failed(error, "Invalid review submission.");
     }
   }
 

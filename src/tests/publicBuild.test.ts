@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/webroutes/[...slug]/route";
@@ -16,12 +16,19 @@ import {
 // Real businesses that earlier builds named. A public deployment must not imply they take
 // orders here. Stable ids such as "ctl_dal_bukhara" stay, so saved carts keep resolving.
 const REAL_BRANDS =
-  /haldiram|bukhara|farzi|lavonne|biryani blues|mount fuji|out of the box|\bITC\b|\baxis\b|zomato/i;
+  /haldiram|bukhara|farzi|lavonne|biryani blues|mount fuji|out of the box|\bITC\b|\baxis\b|zomato|hyperpure|\bgold \d/i;
+// FSSAI licence format: 14 digits, starting 1 (licence) or 2 (registration). A real one would
+// attribute a business's regulatory id to a restaurant that does not exist.
+const LICENCE_NUMBER = /\b[12]\d{13}\b/;
 
 function customerVisibleText(value: unknown): string {
-  return JSON.stringify(value, (key, field) =>
-    key === "id" || /(Id|_id)$/.test(key) ? undefined : field
-  );
+  const strings: string[] = [];
+  JSON.stringify(value, (key, field) => {
+    if (key === "id" || /(Id|_id)$/.test(key)) return undefined;
+    if (typeof field === "string") strings.push(field);
+    return field;
+  });
+  return strings.join("\n");
 }
 
 function get(pathname: string) {
@@ -45,6 +52,7 @@ describe("public build", () => {
       TOP_BRANDS_DATA,
     });
     expect(catalog.match(REAL_BRANDS)).toBeNull();
+    expect(catalog.match(LICENCE_NUMBER)).toBeNull();
   });
 
   it("keeps the reverse-engineering evidence out of production", async () => {
@@ -61,6 +69,14 @@ describe("public build", () => {
     // The import path is internal; any capitalised mention would be rendered or registered.
     expect(source).not.toMatch(/Zomato|zomato_webmcp/);
     expect(source).toMatch(/SHOW_DEVELOPER_INSPECTOR && \(/);
+
+    // The inspector is development-only, so it may name what it inspected.
+    const componentsDir = path.resolve(__dirname, "../components");
+    for (const file of readdirSync(componentsDir).filter((name) => /\.tsx$/.test(name))) {
+      if (file === "ReaInspectorModal.tsx") continue;
+      const text = readFileSync(path.join(componentsDir, file), "utf8");
+      expect(text, file).not.toMatch(/Zomato|Hyperpure|FSSAI #/);
+    }
   });
 });
 

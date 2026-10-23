@@ -302,7 +302,7 @@ export function RestaurantDetailModal({
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  FSSAI #{restaurant.fssaiLicense} • Hygiene {restaurant.hygieneRating}
+                  Demo licence {restaurant.fssaiLicense} • Hygiene {restaurant.hygieneRating}
                 </span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-black tracking-tight">

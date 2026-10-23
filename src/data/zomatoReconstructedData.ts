@@ -361,7 +361,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: true,
     hygieneRating: "4.9 / 5 Excellent",
     hyperpureVerified: true,
-    fssaiLicense: "10013011001264",
+    fssaiLicense: "KRV-DEMO-001",
     modes: ["delivery", "dineout"],
     collectionIds: [307111, 91202],
     offers: [
@@ -399,7 +399,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     openingHours: "9:00 AM – 11:30 PM",
     isOpen: true,
     modifierGroups: SHARED_MODIFIER_GROUPS,
-    highlights: ["100% Pure Vegetarian", "Desi Ghee Preparations", "Live Chaat Counter", "FSSAI Gold Hygiene"],
+    highlights: ["100% Pure Vegetarian", "Desi Ghee Preparations", "Live Chaat Counter", "Top Hygiene Rating"],
     diningSlots: [
       { time: "12:30 PM", mealType: "Lunch", discountText: "15% OFF", seatsLeft: 8 },
       { time: "01:30 PM", mealType: "Lunch", discountText: "15% OFF", seatsLeft: 5 },
@@ -563,7 +563,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "4.8 / 5 Excellent",
     hyperpureVerified: true,
-    fssaiLicense: "10019011006421",
+    fssaiLicense: "KRV-DEMO-002",
     modes: ["dineout", "delivery", "nightlife"],
     collectionIds: [71343, 307074],
     offers: [
@@ -605,8 +605,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     diningSlots: [
       { time: "01:00 PM", mealType: "Lunch", discountText: "20% OFF", seatsLeft: 10 },
       { time: "02:30 PM", mealType: "Lunch", discountText: "20% OFF", seatsLeft: 7 },
-      { time: "08:00 PM", mealType: "Dinner", discountText: "20% OFF + Gold 10%", seatsLeft: 4 },
-      { time: "09:30 PM", mealType: "Dinner", discountText: "20% OFF + Gold 10%", seatsLeft: 3 },
+      { time: "08:00 PM", mealType: "Dinner", discountText: "20% OFF + Member 10%", seatsLeft: 4 },
+      { time: "09:30 PM", mealType: "Dinner", discountText: "20% OFF + Member 10%", seatsLeft: 3 },
     ],
     menus: [
       {
@@ -712,7 +712,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "4.9 / 5 Excellent",
     hyperpureVerified: true,
-    fssaiLicense: "10016011003812",
+    fssaiLicense: "KRV-DEMO-003",
     modes: ["dineout", "delivery", "nightlife"],
     collectionIds: [71343, 307074, 91202],
     offers: [
@@ -753,8 +753,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     highlights: ["Molecular Gastronomy", "Award-Winning Cocktails", "Chef's Tasting Menu"],
     diningSlots: [
       { time: "01:00 PM", mealType: "Lunch", discountText: "15% OFF", seatsLeft: 6 },
-      { time: "07:45 PM", mealType: "Dinner", discountText: "15% OFF + Gold 10%", seatsLeft: 4 },
-      { time: "09:15 PM", mealType: "Dinner", discountText: "15% OFF + Gold 10%", seatsLeft: 2 },
+      { time: "07:45 PM", mealType: "Dinner", discountText: "15% OFF + Member 10%", seatsLeft: 4 },
+      { time: "09:15 PM", mealType: "Dinner", discountText: "15% OFF + Member 10%", seatsLeft: 2 },
     ],
     menus: [
       {
@@ -854,7 +854,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "5.0 / 5 Platinum",
     hyperpureVerified: true,
-    fssaiLicense: "10012011000419",
+    fssaiLicense: "KRV-DEMO-004",
     modes: ["dineout", "delivery"],
     collectionIds: [307111],
     offers: [
@@ -997,7 +997,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "4.9 / 5 Excellent",
     hyperpureVerified: true,
-    fssaiLicense: "10018011005190",
+    fssaiLicense: "KRV-DEMO-005",
     modes: ["delivery", "dineout", "nightlife"],
     collectionIds: [438, 307074],
     offers: [
@@ -1038,8 +1038,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     highlights: ["Tokyo Izakaya Booths", "Fresh Norwegian Salmon", "Handcrafted Dim Sum"],
     diningSlots: [
       { time: "01:15 PM", mealType: "Lunch", discountText: "20% OFF", seatsLeft: 8 },
-      { time: "07:30 PM", mealType: "Dinner", discountText: "20% OFF + Gold 10%", seatsLeft: 5 },
-      { time: "09:00 PM", mealType: "Dinner", discountText: "20% OFF + Gold 10%", seatsLeft: 4 },
+      { time: "07:30 PM", mealType: "Dinner", discountText: "20% OFF + Member 10%", seatsLeft: 5 },
+      { time: "09:00 PM", mealType: "Dinner", discountText: "20% OFF + Member 10%", seatsLeft: 4 },
     ],
     menus: [
       {
@@ -1124,7 +1124,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "4.7 / 5 Very Good",
     hyperpureVerified: true,
-    fssaiLicense: "10015011002918",
+    fssaiLicense: "KRV-DEMO-006",
     modes: ["delivery", "dineout", "nightlife"],
     collectionIds: [307111, 91202],
     offers: [
@@ -1250,7 +1250,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     pureVeg: false,
     hygieneRating: "5.0 / 5 Platinum",
     hyperpureVerified: true,
-    fssaiLicense: "11220333001920",
+    fssaiLicense: "KRV-DEMO-007",
     modes: ["delivery", "dineout"],
     collectionIds: [91201, 71343],
     offers: [

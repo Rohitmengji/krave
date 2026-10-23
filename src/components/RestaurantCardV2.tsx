@@ -199,7 +199,7 @@ export function RestaurantCardV2({
           <div className="mt-2.5 flex items-center justify-between text-[11px] opacity-80">
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Hyperpure • Hygiene {restaurant.hygieneRating.split(" ")[0]}
+              Hygiene {restaurant.hygieneRating.split(" ")[0]}
             </span>
             <span>
               {secondaryRating.rating_type}: ★ {secondaryRating.rating}

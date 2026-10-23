@@ -27,7 +27,10 @@ import {
   createSession,
   destroySession,
   getUserForToken,
+  LOGIN_WINDOW_MINUTES,
+  MAX_GUEST_ORDERS_PER_CLIENT,
   registerUser,
+  reserveClientQuota,
   resetPassword,
   revokeAllSessions,
   SESSION_COOKIE,
@@ -323,7 +326,7 @@ export async function POST(
     try {
       const user =
         routePath === "/webroutes/auth/register"
-          ? await registerUser(body)
+          ? await registerUser(body, clientKey(request))
           : await verifyCredentials(body, clientKey(request));
       const { token, expiresAt } = await createSession(user.id);
       return withSessionCookie(
@@ -627,6 +630,12 @@ export async function POST(
           return failed(null, "This order was already placed.", 409);
         }
       } else {
+        // A guest order needs no account, so the kitchen display is protected per address.
+        await reserveClientQuota(
+          `guest-order:${clientKey(request)}`,
+          MAX_GUEST_ORDERS_PER_CLIENT,
+          `Too many guest orders from this network. Sign in, or try again in ${LOGIN_WINDOW_MINUTES} minutes.`
+        );
         await createDeliveryTicket(order);
       }
       return NextResponse.json(

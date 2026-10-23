@@ -22,6 +22,13 @@ export const MAX_LOGIN_ATTEMPTS = 5;
  */
 export const MAX_CLIENT_LOGIN_ATTEMPTS = 60;
 export const LOGIN_WINDOW_MINUTES = 15;
+/**
+ * Unauthenticated writes per client address per window. Generous, because a classroom or
+ * office shares one address, but a script can no longer fill the database or burn CPU on
+ * password hashes from one machine.
+ */
+export const MAX_SIGNUPS_PER_CLIENT = 30;
+export const MAX_GUEST_ORDERS_PER_CLIENT = 30;
 const RESET_TOKEN_MINUTES = 30;
 
 export interface AccountUser {
@@ -79,7 +86,8 @@ function windowStart(): string {
  * Every statement here is a network round trip, so each step is one query for all keys.
  */
 async function reserveLoginAttempt(
-  limits: ReadonlyArray<readonly [key: string, limit: number]>
+  limits: ReadonlyArray<readonly [key: string, limit: number]>,
+  refusal = `Too many sign-in attempts. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
 ): Promise<number[]> {
   const keys = limits.map(([key]) => key);
   return transaction(async (client) => {
@@ -91,28 +99,32 @@ async function reserveLoginAttempt(
       [[...keys].sort()]
     );
 
+    const since = windowStart();
     const counted = await client.query(
       `SELECT attempt_key, COUNT(*)::int AS failures FROM login_attempts
        WHERE attempt_key = ANY($1::text[]) AND succeeded = 0 AND attempted_at > $2
        GROUP BY attempt_key`,
-      [keys, windowStart()]
+      [keys, since]
     );
     const failures = new Map<string, number>(
       counted.rows.map((row) => [String(row.attempt_key), Number(row.failures)])
     );
     for (const [key, limit] of limits) {
       if ((failures.get(key) ?? 0) >= limit) {
-        throw new Error(
-          `Too many sign-in attempts. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
-        );
+        throw new Error(refusal);
       }
     }
 
+    // Rows that have aged out of the window are dropped in the same statement, so a public
+    // deployment's table stays bounded by recent traffic instead of growing forever.
     const inserted = await client.query(
-      `INSERT INTO login_attempts (attempt_key, attempted_at, succeeded)
+      `WITH expired AS (
+         DELETE FROM login_attempts WHERE attempt_key = ANY($1::text[]) AND attempted_at <= $3
+       )
+       INSERT INTO login_attempts (attempt_key, attempted_at, succeeded)
        SELECT k, $2, 0 FROM unnest($1::text[]) AS k
        RETURNING id`,
-      [keys, new Date().toISOString()]
+      [keys, new Date().toISOString(), since]
     );
     return inserted.rows.map((row) => Number(row.id));
   });
@@ -133,7 +145,22 @@ async function settleLoginSuccess(reservedIds: number[], email: string): Promise
   );
 }
 
-export async function registerUser(input: unknown): Promise<AccountUser> {
+/**
+ * Counts one unauthenticated write against a client's quota, refusing once it is spent.
+ * Every attempt counts, successful or not, so the quota bounds writes rather than errors.
+ */
+export async function reserveClientQuota(
+  key: string,
+  limit: number,
+  refusal: string
+): Promise<void> {
+  await reserveLoginAttempt([[key, limit]], refusal);
+}
+
+export async function registerUser(
+  input: unknown,
+  clientKey: string | null = null
+): Promise<AccountUser> {
   const body = (input ?? {}) as Record<string, unknown>;
   const email = normalizeEmail(body.email);
   const password = assertPassword(body.password);
@@ -141,6 +168,15 @@ export async function registerUser(input: unknown): Promise<AccountUser> {
     typeof body.displayName === "string" && body.displayName.trim().length >= 2
       ? body.displayName.trim().slice(0, 60)
       : email.split("@")[0].slice(0, 60);
+
+  // Reserved before the deliberately slow hash, for the same reason as sign-in.
+  if (clientKey) {
+    await reserveClientQuota(
+      `signup:${clientKey}`,
+      MAX_SIGNUPS_PER_CLIENT,
+      `Too many new accounts from this network. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
+    );
+  }
 
   const salt = randomBytes(16).toString("hex");
   const user = {

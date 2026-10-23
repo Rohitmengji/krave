@@ -18,3 +18,6 @@ playwright-report/
 test-results/
 blob-report/
 .neon
+
+# Vercel project link; holds the project and team ids.
+.vercel

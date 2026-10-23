@@ -15,9 +15,9 @@ Hashes of a synthetic archive cannot validate the original application's
 activities, bytecode, signing identity, native libraries, or behavior.
 
 Web graph summaries cover selected public bundles only. Route strings are not
-verified API contracts. Restaurant names and some menu fields were informed by
-web state; prices, reviews, hygiene claims, and much of the seed catalog are
-invented demo data, not a current or verified restaurant feed.
+verified API contracts. Restaurant, brand and offer names are fictional; some menu
+fields were informed by web state, and prices, reviews, hygiene claims, and much of
+the seed catalog are invented demo data, not a current or verified restaurant feed.
 
 **Allergen data is invented and must never be relied on.** The allergen filter
 exists to demonstrate the interaction model, not to keep anyone safe. Every
@@ -33,6 +33,8 @@ with npm. Dependencies are locked in package-lock.json.
 
 ```sh
 npm ci
+cp .env.example .env.local   # then fill in DATABASE_URL
+npm run db:setup             # creates the tables; safe to run again
 npm run dev
 ```
 
@@ -44,7 +46,8 @@ and run `npm run build` followed by `npm start`. If port 3005 is occupied, use
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `KRAVE_DB_PATH` | No | SQLite file location. Defaults to `.data/krave.db`. |
+| `DATABASE_URL` | Yes | Postgres connection string. On Neon use the pooled (`-pooler`) host. |
+| `TEST_DATABASE_URL` | For tests | A separate, disposable database; the suite empties every table. Refused if it shares a host with `DATABASE_URL`. |
 | `KRAVE_QUOTE_SECRET` | In production | HMAC key for checkout price locks. Without it in production, locks are disabled and checkout falls back to live pricing. Development generates a per-process key. |
 | `KRAVE_STAFF_EMAILS` | No | Comma-separated emails treated as staff at every outlet. How the first operator is created. |
 | `KRAVE_OPEN_STAFF` | No | Set to `1` to treat **every** signed-in account as staff everywhere. Demo convenience only; never set it on anything real. |
@@ -75,13 +78,43 @@ npm audit --omit=dev
 ```
 
 The browser suite needs a production build first and starts its own server on port 3099
-against a throwaway database, so it leaves your local `.data/` alone. On a fresh checkout
+against `TEST_DATABASE_URL`, so it leaves your development data alone. On a fresh checkout
 run `npx playwright install chromium` once.
 
-Vitest currently emits a non-fatal configuration loader warning, and Node reports
-SQLite as experimental. External photos require network access and may fail
-independently of the app. Do not enter real payment credentials or personal
-information.
+Vitest currently emits a non-fatal configuration loader warning. External photos require
+network access and may fail independently of the app. Do not enter real payment
+credentials or personal information.
+
+## Deploy
+
+The public demo runs on Vercel (region `sin1`) against a Neon Postgres branch in
+`aws-ap-southeast-1`, so each query stays inside one region. To deploy your own copy:
+
+1. Create a Neon project and keep production on its own branch; develop and test on
+   child branches so the suite never touches real accounts.
+2. Run `node scripts/db-setup.mjs --url="<production connection string>"` once.
+3. Import the repository into Vercel and set `DATABASE_URL` (pooled host),
+   `KRAVE_QUOTE_SECRET` (`openssl rand -hex 32`) and `KRAVE_STAFF_EMAILS`. Never set
+   `KRAVE_OPEN_STAFF` on a public deployment.
+
+The pool is attached with `attachDatabasePool`, so an instance drains its connections
+before Vercel suspends it rather than waking up with sockets Neon has already closed.
+
+### Public demo limits
+
+These are deliberate for a demo and must be closed before taking real money:
+
+- Payments, the rider and tracking are simulated, and the customer's own browser advances
+  the tracking stages. A refund claim therefore trusts a stage the customer could fake;
+  arrival must be derived on the server first.
+- A guest who cancels is not reported to the kitchen, and guest checkout has no
+  idempotency key, so only signed-in checkouts are protected against double submission.
+- Password reset answers 503 in production: there is no email provider, and a token that
+  cannot be delivered must not be created.
+- Every address may create 30 accounts and place 30 guest orders per 15 minutes; sign-in
+  is throttled per account and per address. Limits are stored in Postgres, so they hold
+  across serverless instances.
+- The reverse-engineering inspector and its evidence endpoint exist only in development.
 
 ## Implemented
 
@@ -108,8 +141,8 @@ information.
   the guest was.
 - A notification inbox that follows the account rather than the browser.
 - Optional demo accounts: sign up, sign in, and keep orders, bookings, bookmarks and
-  membership in a local SQLite database instead of this browser. Signed out, the app
-  still runs entirely on the device.
+  membership in Postgres instead of this browser. Signed out, the app still runs entirely
+  on the device.
 - A dine-in terminal at `/pos`: tables, kitchen tickets and reprints, voids, discounts,
   service charge, GST, split bills, table transfer, table merge, payments, and shift close
   with a Z-report. Signed in, the floor also syncs to the database and survives clearing
@@ -134,20 +167,20 @@ A scheduled order starts when its window arrives, but there is no background sch
 the sweep runs on the next request after the due time, not at the minute itself, and it
 uses the server's local clock. Signed out, the inbox is still browser-only.
 
-There is no staff role. Any signed-in account can open a counter and work its tickets,
-which is why a ticket deliberately carries no customer name, address or phone — a counter
-has no use for them. Roles are needed before this is more than a demo.
+Staff access is per outlet (see [Who may act as staff](#who-may-act-as-staff)), not a role
+system. A ticket deliberately carries no customer name, address or phone — a counter has
+no use for them.
 
 Terminal sync detects a stale write rather than applying it. Each table carries a revision;
 a terminal editing an older copy is rejected and told to reload, so a second device cannot
 silently overwrite a service in progress. There is still no automatic merge — the rejected
 terminal reloads and redoes its change.
 
-Accounts are a local demo. The database is a single SQLite file under `.data/`, created
-on first use and ignored by git. Passwords are salted and hashed with scrypt and never
-stored in plain text. Sign-in is throttled per account and per client, a reset token can
-recover a locked account, and a reset signs out every device. There is still no email
-delivery — the reset token is written to the server log instead — and no email
+Accounts are a demo. They live in Postgres, created by `npm run db:setup`. Passwords are
+salted and hashed with scrypt and never stored in plain text. Sign-in is throttled per
+account and per client, a reset token can recover a locked account, and a reset signs out
+every device. There is still no email delivery — in development the reset token is
+written to the server log, and in production reset is unavailable — and no email
 verification. Do not reuse a real password.
 
 ## Next Milestones

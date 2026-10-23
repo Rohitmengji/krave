@@ -2,6 +2,9 @@
   "name": "krave",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "description": "Krave — independent food delivery, dining and offline dine-in billing prototype informed by public website observations. No Zomato APK or server source was analyzed.",
   "scripts": {
     "dev": "next dev --port 3005",

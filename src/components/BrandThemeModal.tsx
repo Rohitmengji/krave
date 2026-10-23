@@ -1,10 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useId } from "react";
 import { X, Palette, Check, Sparkles } from "lucide-react";
 import { BRAND_THEME_PRESETS } from "@/data/zomatoReconstructedData";
 import { BrandThemePreset } from "@/types/krave";
 import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface BrandThemeModalProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ export function BrandThemeModal({
   onUpdateCustomBrand,
   isDark,
 }: BrandThemeModalProps) {
+  const fieldId = useId();
   if (!isOpen) return null;
 
   return (
@@ -45,7 +47,7 @@ export function BrandThemeModal({
           <div className="flex items-center gap-2.5">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center text-white"
-              style={{ backgroundColor: currentTheme.primaryHex }}
+              style={{ backgroundColor: primaryFill(currentTheme.primaryHex) }}
             >
               <Palette className="w-5 h-5" />
             </div>
@@ -130,10 +132,11 @@ export function BrandThemeModal({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-[11px] font-bold mb-1 opacity-70">
+                <label htmlFor={`${fieldId}-name`} className="block text-[11px] font-bold mb-1 opacity-70">
                   Brand Name
                 </label>
                 <input
+                  id={`${fieldId}-name`}
                   type="text"
                   value={currentTheme.brandName}
                   onChange={(e) =>
@@ -147,10 +150,11 @@ export function BrandThemeModal({
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold mb-1 opacity-70">
+                <label htmlFor={`${fieldId}-tier`} className="block text-[11px] font-bold mb-1 opacity-70">
                   VIP Membership Tier
                 </label>
                 <input
+                  id={`${fieldId}-tier`}
                   type="text"
                   value={currentTheme.membershipName}
                   onChange={(e) =>
@@ -163,12 +167,13 @@ export function BrandThemeModal({
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold mb-1 opacity-70">
+                <label htmlFor={`${fieldId}-hex`} className="block text-[11px] font-bold mb-1 opacity-70">
                   Primary Accent Color
                 </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
+                    aria-label="Pick primary accent color"
                     value={currentTheme.primaryHex}
                     onChange={(e) =>
                       onUpdateCustomBrand({ primaryHex: e.target.value })
@@ -176,6 +181,7 @@ export function BrandThemeModal({
                     className="w-10 h-9 rounded-lg cursor-pointer bg-transparent"
                   />
                   <input
+                    id={`${fieldId}-hex`}
                     type="text"
                     value={currentTheme.primaryHex}
                     onChange={(e) =>
@@ -190,10 +196,11 @@ export function BrandThemeModal({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold mb-1 opacity-70">
+              <label htmlFor={`${fieldId}-tagline`} className="block text-[11px] font-bold mb-1 opacity-70">
                 Brand Tagline
               </label>
               <input
+                id={`${fieldId}-tagline`}
                 type="text"
                 value={currentTheme.tagline}
                 onChange={(e) =>

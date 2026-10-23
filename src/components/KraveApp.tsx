@@ -109,6 +109,7 @@ import { BrandThemeModal } from "./BrandThemeModal";
 import { OverlayDialog } from "./OverlayDialog";
 import { AccountDialog } from "./AccountDialog";
 import { Toast } from "./Toast";
+import { primaryFill, primaryInk } from "@/lib/themeContrast";
 
 const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
   "ORDER_CONFIRMED",
@@ -884,6 +885,13 @@ export function KraveApp({
 
   return (
     <div
+      data-surface={isDark ? "dark" : "light"}
+      style={
+        {
+          "--brand": theme.primaryHex,
+          "--brand-ink-light": primaryInk(theme.primaryHex),
+        } as React.CSSProperties
+      }
       className={`min-h-screen transition-colors duration-300 ${
         isDark ? "bg-[#0A0D12] text-white" : "bg-slate-50 text-slate-900"
       }`}
@@ -940,6 +948,7 @@ export function KraveApp({
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-10 pb-28">
         {/* Hero Brand Banner */}
         <section
+          data-surface="dark"
           className={`relative rounded-3xl border p-6 sm:p-8 overflow-hidden ${
             isDark
               ? "bg-gradient-to-br from-[#121721] via-[#151D2A] to-[#0D131D] border-white/10"
@@ -951,7 +960,7 @@ export function KraveApp({
               <div className="inline-flex flex-wrap items-center gap-2">
                 <span
                   className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider text-white"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   {theme.brandName} • {currentAddress.cityName}
                 </span>
@@ -1049,7 +1058,7 @@ export function KraveApp({
                       : "bg-white border-slate-200 hover:border-slate-300"
                   }`}
                   style={
-                    isSelected ? { backgroundColor: theme.primaryHex } : undefined
+                    isSelected ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined
                   }
                 >
                   <div
@@ -1063,7 +1072,7 @@ export function KraveApp({
                     <div className="font-black text-sm">{tab.title}</div>
                     <div
                       className={`text-[11px] ${
-                        isSelected ? "text-white/85" : "opacity-60"
+                        isSelected ? "text-white" : "opacity-60"
                       }`}
                     >
                       {tab.subtitle}
@@ -1113,6 +1122,7 @@ export function KraveApp({
                     dispatchFilters({ type: "TOGGLE_COLLECTION", collectionId: col.id })
                   }
                   data-testid={`collection-card-${col.id}`}
+                  data-surface="dark"
                   className={`group relative h-52 rounded-3xl overflow-hidden text-left border transition-all ${
                     active
                       ? "ring-4 ring-emerald-400 border-emerald-400"
@@ -1127,7 +1137,7 @@ export function KraveApp({
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent" />
                   <span
                     className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white"
-                    style={{ backgroundColor: theme.primaryHex }}
+                    style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                   >
                     {col.tag}
                   </span>
@@ -1344,7 +1354,7 @@ export function KraveApp({
                 type="button"
                 onClick={() => dispatchFilters({ type: "RESET" })}
                 className="px-4 py-2 rounded-xl text-xs font-black text-white"
-                style={{ backgroundColor: theme.primaryHex }}
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
               >
                 Reset All Filters
               </button>
@@ -1592,7 +1602,7 @@ export function KraveApp({
                   data-testid="claim-bill-submit"
                   disabled={claimPending}
                   className="px-4 py-2 rounded-xl text-xs font-black text-white disabled:opacity-60"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   {claimPending ? "Adding…" : "Add Table Bill"}
                 </button>
@@ -1622,7 +1632,7 @@ export function KraveApp({
                           {bill.lines.map((line) => `${line.quantity}× ${line.name}`).join(", ")}
                         </p>
                       </div>
-                      <span className="text-sm font-black" style={{ color: theme.primaryHex }}>
+                      <span className="text-sm font-black" style={{ color: "var(--brand-ink)" }}>
                         ₹{bill.grandTotal}
                       </span>
                     </li>
@@ -1648,7 +1658,7 @@ export function KraveApp({
             onClick={() => setCartOpen(true)}
             data-testid="floating-cart-bar"
             className="w-full text-left p-4 rounded-2xl text-white shadow-2xl flex items-center justify-between cursor-pointer border border-white/25 transition hover:scale-[1.01]"
-            style={{ backgroundColor: theme.primaryHex }}
+            style={{ backgroundColor: primaryFill(theme.primaryHex) }}
           >
             <span className="flex items-center gap-3">
               <span className="w-10 h-10 rounded-xl bg-black/25 flex items-center justify-center">
@@ -1660,7 +1670,7 @@ export function KraveApp({
                   {cartQuote.itemCount === 1 ? "Item" : "Items"} • ₹
                   {cartQuote.grandTotal}
                 </span>
-                <span className="block text-[11px] opacity-90">
+                <span className="block text-[11px]">
                   From {cartItems[0].restaurantName} • Saving ₹
                   {cartQuote.totalSavings}
                 </span>
@@ -1677,10 +1687,11 @@ export function KraveApp({
 
       {/* Footer */}
       <footer
+        data-surface="dark"
         className={`border-t py-12 px-4 sm:px-6 lg:px-8 text-xs ${
           isDark
             ? "bg-[#07090D] border-white/10 text-white/65"
-            : "bg-slate-900 border-slate-800 text-slate-400"
+            : "bg-slate-900 border-slate-800 text-slate-300"
         }`}
       >
         <div className="max-w-7xl mx-auto space-y-6">
@@ -1688,7 +1699,7 @@ export function KraveApp({
             <div className="flex items-center gap-3">
               <span
                 className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-white"
-                style={{ backgroundColor: theme.primaryHex }}
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
               >
                 {theme.brandName.slice(0, 1)}
               </span>
@@ -1879,7 +1890,7 @@ export function KraveApp({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-black text-sm" style={{ color: theme.primaryHex }}>
+                    <span className="font-black text-sm" style={{ color: "var(--brand-ink)" }}>
                       {offer.code}
                     </span>
                     <button
@@ -1891,7 +1902,7 @@ export function KraveApp({
                         showToast(`${offer.code} selected. It applies if your cart qualifies.`);
                       }}
                       className="px-3 py-1.5 rounded-xl text-[11px] font-black text-white"
-                      style={{ backgroundColor: theme.primaryHex }}
+                      style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                     >
                       Use Code
                     </button>
@@ -1976,15 +1987,15 @@ export function KraveApp({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-wider opacity-60">
+                      <span className="text-[10px] font-black uppercase tracking-wider opacity-75">
                         {entry.kind}
                       </span>
-                      <span className="text-[10px] opacity-55">
+                      <span className="text-[10px] opacity-75">
                         {new Date(entry.createdAt).toLocaleString()}
                       </span>
                     </div>
                     <p className="mt-0.5 text-xs font-bold">{entry.title}</p>
-                    <p className="text-[11px] opacity-70">{entry.body}</p>
+                    <p className="text-[11px] opacity-80">{entry.body}</p>
                   </li>
                 ))}
               </ul>

@@ -5,6 +5,7 @@ import { LogIn, UserPlus, X } from "lucide-react";
 import { OverlayDialog } from "./OverlayDialog";
 import { requestJson } from "@/lib/requestJson";
 import type { BrandThemePreset } from "@/types/krave";
+import { primaryFill } from "@/lib/themeContrast";
 
 export interface AccountUser {
   id: string;
@@ -131,7 +132,7 @@ export function AccountDialog({
                   className={`flex items-center justify-center gap-1.5 rounded-xl border py-2 text-xs font-bold transition ${
                     mode === option ? "text-white border-transparent" : "border-current/20"
                   }`}
-                  style={mode === option ? { backgroundColor: theme.primaryHex } : undefined}
+                  style={mode === option ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined}
                 >
                   {option === "login" ? (
                     <>
@@ -199,7 +200,7 @@ export function AccountDialog({
               disabled={pending}
               aria-busy={pending}
               className="w-full rounded-2xl py-2.5 text-xs font-black text-white disabled:opacity-50"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               {pending ? "Working..." : mode === "login" ? "Sign in" : "Create account"}
             </button>

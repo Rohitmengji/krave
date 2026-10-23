@@ -34,6 +34,7 @@ import {
   LocationAddress,
   ZPayKitEventRecord,
 } from "@/types/krave";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface CartCheckoutDrawerProps {
   isOpen: boolean;
@@ -190,7 +191,7 @@ export function CartCheckoutDrawer({
           <div className="flex items-center gap-2.5">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center text-white"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               <ShoppingBag className="w-5 h-5" />
             </div>
@@ -250,7 +251,7 @@ export function CartCheckoutDrawer({
             >
               <MapPin
                 className="w-4 h-4 mt-0.5 shrink-0"
-                style={{ color: theme.primaryHex }}
+                style={{ color: "var(--brand-ink)" }}
               />
               <div className="text-xs">
                 <div className="font-bold">
@@ -267,7 +268,7 @@ export function CartCheckoutDrawer({
               }`}
             >
               <div className="flex items-center gap-2 text-xs font-bold">
-                <Clock className="w-4 h-4" style={{ color: theme.primaryHex }} />
+                <Clock className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
                 <span>Delivery Time</span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -288,7 +289,7 @@ export function CartCheckoutDrawer({
                         : "border-slate-200 hover:bg-slate-100"
                     }`}
                     style={
-                      scheduledSlot === slot ? { backgroundColor: theme.primaryHex } : undefined
+                      scheduledSlot === slot ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined
                     }
                   >
                     {slot}
@@ -313,7 +314,7 @@ export function CartCheckoutDrawer({
               }`}
             >
               <div className="flex items-center gap-2 text-xs font-bold">
-                <ChefHat className="w-4 h-4" style={{ color: theme.primaryHex }} />
+                <ChefHat className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
                 <span>Tell the Kitchen</span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -333,7 +334,7 @@ export function CartCheckoutDrawer({
                           ? "border-white/15 hover:bg-white/5"
                           : "border-slate-200 hover:bg-slate-100"
                       }`}
-                      style={selected ? { backgroundColor: theme.primaryHex } : undefined}
+                      style={selected ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined}
                     >
                       {flag.label}
                     </button>
@@ -453,7 +454,7 @@ export function CartCheckoutDrawer({
                         +
                       </button>
                     </div>
-                    <div className="text-xs font-black" style={{ color: theme.primaryHex }}>
+                    <div className="text-xs font-black" style={{ color: "var(--brand-ink)" }}>
                       ₹{li.unitPrice * li.quantity}
                     </div>
                   </div>
@@ -480,7 +481,7 @@ export function CartCheckoutDrawer({
                   <span className="block text-xs font-black">
                     {theme.membershipName} — Free Delivery + 5% Extra Off
                   </span>
-                  <span className="block text-[11px] opacity-75">
+                  <span className="block text-[11px]">
                     {isGoldMember
                       ? `Saving ₹${quote.goldDiscount + (quote.itemTotal >= 699 ? 25 : 49)} on this order`
                       : "Tap to activate instant member privileges"}
@@ -495,7 +496,7 @@ export function CartCheckoutDrawer({
             {/* Coupons & Partner Offers */}
             <div className="space-y-2">
               <div className="text-xs font-bold flex items-center gap-1.5">
-                <Tag className="w-3.5 h-3.5" style={{ color: theme.primaryHex }} />
+                <Tag className="w-3.5 h-3.5" style={{ color: "var(--brand-ink)" }} />
                 <span>Coupons & Partner Offers</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -635,7 +636,7 @@ export function CartCheckoutDrawer({
               )}
               <div className="border-t border-current/10 pt-2.5 flex justify-between text-sm font-black">
                 <span>To Pay</span>
-                <span data-testid="cart-grand-total" style={{ color: theme.primaryHex }}>
+                <span data-testid="cart-grand-total" style={{ color: "var(--brand-ink)" }}>
                   ₹{quote.grandTotal}
                 </span>
               </div>
@@ -660,7 +661,7 @@ export function CartCheckoutDrawer({
             >
               <div className="flex items-center justify-between">
                 <span className="text-xs font-extrabold flex items-center gap-1.5">
-                  <CreditCard className="w-4 h-4" style={{ color: theme.primaryHex }} />
+                  <CreditCard className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
                   Demo Payment
                 </span>
                 <span className="text-[10px] font-mono opacity-60 flex items-center gap-1">
@@ -712,10 +713,10 @@ export function CartCheckoutDrawer({
               disabled={checkoutPending || hasUnavailableItem || allergyNoteMissing || scheduledSlotProblem !== null}
               aria-busy={checkoutPending}
               className="w-full py-3.5 px-5 rounded-2xl text-sm font-black text-white shadow-xl flex items-center justify-between transition hover:opacity-95 disabled:opacity-50"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               <div>
-                <div className="text-left text-xs opacity-85">
+                <div className="text-left text-xs">
                   TOTAL ₹{quote.grandTotal}
                 </div>
                 <div className="text-left text-sm font-black">

@@ -18,6 +18,7 @@ import {
   CrystalOrderState,
 } from "@/types/krave";
 import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface CrystalLiveTrackingModalProps {
   order: CrystalOrderState | null;
@@ -109,14 +110,14 @@ export function CrystalLiveTrackingModal({
         {/* Header */}
         <div
           className="p-5 text-white flex items-center justify-between"
-          style={{ backgroundColor: theme.primaryHex }}
+          style={{ backgroundColor: primaryFill(theme.primaryHex) }}
         >
           <div>
-            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider opacity-90">
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider">
               <span className="break-all">DEMO TRACKING • {order.orderId}</span>
             </div>
             <h2 className="text-xl font-black mt-0.5">{currentMeta.label}</h2>
-            <p className="text-xs opacity-90">Simulated delivery status. No real rider or GPS connection.</p>
+            <p className="text-xs">Simulated delivery status. No real rider or GPS connection.</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -145,7 +146,7 @@ export function CrystalLiveTrackingModal({
         </div>
 
         {/* Interactive Crystal Map Canvas */}
-        <div className="relative h-56 bg-[#090D16] overflow-hidden border-b border-white/10">
+        <div data-surface="dark" className="relative h-56 bg-[#090D16] overflow-hidden border-b border-white/10">
           {/* Stylized Map Grid & Polyline Route */}
           <svg
             viewBox="0 0 800 220"
@@ -203,7 +204,7 @@ export function CrystalLiveTrackingModal({
           >
             <div
               className="px-3 py-1.5 rounded-2xl text-white text-xs font-black shadow-2xl flex items-center gap-1.5 border border-white/30"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               <Bike className="w-4 h-4" />
               <span>{order.rider.name}</span>
@@ -211,11 +212,11 @@ export function CrystalLiveTrackingModal({
           </div>
 
           {/* Origin & Destination Labels */}
-          <div className="absolute bottom-3 left-4 px-3 py-1 rounded-xl bg-black/75 border border-white/15 text-[11px] text-white flex items-center gap-1.5">
+          <div data-surface="dark" className="absolute bottom-3 left-4 px-3 py-1 rounded-xl bg-black/75 border border-white/15 text-[11px] text-white flex items-center gap-1.5">
             <Store className="w-3.5 h-3.5 text-amber-400" />
             <span>{order.restaurantName}</span>
           </div>
-          <div className="absolute top-3 right-4 px-3 py-1 rounded-xl bg-black/75 border border-white/15 text-[11px] text-white flex items-center gap-1.5">
+          <div data-surface="dark" className="absolute top-3 right-4 px-3 py-1 rounded-xl bg-black/75 border border-white/15 text-[11px] text-white flex items-center gap-1.5">
             <MapPin className="w-3.5 h-3.5 text-emerald-400" />
             <span>{order.customerAddress.displayTitle}</span>
           </div>
@@ -234,8 +235,8 @@ export function CrystalLiveTrackingModal({
                     completed
                       ? "border-emerald-500/40 bg-emerald-500/10"
                       : isDark
-                      ? "border-white/5 bg-white/[0.02] opacity-45"
-                      : "border-slate-200 bg-slate-50 opacity-50"
+                      ? "border-dashed border-white/15 bg-white/[0.02] opacity-60"
+                      : "border-dashed border-slate-300 bg-slate-50 opacity-70"
                   }`}
                 >
                   <div className="flex justify-center mb-1">
@@ -281,7 +282,7 @@ export function CrystalLiveTrackingModal({
                 type="button"
                 disabled
                 className="p-3 rounded-2xl text-white shadow"
-                style={{ backgroundColor: theme.primaryHex }}
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 title="Calling is unavailable for demo orders"
                 aria-label="Calling unavailable in demo"
               >
@@ -313,7 +314,7 @@ export function CrystalLiveTrackingModal({
                   onClick={onAdvanceStage}
                   data-testid="simulate-next-crystal-stage"
                   className="px-3.5 py-2.5 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   <FastForward className="w-3.5 h-3.5" />
                   <span>Simulate Next Step</span>

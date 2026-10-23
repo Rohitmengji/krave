@@ -14,6 +14,7 @@ import {
 import { REA_EVIDENCE_SUMMARY } from "@/data/zomatoReconstructedData";
 import { BrandThemePreset } from "@/types/krave";
 import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface ReaInspectorModalProps {
   isOpen: boolean;
@@ -92,7 +93,7 @@ export function ReaInspectorModal({
           <div className="flex items-center gap-3">
             <div
               className="w-10 h-10 rounded-2xl flex items-center justify-center text-white"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               <Cpu className="w-5 h-5" />
             </div>
@@ -128,7 +129,7 @@ export function ReaInspectorModal({
             }`}
             style={
               activeTab === "web"
-                ? { backgroundColor: theme.primaryHex }
+                ? { backgroundColor: primaryFill(theme.primaryHex) }
                 : undefined
             }
           >
@@ -147,7 +148,7 @@ export function ReaInspectorModal({
             }`}
             style={
               activeTab === "apk"
-                ? { backgroundColor: theme.primaryHex }
+                ? { backgroundColor: primaryFill(theme.primaryHex) }
                 : undefined
             }
           >
@@ -166,7 +167,7 @@ export function ReaInspectorModal({
             }`}
             style={
               activeTab === "webmcp"
-                ? { backgroundColor: theme.primaryHex }
+                ? { backgroundColor: primaryFill(theme.primaryHex) }
                 : undefined
             }
           >
@@ -298,7 +299,7 @@ export function ReaInspectorModal({
                       onClick={() => handleRunTool(tool.name)}
                       data-testid={`run-webmcp-${tool.name}`}
                       className="px-3 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1 shrink-0"
-                      style={{ backgroundColor: theme.primaryHex }}
+                      style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                     >
                       <Play className="w-3 h-3" />
                       <span>Run</span>
@@ -308,7 +309,7 @@ export function ReaInspectorModal({
               </div>
 
               {toolOutput && (
-                <div className="p-4 rounded-2xl bg-black/75 border border-emerald-500/40 font-mono text-xs text-emerald-300 space-y-2">
+                <div data-surface="dark" className="p-4 rounded-2xl bg-black/75 border border-emerald-500/40 font-mono text-xs text-emerald-300 space-y-2">
                   <div className="flex items-center justify-between text-white/70 border-b border-white/10 pb-1.5">
                     <span className="flex items-center gap-1.5">
                       <Code2 className="w-4 h-4 text-emerald-400" />

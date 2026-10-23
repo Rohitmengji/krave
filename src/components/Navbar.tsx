@@ -27,6 +27,7 @@ import {
   LocationAddress,
   RestaurantEntity,
 } from "@/types/krave";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface NavbarProps {
   theme: BrandThemePreset;
@@ -146,7 +147,7 @@ export function Navbar({
         <div className="flex items-center gap-3 shrink-0">
           <div
             className="w-11 h-11 rounded-2xl flex items-center justify-center font-black text-xl text-white shadow-lg"
-            style={{ backgroundColor: theme.primaryHex }}
+            style={{ backgroundColor: primaryFill(theme.primaryHex) }}
           >
             {theme.brandName.slice(0, 1)}
           </div>
@@ -159,7 +160,7 @@ export function Navbar({
                 className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border"
                 style={{
                   borderColor: `${theme.primaryHex}55`,
-                  color: theme.primaryHex,
+                  color: "var(--brand-ink)",
                   backgroundColor: `${theme.primaryHex}15`,
                 }}
               >
@@ -192,7 +193,7 @@ export function Navbar({
             >
               <MapPin
                 className="w-4 h-4 shrink-0"
-                style={{ color: theme.primaryHex }}
+                style={{ color: "var(--brand-ink)" }}
               />
               <div className="truncate">
                 <div className="text-xs font-bold truncate flex items-center gap-1">
@@ -269,10 +270,10 @@ export function Navbar({
               >
                 <Navigation
                   className={`w-4 h-4 ${detectingGps ? "animate-spin" : ""}`}
-                  style={{ color: theme.primaryHex }}
+                  style={{ color: "var(--brand-ink)" }}
                 />
                 <div>
-                  <div className="text-xs font-bold" style={{ color: theme.primaryHex }}>
+                  <div className="text-xs font-bold" style={{ color: "var(--brand-ink)" }}>
                     {detectingGps
                       ? "Detecting current location..."
                       : "Use Current Location"}
@@ -314,7 +315,7 @@ export function Navbar({
                       {selected && (
                         <CheckCircle2
                           className="w-4 h-4 shrink-0 mt-0.5"
-                          style={{ color: theme.primaryHex }}
+                          style={{ color: "var(--brand-ink)" }}
                         />
                       )}
                     </button>
@@ -369,7 +370,7 @@ export function Navbar({
                             </div>
                             <span
                               className="text-xs font-bold px-2 py-1 rounded-lg text-white"
-                              style={{ backgroundColor: theme.primaryHex }}
+                              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                             >
                               ★ {res.ratings.DELIVERY.rating}
                             </span>
@@ -405,7 +406,7 @@ export function Navbar({
                               type="button"
                               onMouseDown={() => onQuickAddDish(restaurant, dish)}
                               className="text-xs font-bold px-2.5 py-1 rounded-lg text-white"
-                              style={{ backgroundColor: theme.primaryHex }}
+                              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                             >
                               + Add
                             </button>
@@ -430,7 +431,7 @@ export function Navbar({
               onClick={onOpenActiveOrder}
               data-testid="live-crystal-order-pill"
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white shadow-lg"
-              style={{ backgroundColor: theme.primaryHex }}
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
             >
               <Bike className="w-4 h-4" />
               <span className="hidden md:inline">Track Order</span>
@@ -469,7 +470,7 @@ export function Navbar({
                 : "bg-slate-100 border-slate-200 hover:bg-slate-200"
             }`}
           >
-            <Palette className="w-4 h-4" style={{ color: theme.primaryHex }} />
+            <Palette className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
             <span className="hidden xl:inline">Brand Studio</span>
           </button>
 
@@ -485,7 +486,7 @@ export function Navbar({
                 : "bg-slate-100 border-slate-200 hover:bg-slate-200"
             }`}
           >
-            <Tag className="w-4 h-4" style={{ color: theme.primaryHex }} />
+            <Tag className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
             <span className="hidden xl:inline">Offers</span>
           </button>
 
@@ -566,7 +567,7 @@ export function Navbar({
             onClick={onOpenCart}
             data-testid="navbar-cart-button"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-md transition hover:opacity-95"
-            style={{ backgroundColor: theme.primaryHex }}
+            style={{ backgroundColor: primaryFill(theme.primaryHex) }}
           >
             <ShoppingBag className="w-4 h-4" />
             <span>{cartCount}</span>

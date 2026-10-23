@@ -254,3 +254,64 @@ describe("STK-10 · every page ships a content security policy", () => {
     }
   });
 });
+
+describe("ST-20 · white text on a brand fill is readable in every theme", () => {
+  it("darkens each preset just enough for 4.5:1, keeping dark colours as they are", async () => {
+    const { contrastWithWhite, primaryFill } = await import("@/lib/themeContrast");
+    const { BRAND_THEME_PRESETS: BRAND_THEMES } = await import("@/data/zomatoReconstructedData");
+    for (const theme of BRAND_THEMES) {
+      expect(contrastWithWhite(theme.primaryHex)!, theme.name).toBeLessThan(4.5);
+      const fill = primaryFill(theme.primaryHex);
+      expect(contrastWithWhite(fill)!, theme.name).toBeGreaterThanOrEqual(4.5);
+      // As light as allowed: one step lighter would fail.
+      expect(contrastWithWhite(fill)!, theme.name).toBeLessThan(4.8);
+    }
+    expect(primaryFill("#1E3A8A")).toBe("#1E3A8A");
+  });
+
+  it("copes with whatever the custom colour field holds", async () => {
+    const { contrastWithWhite, primaryFill } = await import("@/lib/themeContrast");
+    expect(contrastWithWhite(primaryFill("#fff"))!).toBeGreaterThanOrEqual(4.5);
+    expect(contrastWithWhite(primaryFill("#FFFF00"))!).toBeGreaterThanOrEqual(4.5);
+    for (const partial of ["", "#", "#12", "#12345", "red", "#GGGGGG"]) {
+      expect(primaryFill(partial)).toBe(partial);
+    }
+  });
+});
+
+describe("ST-20 · brand ink and accent tints on light surfaces", () => {
+  it("darkens brand text further than the fill, for pale washes of the brand", async () => {
+    const { contrastWithWhite, primaryFill, primaryInk } = await import("@/lib/themeContrast");
+    const { BRAND_THEME_PRESETS } = await import("@/data/zomatoReconstructedData");
+    for (const theme of BRAND_THEME_PRESETS) {
+      expect(contrastWithWhite(primaryInk(theme.primaryHex))!).toBeGreaterThanOrEqual(5.5);
+      expect(contrastWithWhite(primaryInk(theme.primaryHex))!).toBeGreaterThan(
+        contrastWithWhite(primaryFill(theme.primaryHex))!
+      );
+    }
+  });
+
+  it("remaps every bright text tint the storefront uses", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "src/components");
+    const used = new Set<string>();
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".tsx")) continue;
+      for (const match of readFileSync(join(dir, file), "utf8").matchAll(/\btext-([a-z]+)-(300|400)\b/g)) {
+        // Greys are picked per mode by each component; only accent hues are shared.
+        if (!["slate", "gray", "zinc", "neutral", "stone"].includes(match[1])) {
+          used.add(`--color-${match[1]}-${match[2]}`);
+        }
+      }
+    }
+    const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    const lightBlock = /\[data-surface="light"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const darkBlock = /\[data-surface="dark"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(used.size).toBeGreaterThan(0);
+    for (const variable of used) {
+      expect(lightBlock, variable).toContain(`${variable}:`);
+      expect(darkBlock, variable).toContain(`${variable}:`);
+    }
+  });
+});

@@ -16,6 +16,7 @@ import {
   RestaurantEntity,
 } from "@/types/krave";
 import { FEE_SCHEDULE } from "@/lib/cartEngine";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface RestaurantCardV2Props {
   restaurant: RestaurantEntity;
@@ -71,6 +72,7 @@ export function RestaurantCardV2({
               activeMode === "dineout" ? "book" : "menu"
             )
           }
+          data-surface="dark"
           className="relative h-56 overflow-hidden cursor-pointer"
         >
           <img
@@ -119,7 +121,7 @@ export function RestaurantCardV2({
             <div className="space-y-1">
               <div
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-lg"
-                style={{ backgroundColor: theme.primaryHex }}
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>{primaryOfferText}</span>
@@ -166,12 +168,12 @@ export function RestaurantCardV2({
             <div className="flex flex-col items-end shrink-0">
               <div
                 className="px-2.5 py-1 rounded-xl text-white font-black text-xs flex items-center gap-1 shadow"
-                style={{ backgroundColor: theme.primaryHex }}
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
               >
                 <span>{activeRating.rating}</span>
                 <span>★</span>
               </div>
-              <span className="text-[10px] opacity-55 mt-1 font-medium">
+              <span className="text-[10px] opacity-70 mt-1 font-medium">
                 {activeRating.rating_type} ({activeRating.reviewCount})
               </span>
             </div>
@@ -186,7 +188,7 @@ export function RestaurantCardV2({
           {/* Stated here so checkout cannot be the first time a fee is seen. */}
           <div
             data-testid={`fee-disclosure-${restaurant.resId}`}
-            className="mt-1.5 text-[10px] opacity-55 leading-snug"
+            className="mt-1.5 text-[10px] opacity-70 leading-snug"
           >
             Plus ₹{FEE_SCHEDULE.platformFee} platform fee, ₹{FEE_SCHEDULE.deliveryFee} delivery (₹
             {FEE_SCHEDULE.reducedDeliveryFee} over ₹{FEE_SCHEDULE.reducedDeliveryOver}),{" "}
@@ -194,7 +196,7 @@ export function RestaurantCardV2({
           </div>
 
           {/* Hygiene & Secondary Rating Metadata */}
-          <div className="mt-2.5 flex items-center justify-between text-[11px] opacity-65">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] opacity-80">
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
               Hyperpure • Hygiene {restaurant.hygieneRating.split(" ")[0]}
@@ -213,7 +215,7 @@ export function RestaurantCardV2({
           onClick={() => onOpenRestaurant(restaurant, "menu")}
           data-testid={`open-menu-${restaurant.resId}`}
           className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-bold text-white transition hover:opacity-95 shadow-sm"
-          style={{ backgroundColor: theme.primaryHex }}
+          style={{ backgroundColor: primaryFill(theme.primaryHex) }}
         >
           <UtensilsCrossed className="w-3.5 h-3.5" />
           <span>Order Menu</span>
@@ -228,7 +230,7 @@ export function RestaurantCardV2({
               : "bg-slate-100 border-slate-200 hover:bg-slate-200 text-slate-900"
           }`}
         >
-          <CalendarCheck className="w-3.5 h-3.5" style={{ color: theme.primaryHex }} />
+          <CalendarCheck className="w-3.5 h-3.5" style={{ color: "var(--brand-ink)" }} />
           <span>Book Table</span>
         </button>
       </div>

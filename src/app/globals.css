@@ -11,6 +11,40 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * The 300/400 accent tints are chosen for dark surfaces and fall to 1.5–2.8:1 on white.
+ * Light surfaces swap them for the 800 shade of the same hue, so every text-*-300/400
+ * stays readable without a light-mode variant on each class. A dark patch inside a light
+ * page (a chip over a photo) opts back in with data-surface="dark".
+ */
+[data-surface="light"] {
+  --brand-ink: var(--brand-ink-light);
+  --color-emerald-300: oklch(43.2% 0.095 166.913);
+  --color-emerald-400: oklch(43.2% 0.095 166.913);
+  --color-amber-300: oklch(47.3% 0.137 46.201);
+  --color-amber-400: oklch(47.3% 0.137 46.201);
+  --color-rose-300: oklch(45.5% 0.188 13.697);
+  --color-rose-400: oklch(45.5% 0.188 13.697);
+  --color-indigo-300: oklch(39.8% 0.195 277.366);
+  --color-indigo-400: oklch(39.8% 0.195 277.366);
+  --color-cyan-300: oklch(45% 0.085 224.283);
+  --color-cyan-400: oklch(45% 0.085 224.283);
+}
+
+[data-surface="dark"] {
+  --brand-ink: var(--brand);
+  --color-emerald-300: oklch(84.5% 0.143 164.978);
+  --color-emerald-400: oklch(76.5% 0.177 163.223);
+  --color-amber-300: oklch(87.9% 0.169 91.605);
+  --color-amber-400: oklch(82.8% 0.189 84.429);
+  --color-rose-300: oklch(81% 0.117 11.638);
+  --color-rose-400: oklch(71.2% 0.194 13.428);
+  --color-indigo-300: oklch(78.5% 0.115 274.713);
+  --color-indigo-400: oklch(67.3% 0.182 276.935);
+  --color-cyan-300: oklch(86.5% 0.127 207.078);
+  --color-cyan-400: oklch(78.9% 0.154 211.53);
+}
+
 :focus-visible {
   outline: 2px solid #10b981;
   outline-offset: 3px;

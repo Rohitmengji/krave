@@ -35,6 +35,7 @@ import { bookingDateOptions, bookingTimeProblem, formatBookingDate } from "@/lib
 import { useMinuteClock } from "@/lib/useMinuteClock";
 import { RequestFailure, requestJson } from "@/lib/requestJson";
 import { FULL_SCREEN_DIALOG, OverlayDialog } from "./OverlayDialog";
+import { primaryFill } from "@/lib/themeContrast";
 
 interface ReviewFormState {
   error: string | null;
@@ -272,7 +273,7 @@ export function RestaurantDetailModal({
         }`}
       >
         {/* Hero Header */}
-        <div className="relative h-60 sm:h-72 shrink-0">
+        <div data-surface="dark" className="relative h-60 sm:h-72 shrink-0">
           <img
             src={restaurant.heroImage}
             alt={restaurant.name}
@@ -295,7 +296,7 @@ export function RestaurantDetailModal({
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span
                   className="px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   {restaurant.walkinOffer.title}
                 </span>
@@ -373,7 +374,7 @@ export function RestaurantDetailModal({
                       ? "text-white shadow"
                       : "opacity-65 hover:opacity-100"
                   }`}
-                  style={active ? { backgroundColor: theme.primaryHex } : undefined}
+                  style={active ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined}
                 >
                   {tab.label}
                 </button>
@@ -382,7 +383,7 @@ export function RestaurantDetailModal({
           </div>
 
           <div className="hidden md:flex items-center gap-2 text-xs opacity-75">
-            <Clock className="w-3.5 h-3.5" style={{ color: theme.primaryHex }} />
+            <Clock className="w-3.5 h-3.5" style={{ color: "var(--brand-ink)" }} />
             <span>Express Delivery in {restaurant.deliveryTimeText}</span>
           </div>
         </div>
@@ -630,7 +631,7 @@ export function RestaurantDetailModal({
                                   );
                                 })()}
 
-                                <div className="font-black text-sm" style={{ color: theme.primaryHex }}>
+                                <div className="font-black text-sm" style={{ color: "var(--brand-ink)" }}>
                                   ₹{dish.price}
                                 </div>
 
@@ -661,7 +662,7 @@ export function RestaurantDetailModal({
                                   data-testid={`add-dish-${dish.id}`}
                                   disabled={isUnavailable}
                                   className="mt-2 w-full py-1.5 px-3 rounded-xl text-xs font-black text-white shadow flex items-center justify-center gap-1 transition hover:opacity-95 disabled:opacity-40"
-                                  style={{ backgroundColor: theme.primaryHex }}
+                                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                                 >
                                   <Plus className="w-3.5 h-3.5" />
                                   <span>{isUnavailable ? "OFF MENU" : "ADD"}</span>
@@ -704,7 +705,7 @@ export function RestaurantDetailModal({
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-black text-lg flex items-center gap-2">
-                      <Calendar className="w-5 h-5" style={{ color: theme.primaryHex }} />
+                      <Calendar className="w-5 h-5" style={{ color: "var(--brand-ink)" }} />
                       Reserve a Table
                     </h3>
                     <p className="text-xs opacity-65">
@@ -713,7 +714,7 @@ export function RestaurantDetailModal({
                   </div>
                   <span
                     className="px-2.5 py-1 rounded-xl text-xs font-bold text-white"
-                    style={{ backgroundColor: theme.primaryHex }}
+                    style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                   >
                     {restaurant.walkinOffer.title}
                   </span>
@@ -752,12 +753,13 @@ export function RestaurantDetailModal({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold mb-1 opacity-75">
+                      <label htmlFor="booking-guests" className="block text-xs font-bold mb-1 opacity-75">
                         Number of Guests
                       </label>
                       <div className="flex items-center gap-2">
                         <Users className="w-4 h-4 opacity-60" />
                         <select
+                          id="booking-guests"
                           value={bookingGuests}
                           onChange={(e) => setBookingGuests(Number(e.target.value))}
                           className={`w-full p-2.5 rounded-xl border text-xs font-semibold ${
@@ -803,7 +805,7 @@ export function RestaurantDetailModal({
                             <div className="text-xs font-black">{slot.time}</div>
                             <div
                               className="text-[10px] font-bold"
-                              style={{ color: theme.primaryHex }}
+                              style={{ color: "var(--brand-ink)" }}
                             >
                               {slot.discountText}
                             </div>
@@ -879,7 +881,7 @@ export function RestaurantDetailModal({
                     disabled={bookingSubmitting || bookingProblem !== null}
                     data-testid="confirm-table-booking-btn"
                     className="w-full py-3 rounded-xl text-xs font-black text-white shadow-lg transition hover:opacity-95 disabled:opacity-50"
-                    style={{ backgroundColor: theme.primaryHex }}
+                    style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                   >
                     {bookingSubmitting
                       ? "Confirming Reservation..."
@@ -994,7 +996,7 @@ export function RestaurantDetailModal({
                   </div>
                   <div className="border-t border-current/10 pt-2 flex justify-between text-sm font-black">
                     <span>Final Amount Payable</span>
-                    <span style={{ color: theme.primaryHex }}>
+                    <span style={{ color: "var(--brand-ink)" }}>
                       ₹{diningPayBreakdown.finalPayable}
                     </span>
                   </div>
@@ -1005,7 +1007,7 @@ export function RestaurantDetailModal({
                   onClick={() => setDiningBillPaid(true)}
                   disabled={diningBill.problem !== null}
                   className="w-full py-3 rounded-xl text-xs font-black text-white shadow-lg transition hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   Pay ₹{diningPayBreakdown.finalPayable} & Save ₹{diningPayBreakdown.totalSaved} Instantly
                 </button>
@@ -1051,7 +1053,7 @@ export function RestaurantDetailModal({
                 }`}
               >
                 <h3 className="font-black text-sm flex items-center gap-2">
-                  <MessageSquarePlus className="w-4 h-4" style={{ color: theme.primaryHex }} />
+                  <MessageSquarePlus className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
                   Write a Verified Review
                 </h3>
                 <div>
@@ -1094,7 +1096,7 @@ export function RestaurantDetailModal({
                   type="submit"
                   disabled={reviewPending}
                   className="w-full py-2.5 rounded-xl text-xs font-black text-white disabled:opacity-60"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   {reviewPending ? "Publishing…" : "Publish Review"}
                 </button>
@@ -1112,7 +1114,7 @@ export function RestaurantDetailModal({
                       <div className="flex items-center gap-2.5">
                         <div
                           className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs text-white"
-                          style={{ backgroundColor: theme.primaryHex }}
+                          style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                         >
                           {rev.userAvatar}
                         </div>
@@ -1133,7 +1135,7 @@ export function RestaurantDetailModal({
                       </div>
                       <span
                         className="px-2.5 py-1 rounded-lg text-xs font-black text-white"
-                        style={{ backgroundColor: theme.primaryHex }}
+                        style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                       >
                         ★ {rev.rating}
                       </span>
@@ -1293,7 +1295,7 @@ export function RestaurantDetailModal({
                   disabled={customiserBlocked !== null}
                   data-testid="confirm-add-to-cart-btn"
                   className="flex-1 py-3 px-4 rounded-xl text-xs font-black text-white shadow-lg disabled:opacity-50"
-                  style={{ backgroundColor: theme.primaryHex }}
+                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
                 >
                   Add Item to Cart • ₹
                   {(customiser.dish.price +

@@ -335,6 +335,16 @@ describe("ST-21 · dialogs load off the storefront's critical path", () => {
     expect(source).toMatch(/from "\.\/lazyDialogs"/);
   });
 
+  it("gives every lazy dialog its own Suspense boundary", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("src/components/lazyDialogs.ts", "utf8");
+    // Without ssr: false (or a loading component) next/dynamic adds no boundary, and the first
+    // open suspends the root one: the whole storefront is hidden and the opener loses focus.
+    const calls = source.split(/\bdynamic\(/).slice(1);
+    expect(calls).toHaveLength(DIALOGS.length);
+    for (const call of calls) expect(call.slice(0, call.indexOf(");"))).toMatch(/ssr:\s*false/);
+  });
+
   it("warms the chunks on idle, cancels on unmount, and respects Save-Data", async () => {
     const { scheduleDialogPreload } = await import("@/components/lazyDialogs");
     const load = vi.fn();

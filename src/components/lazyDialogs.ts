@@ -13,14 +13,30 @@ const loaders = {
   account: () => import("./AccountDialog"),
 };
 
-export const RestaurantDetailModal = dynamic(() => loaders.detail().then((m) => m.RestaurantDetailModal));
-export const CartCheckoutDrawer = dynamic(() => loaders.cart().then((m) => m.CartCheckoutDrawer));
-export const CrystalLiveTrackingModal = dynamic(() =>
-  loaders.tracking().then((m) => m.CrystalLiveTrackingModal)
+// ssr: false is what gives each dialog its own Suspense boundary. Without it next/dynamic
+// renders a Fragment, so a first open suspends to the root boundary: React hides the whole
+// storefront until the chunk resolves, which also blurs the opener and loses focus return.
+// Every dialog is closed during SSR, so nothing is lost by skipping it there.
+export const RestaurantDetailModal = dynamic(
+  () => loaders.detail().then((m) => m.RestaurantDetailModal),
+  { ssr: false }
 );
-export const ReaInspectorModal = dynamic(() => loaders.rea().then((m) => m.ReaInspectorModal));
-export const BrandThemeModal = dynamic(() => loaders.brand().then((m) => m.BrandThemeModal));
-export const AccountDialog = dynamic(() => loaders.account().then((m) => m.AccountDialog));
+export const CartCheckoutDrawer = dynamic(() => loaders.cart().then((m) => m.CartCheckoutDrawer), {
+  ssr: false,
+});
+export const CrystalLiveTrackingModal = dynamic(
+  () => loaders.tracking().then((m) => m.CrystalLiveTrackingModal),
+  { ssr: false }
+);
+export const ReaInspectorModal = dynamic(() => loaders.rea().then((m) => m.ReaInspectorModal), {
+  ssr: false,
+});
+export const BrandThemeModal = dynamic(() => loaders.brand().then((m) => m.BrandThemeModal), {
+  ssr: false,
+});
+export const AccountDialog = dynamic(() => loaders.account().then((m) => m.AccountDialog), {
+  ssr: false,
+});
 
 type IdleHost = {
   requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;

@@ -1,26 +1,21 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useActionState,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
-  AVAILABILITY_KEY,
-  BOOKMARKS_STORAGE_KEY,
   cancelDemoOrder,
   createNotification,
   DELIVERY_SLOTS,
   DEMO_PAYMENT_METHODS,
-  EMPTY_HANDLING,
-  NOTIFICATIONS_KEY,
-  ORDER_HISTORY_KEY,
-  RESERVATION_HISTORY_KEY,
-  restoreAvailability,
-  restoreNotifications,
   restoreOrderHistory,
-  restoreReservationHistory,
-  restoreSessionState,
-  serializeSessionState,
-  SESSION_STATE_KEY,
-  type KraveNotification,
-  type KitchenHandling,
+  type KraveSessionState,
 } from "@/lib/checkout";
 import { POS_SEAT_HANDOFF_KEY } from "@/lib/pos/posEngine";
 import {
@@ -30,6 +25,27 @@ import {
   writeCheckoutIntent,
   type CheckoutIntent,
 } from "@/lib/checkoutIntent";
+import {
+  accountReducer,
+  INITIAL_ACCOUNT_STATE,
+  toggleBookmark,
+  upsertOrder,
+  upsertReservation,
+  type AccountAction,
+} from "@/lib/accountState";
+import { createLatestSync } from "@/lib/latestSync";
+import { filtersReducer, INITIAL_FILTERS, toFilterCriteria, type RestaurantSort } from "@/lib/discoveryFilters";
+import type { MemoryStore, PersistedStore } from "@/lib/persistedStore";
+import {
+  availabilityStore,
+  guestBookmarksStore,
+  guestNotificationsStore,
+  guestOrdersStore,
+  guestReservationsStore,
+  sessionStore,
+  storageWarning,
+  updateSession,
+} from "@/lib/storefrontStores";
 import type { DineInBill } from "@/lib/server/dineInStore";
 import type { Dispute } from "@/lib/server/disputeStore";
 import {
@@ -64,17 +80,15 @@ import {
   calculateCartQuote,
   filterAndSortRestaurants,
   findDishAcrossRestaurants,
+  removeOrderedLines,
   updateCartLineQuantity,
 } from "@/lib/cartEngine";
 import {
   BrandThemePreset,
-  CartLineItem,
   CrystalOrderStage,
   CrystalOrderState,
   DiningReservation,
-  DiscoveryTabKey,
   DishItem,
-  LocationAddress,
   ModifierOption,
   RestaurantEntity,
 } from "@/types/krave";
@@ -86,7 +100,7 @@ import { CrystalLiveTrackingModal } from "./CrystalLiveTrackingModal";
 import { ReaInspectorModal } from "./ReaInspectorModal";
 import { BrandThemeModal } from "./BrandThemeModal";
 import { OverlayDialog } from "./OverlayDialog";
-import { AccountDialog, type AccountUser } from "./AccountDialog";
+import { AccountDialog } from "./AccountDialog";
 
 const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
   "ORDER_CONFIRMED",
@@ -96,6 +110,92 @@ const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
   "ARRIVED",
 ];
 
+const NO_BILLS: DineInBill[] = [];
+const NO_DISPUTES: Dispute[] = [];
+
+function useStore<T>(store: PersistedStore<T> | MemoryStore<T>): T {
+  return useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    "getServerSnapshot" in store ? store.getServerSnapshot : store.getSnapshot
+  );
+}
+
+const subscribeNever = () => () => {};
+
+/** False during the server render and hydration, true once the browser has taken over. */
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false
+  );
+}
+
+async function postJson(
+  url: string,
+  body: unknown,
+  fallbackMessage = "The server did not accept that.",
+  timeoutMs = 8000
+): Promise<unknown> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify(body),
+  });
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = (result as { message?: unknown } | null)?.message;
+    throw new Error(typeof message === "string" ? message : fallbackMessage);
+  }
+  return result;
+}
+
+/** GET the account view. Null when offline, timed out, superseded or refused. */
+async function requestAccount(controller: AbortController): Promise<unknown> {
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch("/api/webroutes/account/me", { signal: controller.signal });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The 86 list is outlet-wide, so it applies whoever is signed in. */
+function adoptAvailability(payload: unknown) {
+  const ids = (payload as { unavailableItemIds?: unknown } | null)?.unavailableItemIds;
+  if (Array.isArray(ids)) {
+    availabilityStore.set(ids.filter((id): id is string => typeof id === "string"));
+  }
+}
+
+function adoptServerState(
+  dispatch: React.Dispatch<AccountAction>,
+  epoch: number,
+  payload: unknown
+) {
+  adoptAvailability(payload);
+  dispatch({ type: "SERVER_STATE", epoch, payload });
+}
+
+const sendBookmarks = createLatestSync<number[]>(async (bookmarks) => {
+  await postJson("/api/webroutes/account/bookmarks", { bookmarks });
+});
+
+const sendMembership = createLatestSync<boolean>(async (isGoldMember) => {
+  await postJson("/api/webroutes/account/membership", { isGoldMember });
+});
+
+interface ClaimFormState {
+  error: string | null;
+  /** Echoed back so a rejected code stays in the box for correcting after React resets the form. */
+  code: string;
+}
+
 export function KraveApp({
   initialRestaurantId,
   initialView,
@@ -103,56 +203,63 @@ export function KraveApp({
   initialRestaurantId?: number;
   initialView?: "orders";
 } = {}) {
-  // Brand & Theme State
-  const [theme, setTheme] = useState<BrandThemePreset>(BRAND_THEME_PRESETS[0]);
-  const [isDark, setIsDark] = useState(true);
+  // Device-owned state lives in browser storage, one store per key, shared live with other
+  // tabs. Account-owned state lives in a reducer and is never written to this device.
+  const hydrated = useHydrated();
+  const session = useStore(sessionStore);
+  const guestOrders = useStore(guestOrdersStore);
+  const guestReservations = useStore(guestReservationsStore);
+  const guestNotifications = useStore(guestNotificationsStore);
+  const guestBookmarks = useStore(guestBookmarksStore);
+  const unavailableItemIds = useStore(availabilityStore);
+  const storageWarningMessage = useStore(storageWarning);
 
-  // Discovery & Filter State (Reconstructed from Zomato pages.search)
-  const [activeMode, setActiveMode] = useState<DiscoveryTabKey>("delivery");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(
-    null
-  );
-  const [pureVegOnly, setPureVegOnly] = useState(false);
-  const [minRating43, setMinRating43] = useState(false);
-  const [fastDeliveryOnly, setFastDeliveryOnly] = useState(false);
-  const [walkinOfferOnly, setWalkinOfferOnly] = useState(false);
-  const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<
-    "relevance" | "rating_desc" | "delivery_time" | "cost_asc" | "cost_desc"
-  >("relevance");
+  const [accountState, dispatchAccount] = useReducer(accountReducer, INITIAL_ACCOUNT_STATE);
+  const accountData = accountState.data;
+  const account = accountData?.user ?? null;
+  const orderHistory = accountData ? accountData.orders : guestOrders;
+  const reservations = accountData ? accountData.reservations : guestReservations;
+  const notifications = accountData ? accountData.notifications : guestNotifications;
+  const bookmarkedIds = accountData ? accountData.bookmarks : guestBookmarks;
+  const dineInBills = accountData?.dineInBills ?? NO_BILLS;
+  const disputes = accountData?.disputes ?? NO_DISPUTES;
+  const isGoldMember = account ? account.isGoldMember : session.isGoldMember;
+  // Only the newest account read may land: an older one finishing later shows older data.
+  const refreshController = useRef<AbortController | null>(null);
 
-  // User, Address & Gold State
-  const [currentAddress, setCurrentAddress] = useState<LocationAddress>(
-    SAVED_ADDRESSES[0]
-  );
-  const [isGoldMember, setIsGoldMember] = useState(true);
-  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([
-    19677790, 301489,
-  ]);
+  // Brand studio edits are a live preview layered on the saved preset.
+  const [themeEdits, setThemeEdits] = useState<{
+    themeId: string;
+    updates: Partial<BrandThemePreset>;
+  } | null>(null);
+  const theme = useMemo(() => {
+    const preset =
+      BRAND_THEME_PRESETS.find((candidate) => candidate.id === session.themeId) ??
+      BRAND_THEME_PRESETS[0];
+    return themeEdits?.themeId === preset.id
+      ? { ...preset, ...themeEdits.updates, id: preset.id }
+      : preset;
+  }, [session.themeId, themeEdits]);
+  const isDark = session.isDark;
 
-  // Cart & Checkout State
-  const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
-  const [appliedCoupon, setAppliedCoupon] = useState<string | null>("KRAVE50");
-  const [riderTip, setRiderTip] = useState<number>(20);
+  // Discovery filters belong to this tab: browsing in one tab must not rearrange another.
+  const [filters, dispatchFilters] = useReducer(filtersReducer, INITIAL_FILTERS);
+  const activeMode = filters.mode;
+
+  // The cart is saved with the session, so every tab works on the same cart.
+  const currentAddress =
+    SAVED_ADDRESSES.find((address) => address.id === session.addressId) ?? SAVED_ADDRESSES[0];
+  const cartItems = session.cartItems;
+  const appliedCoupon = session.couponCode;
+  const riderTip = session.riderTip;
+  const scheduledSlot = session.scheduledSlot;
+  const handling = session.handling;
   const [cartOpen, setCartOpen] = useState(false);
-  const [scheduledSlot, setScheduledSlot] = useState<string>(DELIVERY_SLOTS[0]);
-  const [handling, setHandling] = useState<KitchenHandling>(EMPTY_HANDLING);
   const [priceLock, setPriceLock] = useState<{ token: string; expiresAt: number } | null>(null);
 
-  // Operator availability overlay and the local notification inbox.
-  const [unavailableItemIds, setUnavailableItemIds] = useState<string[]>([]);
-  const [notifications, setNotifications] = useState<KraveNotification[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [offersOpen, setOffersOpen] = useState(false);
-
-  // When an account is signed in the server owns history; otherwise this browser does.
-  const [account, setAccount] = useState<AccountUser | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [dineInBills, setDineInBills] = useState<DineInBill[]>([]);
-  const [claimCode, setClaimCode] = useState("");
-  const [claimError, setClaimError] = useState<string | null>(null);
-  const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [disputePending, setDisputePending] = useState(false);
   const disputeLock = useRef(false);
 
@@ -161,16 +268,14 @@ export function KraveApp({
     restaurant: RestaurantEntity;
     initialTab: "menu" | "book" | "reviews";
   } | null>(null);
-  const [activeCrystalOrder, setActiveCrystalOrder] =
-    useState<CrystalOrderState | null>(null);
+  // An id, not a copy: a stage change or a cancellation (in any tab) shows up here as is.
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const activeCrystalOrder =
+    orderHistory.find((order) => order.orderId === activeOrderId) ?? orderHistory[0] ?? null;
   const [crystalModalOpen, setCrystalModalOpen] = useState(false);
-  const [reservations, setReservations] = useState<DiningReservation[]>([]);
   const [reaInspectorOpen, setReaInspectorOpen] = useState(false);
   const [brandStudioOpen, setBrandStudioOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [orderHistory, setOrderHistory] = useState<CrystalOrderState[]>([]);
-  const [historyReady, setHistoryReady] = useState(false);
-  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const checkoutLock = useRef(false);
@@ -179,49 +284,14 @@ export function KraveApp({
 
   useEffect(() => {
     try {
-      const orders = restoreOrderHistory(localStorage.getItem(ORDER_HISTORY_KEY));
-      setOrderHistory(orders);
-      setActiveCrystalOrder(orders[0] || null);
-      const savedReservations = restoreReservationHistory(
-        localStorage.getItem(RESERVATION_HISTORY_KEY)
-      );
-      setReservations(savedReservations);
-      const savedBookmarksRaw = localStorage.getItem(BOOKMARKS_STORAGE_KEY);
-      if (savedBookmarksRaw) {
-        const parsedBookmarks: unknown = JSON.parse(savedBookmarksRaw);
-        if (
-          Array.isArray(parsedBookmarks) &&
-          parsedBookmarks.every((id) => typeof id === "number")
-        ) {
-          setBookmarkedIds(parsedBookmarks);
-        }
-      }
-
-      // Restored after mount so the server render and first client render still match.
-      const session = restoreSessionState(localStorage.getItem(SESSION_STATE_KEY));
-      if (session) {
-        setCartItems(session.cartItems);
-        setCurrentAddress(
-          SAVED_ADDRESSES.find((address) => address.id === session.addressId) ?? SAVED_ADDRESSES[0]
-        );
-        setTheme(
-          BRAND_THEME_PRESETS.find((preset) => preset.id === session.themeId) ??
-            BRAND_THEME_PRESETS[0]
-        );
-        setIsDark(session.isDark);
-        setActiveMode(session.mode);
-        setIsGoldMember(session.isGoldMember);
-        setAppliedCoupon(session.couponCode);
-        setRiderTip(session.riderTip);
-        setHandling(session.handling);
-        setScheduledSlot(session.scheduledSlot);
-      }
-      setUnavailableItemIds(restoreAvailability(localStorage.getItem(AVAILABILITY_KEY)));
-      setNotifications(restoreNotifications(localStorage.getItem(NOTIFICATIONS_KEY)));
+      const probe = "krave.storage-probe";
+      localStorage.setItem(probe, "1");
+      localStorage.removeItem(probe);
     } catch {
-      setStorageWarning("Browser storage is unavailable. Orders will last only for this visit.");
+      storageWarning.set("Browser storage is unavailable. Orders will last only for this visit.");
     }
-    setHistoryReady(true);
+    // The last mode is where a new visit starts; it is not kept in step across open tabs.
+    dispatchFilters({ type: "SET_MODE", mode: sessionStore.getSnapshot().mode });
   }, []);
 
   // Deep links open the shared surface once the app is interactive.
@@ -234,79 +304,47 @@ export function KraveApp({
   }, [initialRestaurantId]);
 
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/webroutes/account/me", { signal: AbortSignal.timeout(8000) })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((result) => {
-        if (cancelled || !result) return;
-        applyAccountPayload(result);
-      })
-      .catch(() => {
-        // Offline or no server: the local demo session stays in charge.
-      });
-    return () => {
-      cancelled = true;
-    };
+    const controller = new AbortController();
+    refreshController.current = controller;
+    // Offline or no server: the local demo session stays in charge.
+    void requestAccount(controller).then((payload) => {
+      if (payload && refreshController.current === controller) {
+        adoptServerState(dispatchAccount, INITIAL_ACCOUNT_STATE.epoch, payload);
+      }
+    });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    if (initialView !== "orders" || !historyReady) return;
+    if (initialView !== "orders" || !hydrated) return;
     document.getElementById("order-history-heading")?.scrollIntoView({ block: "start" });
-  }, [initialView, historyReady]);
+  }, [initialView, hydrated]);
 
-  useEffect(() => {
-    if (!historyReady) return;
-    try {
-      // A signed-in account's history lives on the server; don't copy it into this browser.
-      if (account) {
-        localStorage.removeItem(ORDER_HISTORY_KEY);
-        localStorage.removeItem(RESERVATION_HISTORY_KEY);
-        localStorage.removeItem(NOTIFICATIONS_KEY);
-      } else {
-        localStorage.setItem(ORDER_HISTORY_KEY, JSON.stringify(orderHistory));
-        localStorage.setItem(RESERVATION_HISTORY_KEY, JSON.stringify(reservations));
-        localStorage.setItem(BOOKMARKS_STORAGE_KEY, JSON.stringify(bookmarkedIds));
-        localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 3200);
+  };
+
+  /** Pull the account view again after something changed it on the server. */
+  function refreshAccount(): Promise<void> {
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
+    const epoch = accountState.epoch;
+    return requestAccount(controller).then((payload) => {
+      if (payload && refreshController.current === controller) {
+        adoptServerState(dispatchAccount, epoch, payload);
       }
-      // Cached only so an offline menu still greys out what was last known to be off.
-      localStorage.setItem(AVAILABILITY_KEY, JSON.stringify(unavailableItemIds));
-      localStorage.setItem(
-        SESSION_STATE_KEY,
-        serializeSessionState({
-          cartItems,
-          addressId: currentAddress.id,
-          themeId: theme.id,
-          isDark,
-          mode: activeMode,
-          isGoldMember,
-          couponCode: appliedCoupon,
-          riderTip,
-          handling,
-          scheduledSlot,
-        })
-      );
-    } catch {
-      setStorageWarning("Order history could not be saved on this device.");
-    }
-  }, [
-    orderHistory,
-    reservations,
-    bookmarkedIds,
-    historyReady,
-    cartItems,
-    currentAddress,
-    theme,
-    isDark,
-    activeMode,
-    isGoldMember,
-    appliedCoupon,
-    riderTip,
-    unavailableItemIds,
-    notifications,
-    account,
-    handling,
-    scheduledSlot,
-  ]);
+    });
+  }
+
+  /** A reply to a change this account made: newer than any account read still in flight. */
+  function receiveServerState(epoch: number, payload: unknown) {
+    refreshController.current?.abort();
+    adoptServerState(dispatchAccount, epoch, payload);
+  }
 
   const notify = (
     kind: "ORDER" | "RESERVATION" | "SYSTEM",
@@ -318,66 +356,27 @@ export function KraveApp({
       void refreshAccount();
       return;
     }
-    setNotifications((previous) => [createNotification(kind, title, body), ...previous].slice(0, 40));
+    guestNotificationsStore.set((previous) =>
+      [createNotification(kind, title, body), ...previous].slice(0, 40)
+    );
   };
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 3200);
-  };
-
-  /** Adopt a server account response as the current history, bookmarks and membership. */
-  function applyAccountPayload(result: unknown) {
-    const payload = (result ?? {}) as Record<string, unknown>;
-
-    // The 86 list is outlet-wide, so it applies to signed-out browsers too.
-    if (Array.isArray(payload.unavailableItemIds)) {
-      setUnavailableItemIds(
-        payload.unavailableItemIds.filter((id): id is string => typeof id === "string")
-      );
-    }
-
-    const user = payload.user as AccountUser | null | undefined;
-    if (!user) return;
-    setAccount(user);
-    setIsGoldMember(user.isGoldMember);
-    if (Array.isArray(payload.orders)) {
-      const orders = restoreOrderHistory(JSON.stringify(payload.orders));
-      setOrderHistory(orders);
-      setActiveCrystalOrder(orders[0] ?? null);
-    }
-    if (Array.isArray(payload.reservations)) {
-      setReservations(restoreReservationHistory(JSON.stringify(payload.reservations)));
-    }
-    if (Array.isArray(payload.bookmarks)) {
-      setBookmarkedIds(payload.bookmarks.filter((id): id is number => typeof id === "number"));
-    }
-    if (Array.isArray(payload.notifications)) {
-      setNotifications(restoreNotifications(JSON.stringify(payload.notifications)));
-    }
-    if (Array.isArray(payload.dineInBills)) {
-      setDineInBills(payload.dineInBills as DineInBill[]);
-    }
-    if (Array.isArray(payload.disputes)) {
-      setDisputes(payload.disputes as Dispute[]);
-    }
+  /** Any change still queued for the previous session must not reach the next one. */
+  function endAccountSession() {
+    refreshController.current?.abort();
+    sendBookmarks.discard();
+    sendMembership.discard();
   }
 
-  /** Pull the account view again after something changed it on the server. */
-  async function refreshAccount() {
-    try {
-      const response = await fetch("/api/webroutes/account/me", {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (response.ok) applyAccountPayload(await response.json());
-    } catch {
-      // A failed refresh leaves the current view in place.
-    }
+  function handleAuthenticated(payload: unknown) {
+    endAccountSession();
+    adoptAvailability(payload);
+    dispatchAccount({ type: "SIGNED_IN", payload });
+    setActiveOrderId(null);
   }
 
   async function handleSignOut() {
+    endAccountSession();
     try {
       await fetch("/api/webroutes/auth/logout", {
         method: "POST",
@@ -386,39 +385,21 @@ export function KraveApp({
     } catch {
       // Clearing local state still signs the browser out of the UI.
     }
-    setAccount(null);
-    setOrderHistory([]);
-    setReservations([]);
-    setDineInBills([]);
-    setDisputes([]);
-    setActiveCrystalOrder(null);
+    // Bumps the session epoch, so replies still in flight for the account are dropped.
+    endAccountSession();
+    dispatchAccount({ type: "SIGNED_OUT" });
+    setActiveOrderId(null);
     showToast("Signed out. This browser is back in local demo mode.");
   }
 
+  const changeMode = (mode: KraveSessionState["mode"]) => {
+    dispatchFilters({ type: "SET_MODE", mode });
+    updateSession("mode", mode);
+  };
+
   const filteredRestaurants = useMemo(
-    () =>
-      filterAndSortRestaurants(RESTAURANTS_DATA, {
-        mode: activeMode,
-        query: searchQuery,
-        collectionId: selectedCollectionId,
-        pureVegOnly,
-        minRating: minRating43 ? 4.3 : undefined,
-        fastDeliveryOnly,
-        hasWalkinOfferOnly: walkinOfferOnly,
-        cuisineFilter,
-        sortBy,
-      }),
-    [
-      activeMode,
-      searchQuery,
-      selectedCollectionId,
-      pureVegOnly,
-      minRating43,
-      fastDeliveryOnly,
-      walkinOfferOnly,
-      cuisineFilter,
-      sortBy,
-    ]
+    () => filterAndSortRestaurants(RESTAURANTS_DATA, toFilterCriteria(filters)),
+    [filters]
   );
 
   const visibleCollections = useMemo(
@@ -498,7 +479,7 @@ export function KraveApp({
       const group = restaurant.modifierGroups[id];
       return group.required ? group.options.filter((option) => option.isDefault).slice(0, group.maxSelect) : [];
     });
-    setCartItems((prev) =>
+    updateSession("cartItems", (prev) =>
       addOrIncrementCartItem(
         prev,
         restaurant,
@@ -512,7 +493,7 @@ export function KraveApp({
   };
 
   const handleUpdateCartQuantity = (lineItemId: string, quantity: number) => {
-    setCartItems((prev) => updateCartLineQuantity(prev, lineItemId, quantity));
+    updateSession("cartItems", (prev) => updateCartLineQuantity(prev, lineItemId, quantity));
   };
 
   const handlePlaceOrder = async (paymentMethod: string) => {
@@ -525,8 +506,12 @@ export function KraveApp({
     checkoutLock.current = true;
     setCheckoutPending(true);
     setCheckoutError(null);
+    // Who placed it and what was in the cart, as of the click; both can change before the reply.
+    const epoch = accountState.epoch;
+    const placedByAccount = account !== null;
+    const orderedLines = cartItems;
     const request = {
-      items: cartItems.map((line) => ({ itemId: line.item.id, quantity: line.quantity,
+      items: orderedLines.map((line) => ({ itemId: line.item.id, quantity: line.quantity,
         optionIds: line.selectedOptions.map((option) => option.id), cookingInstruction: line.cookingInstruction })),
       addressId: currentAddress.id, paymentMethod, couponCode: cartQuote.couponCode,
       isGoldMember, riderTip, scheduledSlot, handling,
@@ -555,9 +540,15 @@ export function KraveApp({
       if (!order) throw new Error("Checkout returned an invalid confirmation. Your cart was kept.");
       checkoutIntent.current = null;
       writeCheckoutIntent(null);
-      setOrderHistory((previous) => [order, ...previous].slice(0, 50));
-      setActiveCrystalOrder(order);
-      setCartItems([]);
+      // A replayed confirmation carries the same order id, so history keeps one entry.
+      if (placedByAccount) {
+        dispatchAccount({ type: "ORDER_PLACED", epoch, order });
+      } else {
+        guestOrdersStore.set((previous) => upsertOrder(previous, order));
+      }
+      setActiveOrderId(order.orderId);
+      // Only what was ordered leaves the cart; another tab may have added more meanwhile.
+      updateSession("cartItems", (current) => removeOrderedLines(current, orderedLines));
       setCartOpen(false);
       setCrystalModalOpen(true);
       notify(
@@ -572,7 +563,7 @@ export function KraveApp({
       const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       setCheckoutError(
         timedOut
-          ? account
+          ? placedByAccount
             ? "We couldn't confirm your order in time. Placing it again is safe; it won't be duplicated."
             : "We couldn't confirm your order in time. It may still have gone through, so wait a moment before ordering again."
           : error instanceof Error ? error.message : "Checkout unavailable. Please try again."
@@ -584,54 +575,54 @@ export function KraveApp({
   };
 
   const handleAdvanceCrystalStage = () => {
-    if (!activeCrystalOrder) return;
-    const idx = CRYSTAL_STAGE_ORDER.indexOf(activeCrystalOrder.stage);
-    const stage = CRYSTAL_STAGE_ORDER[Math.min(CRYSTAL_STAGE_ORDER.length - 1, idx + 1)];
-    if (stage === activeCrystalOrder.stage) return;
-    const updated = { ...activeCrystalOrder, stage };
-    setActiveCrystalOrder(updated);
-    setOrderHistory((previous) => previous.map((order) => order.orderId === updated.orderId ? updated : order));
-    notify("ORDER", stage.replaceAll("_", " "), `${updated.restaurantName} · simulated tracking update.`);
-    if (account) {
-      fetch("/api/webroutes/order/stage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
-        body: JSON.stringify({ orderId: updated.orderId, stage }),
-      }).catch(() => showToast("Could not save that tracking update to your account."));
+    const current = activeCrystalOrder;
+    if (!current) return;
+    const target = CRYSTAL_STAGE_ORDER.indexOf(current.stage) + 1;
+    if (target >= CRYSTAL_STAGE_ORDER.length) return;
+    const stage = CRYSTAL_STAGE_ORDER[target];
+    const body = `${current.restaurantName} · simulated tracking update.`;
+
+    if (!account) {
+      // Forward only: another tab may already have moved this order on.
+      guestOrdersStore.set((previous) =>
+        previous.map((order) =>
+          order.orderId === current.orderId &&
+          CRYSTAL_STAGE_ORDER.indexOf(order.stage) < target
+            ? { ...order, stage }
+            : order
+        )
+      );
+      notify("ORDER", stage.replaceAll("_", " "), body);
+      return;
     }
+
+    const epoch = accountState.epoch;
+    dispatchAccount({ type: "ORDER_STAGE", epoch, orderId: current.orderId, stage });
+    // Read the account back only after the write lands, or the read can undo it on screen.
+    postJson("/api/webroutes/order/stage", { orderId: current.orderId, stage })
+      .then((result) => receiveServerState(epoch, result))
+      .catch(() => showToast("Could not save that tracking update to your account."))
+      .finally(() => void refreshAccount());
   };
 
   const handleCancelOrder = async (orderId: string) => {
     if (!window.confirm("Cancel this demo order? It will be removed from your history.")) return;
     const cancelled = orderHistory.find((order) => order.orderId === orderId);
+    const epoch = accountState.epoch;
     try {
       if (account) {
-        const response = await fetch("/api/webroutes/order/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(8000),
-          body: JSON.stringify({ orderId }),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(
-            typeof result?.message === "string" ? result.message : "Could not cancel that order."
-          );
-        }
-        const remaining = restoreOrderHistory(JSON.stringify(result.orders ?? []));
-        setOrderHistory(remaining);
-        setActiveCrystalOrder((current) =>
-          current?.orderId === orderId ? remaining[0] ?? null : current
+        receiveServerState(
+          epoch,
+          await postJson("/api/webroutes/order/cancel", { orderId }, "Could not cancel that order.")
         );
       } else {
-        const remaining = cancelDemoOrder(orderHistory, orderId);
-        setOrderHistory(remaining);
-        setActiveCrystalOrder((current) =>
-          current?.orderId === orderId ? remaining[0] ?? null : current
-        );
+        // Checked against the stored copy, so a stage another tab advanced is respected.
+        guestOrdersStore.set((previous) => cancelDemoOrder(previous, orderId));
       }
-      if (activeCrystalOrder?.orderId === orderId) setCrystalModalOpen(false);
+      if (activeCrystalOrder?.orderId === orderId) {
+        setCrystalModalOpen(false);
+        setActiveOrderId(null);
+      }
       notify(
         "ORDER",
         "Demo order cancelled",
@@ -644,33 +635,33 @@ export function KraveApp({
   };
 
   /** Attach a table bill to this account using the code printed on its receipt. */
-  const handleClaimBill = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setClaimError(null);
-    try {
-      const response = await fetch("/api/webroutes/account/claim-bill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
-        body: JSON.stringify({ code: claimCode }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          typeof result?.message === "string"
-            ? result.message
-            : "That code is not valid or has already been used."
+  const [claimState, claimAction, claimPending] = useActionState(
+    async (_previous: ClaimFormState, formData: FormData): Promise<ClaimFormState> => {
+      const code = String(formData.get("code") ?? "").trim().toUpperCase();
+      if (!code) return { error: "Enter the code printed on your receipt.", code };
+      const epoch = accountState.epoch;
+      try {
+        const result = await postJson(
+          "/api/webroutes/account/claim-bill",
+          { code },
+          "That code is not valid or has already been used."
         );
+        receiveServerState(epoch, result);
+        const outletName = (result as { bill?: { outletName?: unknown } } | null)?.bill?.outletName;
+        showToast(
+          `Table bill from ${typeof outletName === "string" ? outletName : "the restaurant"} added to your history.`
+        );
+        return { error: null, code: "" };
+      } catch (error) {
+        return {
+          error:
+            error instanceof Error ? error.message : "That code is not valid or has already been used.",
+          code,
+        };
       }
-      applyAccountPayload(result);
-      setClaimCode("");
-      showToast(`Table bill from ${result.bill.outletName} added to your history.`);
-    } catch (error) {
-      setClaimError(
-        error instanceof Error ? error.message : "That code is not valid or has already been used."
-      );
-    }
-  };
+    },
+    { error: null, code: "" }
+  );
 
   /** Raise a claim about a delivered order. The outcome is decided server-side. */
   const handleReportIssue = async (order: CrystalOrderState) => {
@@ -687,25 +678,22 @@ export function KraveApp({
 
     disputeLock.current = true;
     setDisputePending(true);
+    const epoch = accountState.epoch;
     try {
-      const response = await fetch("/api/webroutes/account/dispute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({
+      const result = await postJson(
+        "/api/webroutes/account/dispute",
+        {
           orderId: order.orderId,
           reason: "MISSING_ITEM",
           lines: [{ itemId: first.item.id, quantity: 1 }],
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          typeof result?.message === "string" ? result.message : "Could not raise that claim."
-        );
-      }
-      applyAccountPayload(result);
-      showToast(result.dispute.explanation);
+        },
+        "Could not raise that claim.",
+        10000
+      );
+      receiveServerState(epoch, result);
+      const explanation = (result as { dispute?: { explanation?: unknown } } | null)?.dispute
+        ?.explanation;
+      showToast(typeof explanation === "string" ? explanation : "Your claim was recorded.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Could not raise that claim.");
     } finally {
@@ -714,32 +702,30 @@ export function KraveApp({
     }
   };
 
-  const handleToggleGold = () => {    const next = !isGoldMember;
-    setIsGoldMember(next);
-    if (!account) return;
-    fetch("/api/webroutes/account/membership", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(8000),
-      body: JSON.stringify({ isGoldMember: next }),
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((result) => result && setAccount((current) => (current ? { ...current, isGoldMember: next } : current)))
-      .catch(() => showToast("Could not save your membership change."));
+  const handleToggleGold = () => {
+    const next = !isGoldMember;
+    if (!account) {
+      updateSession("isGoldMember", next);
+      return;
+    }
+    dispatchAccount({ type: "GOLD_SET", epoch: accountState.epoch, isGoldMember: next });
+    sendMembership.push(next).catch(() => {
+      showToast("Could not save your membership change.");
+      void refreshAccount();
+    });
   };
 
   const handleToggleBookmark = (resId: number) => {
-    const next = bookmarkedIds.includes(resId)
-      ? bookmarkedIds.filter((id) => id !== resId)
-      : [...bookmarkedIds, resId];
-    setBookmarkedIds(next);
-    if (!account) return;
-    fetch("/api/webroutes/account/bookmarks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(8000),
-      body: JSON.stringify({ bookmarks: next }),
-    }).catch(() => showToast("Could not save that bookmark to your account."));
+    const saved = !bookmarkedIds.includes(resId);
+    if (!account) {
+      guestBookmarksStore.set((previous) => toggleBookmark(previous, resId, saved));
+      return;
+    }
+    dispatchAccount({ type: "BOOKMARK_SET", epoch: accountState.epoch, resId, saved });
+    sendBookmarks.push(toggleBookmark(bookmarkedIds, resId, saved)).catch(() => {
+      showToast("Could not save that bookmark to your account.");
+      void refreshAccount();
+    });
   };
 
   const handleToggleAvailability = async (itemId: string, dishName: string) => {
@@ -749,21 +735,11 @@ export function KraveApp({
     }
     const unavailable = !unavailableItemIds.includes(itemId);
     try {
-      const response = await fetch("/api/webroutes/menu/availability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(8000),
-        body: JSON.stringify({ itemId, unavailable }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          typeof result?.message === "string" ? result.message : "Could not update availability."
-        );
-      }
-      setUnavailableItemIds(
-        (result.unavailableItemIds as unknown[]).filter(
-          (id): id is string => typeof id === "string"
+      adoptAvailability(
+        await postJson(
+          "/api/webroutes/menu/availability",
+          { itemId, unavailable },
+          "Could not update availability."
         )
       );
       showToast(
@@ -884,8 +860,8 @@ export function KraveApp({
 
   const selectedCollectionObj = useMemo(
     () =>
-      COLLECTIONS_DATA.find((c) => c.id === selectedCollectionId) || null,
-    [selectedCollectionId]
+      COLLECTIONS_DATA.find((c) => c.id === filters.collectionId) || null,
+    [filters.collectionId]
   );
 
   const unreadNotificationCount = useMemo(
@@ -903,15 +879,15 @@ export function KraveApp({
       <Navbar
         theme={theme}
         isDark={isDark}
-        onToggleDark={() => setIsDark((d) => !d)}
+        onToggleDark={() => updateSession("isDark", (dark) => !dark)}
         currentAddress={currentAddress}
         addresses={SAVED_ADDRESSES}
         onSelectAddress={(addr) => {
-          setCurrentAddress(addr);
+          updateSession("addressId", addr.id);
           showToast(`Switched Delivery Subzone to ${addr.displayTitle}`);
         }}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        searchQuery={filters.query}
+        onSearchChange={(query) => dispatchFilters({ type: "SET_QUERY", query })}
         restaurants={RESTAURANTS_DATA}
         onSelectRestaurant={(res, tab = "menu") =>
           setSelectedRestaurant({ restaurant: res, initialTab: tab })
@@ -928,15 +904,15 @@ export function KraveApp({
         onOpenOffers={() => setOffersOpen(true)}
         onOpenInbox={() => {
           setInboxOpen(true);
-          setNotifications((previous) => previous.map((entry) => ({ ...entry, read: true })));
-          if (account) {
-            fetch("/api/webroutes/account/notifications/read", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: AbortSignal.timeout(8000),
-              body: "{}",
-            }).catch(() => undefined);
+          if (unreadNotificationCount === 0) return;
+          if (!account) {
+            guestNotificationsStore.set((previous) =>
+              previous.map((entry) => (entry.read ? entry : { ...entry, read: true }))
+            );
+            return;
           }
+          dispatchAccount({ type: "NOTIFICATIONS_READ", epoch: accountState.epoch });
+          postJson("/api/webroutes/account/notifications/read", {}).catch(() => undefined);
         }}
         unreadCount={unreadNotificationCount}
         accountName={account?.displayName ?? null}
@@ -990,8 +966,8 @@ export function KraveApp({
               <button
                 type="button"
                 onClick={() => {
-                  setActiveMode("delivery");
-                  setFastDeliveryOnly((prev) => !prev);
+                  dispatchFilters({ type: "SHOW_FAST_DELIVERY" });
+                  updateSession("mode", "delivery");
                 }}
                 className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition"
               >
@@ -1002,7 +978,7 @@ export function KraveApp({
 
               <button
                 type="button"
-                onClick={() => setActiveMode("dineout")}
+                onClick={() => changeMode("dineout")}
                 className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition"
               >
                 <Calendar className="w-4 h-4 text-amber-400 mb-1" />
@@ -1054,10 +1030,7 @@ export function KraveApp({
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => {
-                    setActiveMode(tab.key);
-                    setSelectedCollectionId(null);
-                  }}
+                  onClick={() => changeMode(tab.key)}
                   data-testid={`mode-tab-${tab.key}`}
                   className={`flex items-center gap-3 px-5 py-3 rounded-2xl border transition shrink-0 ${
                     isSelected
@@ -1111,7 +1084,7 @@ export function KraveApp({
             {selectedCollectionObj && (
               <button
                 type="button"
-                onClick={() => setSelectedCollectionId(null)}
+                onClick={() => dispatchFilters({ type: "CLEAR_COLLECTION" })}
                 className="text-xs font-bold px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-400 flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" />
@@ -1122,13 +1095,13 @@ export function KraveApp({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {visibleCollections.map((col) => {
-              const active = selectedCollectionId === col.id;
+              const active = filters.collectionId === col.id;
               return (
                 <button
                   key={col.id}
                   type="button"
                   onClick={() =>
-                    setSelectedCollectionId(active ? null : col.id)
+                    dispatchFilters({ type: "TOGGLE_COLLECTION", collectionId: col.id })
                   }
                   data-testid={`collection-card-${col.id}`}
                   className={`group relative h-52 rounded-3xl overflow-hidden text-left border transition-all ${
@@ -1229,10 +1202,10 @@ export function KraveApp({
 
             <button
               type="button"
-              onClick={() => setMinRating43((v) => !v)}
+              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "minRating43" })}
               data-testid="filter-rating-43"
               className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                minRating43
+                filters.minRating43
                   ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                   : isDark
                   ? "bg-[#121721] border-white/10"
@@ -1245,10 +1218,10 @@ export function KraveApp({
 
             <button
               type="button"
-              onClick={() => setPureVegOnly((v) => !v)}
+              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "pureVegOnly" })}
               data-testid="filter-pure-veg"
               className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                pureVegOnly
+                filters.pureVegOnly
                   ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                   : isDark
                   ? "bg-[#121721] border-white/10"
@@ -1261,9 +1234,9 @@ export function KraveApp({
 
             <button
               type="button"
-              onClick={() => setFastDeliveryOnly((v) => !v)}
+              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "fastDeliveryOnly" })}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                fastDeliveryOnly
+                filters.fastDeliveryOnly
                   ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                   : isDark
                   ? "bg-[#121721] border-white/10"
@@ -1276,9 +1249,9 @@ export function KraveApp({
 
             <button
               type="button"
-              onClick={() => setWalkinOfferOnly((v) => !v)}
+              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "walkinOfferOnly" })}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                walkinOfferOnly
+                filters.walkinOfferOnly
                   ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                   : isDark
                   ? "bg-[#121721] border-white/10"
@@ -1290,12 +1263,12 @@ export function KraveApp({
             </button>
 
             {["North Indian", "Japanese", "Biryani", "Cafe"].map((cuisine) => {
-              const active = cuisineFilter === cuisine;
+              const active = filters.cuisine === cuisine;
               return (
                 <button
                   key={cuisine}
                   type="button"
-                  onClick={() => setCuisineFilter(active ? null : cuisine)}
+                  onClick={() => dispatchFilters({ type: "TOGGLE_CUISINE", cuisine })}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
                     active
                       ? "border-indigo-400 bg-indigo-500/20 text-indigo-300"
@@ -1314,16 +1287,9 @@ export function KraveApp({
           <div className="flex items-center gap-2">
             <ArrowUpDown className="w-3.5 h-3.5 opacity-60" />
             <select
-              value={sortBy}
+              value={filters.sortBy}
               onChange={(e) =>
-                setSortBy(
-                  e.target.value as
-                    | "relevance"
-                    | "rating_desc"
-                    | "delivery_time"
-                    | "cost_asc"
-                    | "cost_desc"
-                )
+                dispatchFilters({ type: "SET_SORT", sortBy: e.target.value as RestaurantSort })
               }
               aria-label="Sort restaurants"
               className={`px-3 py-2 rounded-xl border text-xs font-bold ${
@@ -1367,15 +1333,7 @@ export function KraveApp({
               </p>
               <button
                 type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setSelectedCollectionId(null);
-                  setPureVegOnly(false);
-                  setMinRating43(false);
-                  setFastDeliveryOnly(false);
-                  setWalkinOfferOnly(false);
-                  setCuisineFilter(null);
-                }}
+                onClick={() => dispatchFilters({ type: "RESET" })}
                 className="px-4 py-2 rounded-xl text-xs font-black text-white"
                 style={{ backgroundColor: theme.primaryHex }}
               >
@@ -1431,9 +1389,9 @@ export function KraveApp({
                 Open this page on its own →
               </a>
             </div>
-            {storageWarning && (
+            {storageWarningMessage && (
               <p role="status" className="text-xs text-amber-400">
-                {storageWarning}
+                {storageWarningMessage}
               </p>
             )}
           </div>
@@ -1490,7 +1448,7 @@ export function KraveApp({
                             type="button"
                             className="px-3 py-1.5 border border-current/15 rounded-xl text-xs font-bold hover:bg-white/5"
                             onClick={() => {
-                              setActiveCrystalOrder(order);
+                              setActiveOrderId(order.orderId);
                               setCrystalModalOpen(true);
                             }}
                           >
@@ -1521,7 +1479,7 @@ export function KraveApp({
                                 !window.confirm("Replace your current cart with this order?")
                               )
                                 return;
-                              setCartItems(order.items);
+                              updateSession("cartItems", order.items);
                               setCartOpen(true);
                             }}
                           >
@@ -1603,31 +1561,37 @@ export function KraveApp({
                 history. The restaurant never sees your account.
               </p>
 
-              <form onSubmit={handleClaimBill} className="flex flex-wrap items-center gap-2">
+              <form action={claimAction} className="flex flex-wrap items-center gap-2">
                 <input
                   type="text"
-                  value={claimCode}
+                  name="code"
+                  // React clears the form after each submit; a rejected code comes back here.
+                  defaultValue={claimState.code}
                   data-testid="claim-bill-code"
-                  onChange={(event) => setClaimCode(event.target.value.toUpperCase())}
                   placeholder="Receipt code"
                   aria-label="Receipt code"
-                  className={`px-3 py-2 rounded-xl border text-xs font-bold tracking-widest ${
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  aria-invalid={claimState.error ? true : undefined}
+                  className={`px-3 py-2 rounded-xl border text-xs font-bold tracking-widest uppercase ${
                     isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                   }`}
                 />
                 <button
                   type="submit"
                   data-testid="claim-bill-submit"
-                  className="px-4 py-2 rounded-xl text-xs font-black text-white"
+                  disabled={claimPending}
+                  className="px-4 py-2 rounded-xl text-xs font-black text-white disabled:opacity-60"
                   style={{ backgroundColor: theme.primaryHex }}
                 >
-                  Add Table Bill
+                  {claimPending ? "Adding…" : "Add Table Bill"}
                 </button>
               </form>
 
-              {claimError && (
+              {claimState.error && (
                 <p role="alert" className="text-xs text-rose-400">
-                  {claimError}
+                  {claimState.error}
                 </p>
               )}
 
@@ -1760,6 +1724,7 @@ export function KraveApp({
       {/* Modals & Drawers */}
       {selectedRestaurant && (
         <RestaurantDetailModal
+          key={selectedRestaurant.restaurant.resId}
           restaurant={selectedRestaurant.restaurant}
           initialTab={selectedRestaurant.initialTab}
           theme={theme}
@@ -1768,7 +1733,15 @@ export function KraveApp({
           onClose={() => setSelectedRestaurant(null)}
           onAddToCart={handleAddToCart}
           onCreateReservation={(booking) => {
-            setReservations((prev) => [booking, ...prev]);
+            if (account) {
+              dispatchAccount({
+                type: "RESERVATION_ADDED",
+                epoch: accountState.epoch,
+                reservation: booking,
+              });
+            } else {
+              guestReservationsStore.set((previous) => upsertReservation(previous, booking));
+            }
             notify(
               "RESERVATION",
               `Table confirmed at ${booking.restaurantName}`,
@@ -1793,22 +1766,22 @@ export function KraveApp({
         quote={cartQuote}
         coupons={COUPON_OFFERS}
         appliedCoupon={appliedCoupon}
-        onApplyCoupon={setAppliedCoupon}
+        onApplyCoupon={(code) => updateSession("couponCode", code)}
         riderTip={riderTip}
-        onSelectRiderTip={setRiderTip}
+        onSelectRiderTip={(tip) => updateSession("riderTip", tip)}
         isGoldMember={isGoldMember}
         onToggleGold={handleToggleGold}
         currentAddress={currentAddress}
         onUpdateQuantity={handleUpdateCartQuantity}
-        onClearCart={() => setCartItems([])}
+        onClearCart={() => updateSession("cartItems", [])}
         onPlaceOrder={(method) => handlePlaceOrder(method)}
         checkoutPending={checkoutPending}
         checkoutError={checkoutError}
         scheduledSlot={scheduledSlot}
-        onSelectScheduledSlot={setScheduledSlot}
+        onSelectScheduledSlot={(slot) => updateSession("scheduledSlot", slot)}
         unavailableItemIds={unavailableItemIds}
         handling={handling}
-        onChangeHandling={setHandling}
+        onChangeHandling={(next) => updateSession("handling", next)}
         priceLockExpiresAt={priceLock?.expiresAt ?? null}
       />
 
@@ -1835,11 +1808,15 @@ export function KraveApp({
         onClose={() => setBrandStudioOpen(false)}
         currentTheme={theme}
         onSelectPreset={(preset) => {
-          setTheme(preset);
+          updateSession("themeId", preset.id);
+          setThemeEdits(null);
           showToast(`Applied ${preset.name} theme`);
         }}
         onUpdateCustomBrand={(updates) =>
-          setTheme((prev) => ({ ...prev, ...updates }))
+          setThemeEdits((previous) => ({
+            themeId: theme.id,
+            updates: { ...(previous?.themeId === theme.id ? previous.updates : {}), ...updates },
+          }))
         }
         isDark={isDark}
       />
@@ -1888,7 +1865,7 @@ export function KraveApp({
                     <button
                       type="button"
                       onClick={() => {
-                        setAppliedCoupon(offer.code);
+                        updateSession("couponCode", offer.code);
                         setOffersOpen(false);
                         setCartOpen(true);
                         showToast(`${offer.code} selected. It applies if your cart qualifies.`);
@@ -1936,15 +1913,15 @@ export function KraveApp({
                     type="button"
                     data-testid="clear-notifications"
                     onClick={() => {
-                      setNotifications([]);
-                      if (account) {
-                        fetch("/api/webroutes/account/notifications/clear", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          signal: AbortSignal.timeout(8000),
-                          body: "{}",
-                        }).catch(() => showToast("Could not clear notifications on your account."));
+                      if (!account) {
+                        guestNotificationsStore.set([]);
+                        return;
                       }
+                      dispatchAccount({ type: "NOTIFICATIONS_CLEARED", epoch: accountState.epoch });
+                      postJson("/api/webroutes/account/notifications/clear", {}).catch(() => {
+                        showToast("Could not clear notifications on your account.");
+                        void refreshAccount();
+                      });
                     }}
                     className="text-[11px] font-bold opacity-70 hover:opacity-100 underline"
                   >
@@ -1999,7 +1976,7 @@ export function KraveApp({
         theme={theme}
         isDark={isDark}
         user={account}
-        onAuthenticated={applyAccountPayload}
+        onAuthenticated={handleAuthenticated}
         onSignOut={handleSignOut}
       />
     </div>

@@ -109,6 +109,23 @@ test.describe("Storefront", () => {
     await expect(page.getByTestId("inbox-unread-badge")).toHaveCount(0);
   });
 
+  test("keeps the cart and order history in step across open tabs", async ({ page, context }) => {
+    await resetBrowser(page);
+    const other = await context.newPage();
+    await other.goto("/", { waitUntil: "networkidle" });
+    await expect(other.getByTestId("floating-cart-bar")).toHaveCount(0);
+
+    // No reload: the second tab hears about each change from the storage event.
+    await addFirstDishToCart(page);
+    await expect(other.getByTestId("floating-cart-bar")).toBeVisible();
+
+    await placeDemoOrder(page);
+    await expect(other.getByTestId("floating-cart-bar")).toHaveCount(0);
+    await expect(other.getByTestId("order-history-entry")).toHaveCount(1);
+    await expect(other.getByTestId("inbox-unread-badge")).toHaveText("1");
+    await other.close();
+  });
+
   test("serves a shareable restaurant page and 404s an unknown one", async ({ page }) => {
     await resetBrowser(page);
 

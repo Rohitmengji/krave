@@ -184,6 +184,29 @@ export function updateCartLineQuantity(
 }
 
 /**
+ * The cart left once `ordered` has been bought. Only what was ordered is taken out: a line
+ * added (or a quantity raised) in another tab while checkout was in flight stays in the cart.
+ */
+export function removeOrderedLines(
+  currentItems: CartLineItem[],
+  ordered: CartLineItem[]
+): CartLineItem[] {
+  const bought = new Map<string, number>();
+  for (const line of ordered) {
+    bought.set(line.lineItemId, (bought.get(line.lineItemId) ?? 0) + line.quantity);
+  }
+  const remaining = currentItems.flatMap((line) => {
+    const quantity = line.quantity - (bought.get(line.lineItemId) ?? 0);
+    if (quantity <= 0) return [];
+    return [quantity === line.quantity ? line : { ...line, quantity }];
+  });
+  return remaining.length === currentItems.length &&
+    remaining.every((line, index) => line === currentItems[index])
+    ? currentItems
+    : remaining;
+}
+
+/**
  * Single source of truth for fees, so what a listing card promises and what checkout
  * charges cannot drift apart.
  */

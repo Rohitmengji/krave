@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useActionState, useEffect, useRef, useState } from "react";
 import {
   X,
   Star,
@@ -29,6 +29,11 @@ import {
 } from "@/types/krave";
 import { calculateDiningPayBill } from "@/lib/cartEngine";
 import { ALLERGENS, allergenLabels, dishAllergenStatus, portionSummary } from "@/lib/checkout";
+
+interface ReviewFormState {
+  error: string | null;
+  comment: string;
+}
 
 interface RestaurantDetailModalProps {
   restaurant: RestaurantEntity;
@@ -96,11 +101,10 @@ export function RestaurantDetailModal({
   const [localReviews, setLocalReviews] = useState<RestaurantReview[]>(
     restaurant.reviews
   );
-  const [newReviewText, setNewReviewText] = useState("");
   const [newReviewRating, setNewReviewRating] = useState(5);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
+  const bookingLock = useRef(false);
 
   // Dismiss nested dish customizer first on Escape; otherwise close the restaurant modal.
   useEffect(() => {
@@ -169,13 +173,17 @@ export function RestaurantDetailModal({
 
   const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (bookingSubmitting) return;
+    if (bookingLock.current) return;
+    bookingLock.current = true;
     setBookingError(null);
     setBookingSubmitting(true);
     try {
+      // Not aborted when the modal closes: the table may already be held, and the reply
+      // still has to reach the reservation list, which outlives this modal.
       const response = await fetch("/api/webroutes/user/booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10000),
         body: JSON.stringify({
           resId: restaurant.resId,
           date: bookingDate,
@@ -188,7 +196,7 @@ export function RestaurantDetailModal({
           membershipName: theme.membershipName,
         }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => null);
       if (!response.ok || !result?.reservation) {
         throw new Error(
           typeof result?.message === "string"
@@ -199,47 +207,65 @@ export function RestaurantDetailModal({
       setLatestBooking(result.reservation);
       onCreateReservation(result.reservation);
     } catch (error) {
+      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       setBookingError(
-        error instanceof Error
+        timedOut
+          ? "We couldn't confirm this booking in time. It may still have gone through, so check your reservations before booking again."
+          : error instanceof Error
           ? error.message
           : "Unable to confirm reservation. Please check your details."
       );
     } finally {
+      bookingLock.current = false;
       setBookingSubmitting(false);
     }
   };
 
-  const handlePostReview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setReviewError(null);
-    try {
-      const response = await fetch("/api/webroutes/reviews/post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          resId: restaurant.resId,
-          rating: newReviewRating,
-          comment: newReviewText,
-          userName: guestName,
-          reviewType: "DINING",
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok || !result?.review) {
-        throw new Error(
-          typeof result?.message === "string"
-            ? result.message
-            : "Please enter a review of at least 5 characters."
-        );
+  const [reviewState, reviewAction, reviewPending] = useActionState(
+    async (_previous: ReviewFormState, formData: FormData): Promise<ReviewFormState> => {
+      const comment = String(formData.get("comment") ?? "");
+      try {
+        const response = await fetch("/api/webroutes/reviews/post", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify({
+            resId: restaurant.resId,
+            rating: Number(formData.get("rating")),
+            comment,
+            userName: guestName,
+            reviewType: "DINING",
+          }),
+        });
+        const result = await response.json().catch(() => null);
+        if (!response.ok || !result?.review) {
+          throw new Error(
+            typeof result?.message === "string"
+              ? result.message
+              : "Please enter a review of at least 5 characters."
+          );
+        }
+        const review = result.review as RestaurantReview;
+        setLocalReviews((previous) => [
+          review,
+          ...previous.filter((entry) => entry.id !== review.id),
+        ]);
+        return { error: null, comment: "" };
+      } catch (error) {
+        const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+        return {
+          error: timedOut
+            ? "Posting took too long. Your review may still appear, so check the list before posting again."
+            : error instanceof Error
+            ? error.message
+            : "Could not submit review.",
+          // Handed back so the text survives React clearing the form after the action.
+          comment,
+        };
       }
-      setLocalReviews([result.review, ...localReviews]);
-      setNewReviewText("");
-    } catch (error) {
-      setReviewError(
-        error instanceof Error ? error.message : "Could not submit review."
-      );
-    }
-  };
+    },
+    { error: null, comment: "" }
+  );
 
   const diningPayBreakdown = calculateDiningPayBill(
     diningBillInput,
@@ -1011,7 +1037,7 @@ export function RestaurantDetailModal({
           {activeTab === "reviews" && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <form
-                onSubmit={handlePostReview}
+                action={reviewAction}
                 className={`p-5 rounded-2xl border space-y-3 h-fit ${
                   isDark ? "bg-[#141A26] border-white/10" : "bg-slate-50 border-slate-200"
                 }`}
@@ -1038,27 +1064,31 @@ export function RestaurantDetailModal({
                       </button>
                     ))}
                   </div>
+                  <input type="hidden" name="rating" value={newReviewRating} />
                 </div>
                 <textarea
                   rows={3}
-                  value={newReviewText}
-                  onChange={(e) => setNewReviewText(e.target.value)}
+                  name="comment"
+                  defaultValue={reviewState.comment}
+                  aria-label="Your review"
+                  aria-invalid={reviewState.error ? true : undefined}
                   placeholder="Share your experience with the food, packaging, or courtyard ambience..."
                   className={`w-full p-3 rounded-xl border text-xs outline-none ${
                     isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                   }`}
                 />
-                {reviewError && (
+                {reviewState.error && (
                   <p role="alert" className="text-xs text-rose-400 font-semibold">
-                    {reviewError}
+                    {reviewState.error}
                   </p>
                 )}
                 <button
                   type="submit"
-                  className="w-full py-2.5 rounded-xl text-xs font-black text-white"
+                  disabled={reviewPending}
+                  className="w-full py-2.5 rounded-xl text-xs font-black text-white disabled:opacity-60"
                   style={{ backgroundColor: theme.primaryHex }}
                 >
-                  Publish Review
+                  {reviewPending ? "Publishing…" : "Publish Review"}
                 </button>
               </form>
 

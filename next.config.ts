@@ -1,22 +1,21 @@
 import type { NextConfig } from "next";
+import { securityHeaders } from "./src/lib/securityHeaders";
+
+const imageHosts = [
+  { protocol: "https", hostname: "b.zmtcdn.com" },
+  { protocol: "https", hostname: "images.unsplash.com" },
+] as const;
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "b.zmtcdn.com" },
-      { protocol: "https", hostname: "images.unsplash.com" },
-    ],
+    remotePatterns: [...imageHosts],
   },
   async headers() {
     return [
       {
         source: "/(.*)",
-        headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-        ],
+        headers: securityHeaders({ isDev: process.env.NODE_ENV === "development", imageHosts }),
       },
       {
         // The worker itself is never cached, so an updated shell always reaches the device.

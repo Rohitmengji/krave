@@ -213,3 +213,44 @@ describe("ST-19 · a restaurant page has one URL", () => {
     }
   });
 });
+
+describe("STK-10 · every page ships a content security policy", () => {
+  async function headersFor(nodeEnv: string) {
+    vi.stubEnv("NODE_ENV", nodeEnv);
+    vi.resetModules();
+    const { default: config } = await import("../../next.config");
+    const rules = await config.headers!();
+    vi.unstubAllEnvs();
+    const all = rules.find((rule) => rule.source === "/(.*)")!.headers;
+    return { config, get: (key: string) => all.find((h) => h.key === key)?.value ?? "" };
+  }
+  const directive = (csp: string, name: string) =>
+    csp.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name} `)) ?? "";
+
+  it("locks down plugins, framing, base and form targets, and outbound fetches", async () => {
+    const { get } = await headersFor("production");
+    const csp = get("Content-Security-Policy");
+    expect(directive(csp, "object-src")).toBe("object-src 'none'");
+    expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
+    expect(directive(csp, "base-uri")).toBe("base-uri 'self'");
+    expect(directive(csp, "form-action")).toBe("form-action 'self'");
+    expect(directive(csp, "connect-src")).toBe("connect-src 'self'");
+    expect(csp).not.toContain("unsafe-eval");
+    expect(get("Permissions-Policy")).toContain("camera=()");
+    expect(get("Strict-Transport-Security")).toMatch(/max-age=\d{7,}/);
+  });
+
+  it("allows eval only in development, where React needs it", async () => {
+    const { get } = await headersFor("development");
+    expect(directive(get("Content-Security-Policy"), "script-src")).toContain("'unsafe-eval'");
+  });
+
+  it("lets every configured image host through img-src", async () => {
+    const { config, get } = await headersFor("production");
+    const imgSrc = directive(get("Content-Security-Policy"), "img-src");
+    for (const pattern of config.images?.remotePatterns ?? []) {
+      if (pattern instanceof URL) continue;
+      expect(imgSrc).toContain(`${pattern.protocol ?? "https"}://${pattern.hostname}`);
+    }
+  });
+});

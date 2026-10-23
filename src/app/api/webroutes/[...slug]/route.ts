@@ -161,7 +161,7 @@ export async function GET(
         current: {
           name: "search",
           subType: mode,
-          pageUrl: `/ncr/${mode}`,
+          pageUrl: `/${mode}`,
         },
         search: {
           sections: {
@@ -194,7 +194,7 @@ export async function GET(
       status: "success",
       webroute: routePath,
       crystal: {
-        protocol: "Zomato Crystal Post-Order Engine v2",
+        protocol: "KRAVE Crystal Post-Order Engine v2",
         rider: {
           name: "Rajesh Kumar",
           vehicleNumber: "DL-01-EV-4829",
@@ -207,6 +207,10 @@ export async function GET(
   }
 
   if (routePath === "/webroutes/rea/evidence") {
+    // Development-only, like the inspector that reads it.
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json({ status: "error", message: "Not found." }, { status: 404 });
+    }
     return NextResponse.json({
       status: "success",
       webroute: routePath,

@@ -182,8 +182,8 @@ export const COLLECTIONS_DATA: CollectionEntity[] = [
 export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   {
     id: "brand_haldirams",
-    name: "Haldiram's",
-    logoText: "HR",
+    name: "Mithaas",
+    logoText: "MT",
     accentColor: "#EF4444",
     deliveryTime: "24 min",
     resId: 19677790,
@@ -191,8 +191,8 @@ export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   },
   {
     id: "brand_farzi",
-    name: "Farzi Cafe",
-    logoText: "FC",
+    name: "Tamasha Bistro",
+    logoText: "TB",
     accentColor: "#10B981",
     deliveryTime: "29 min",
     resId: 18238278,
@@ -200,8 +200,8 @@ export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   },
   {
     id: "brand_biryani_blues",
-    name: "Biryani Blues",
-    logoText: "BB",
+    name: "Dum Dastaan",
+    logoText: "DD",
     accentColor: "#F59E0B",
     deliveryTime: "22 min",
     resId: 18429140,
@@ -209,8 +209,8 @@ export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   },
   {
     id: "brand_bukhara",
-    name: "Bukhara ITC",
-    logoText: "BK",
+    name: "Frontier Ember",
+    logoText: "FE",
     accentColor: "#D97706",
     deliveryTime: "38 min",
     resId: 301489,
@@ -218,8 +218,8 @@ export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   },
   {
     id: "brand_mount_fuji",
-    name: "Mount Fuji",
-    logoText: "MF",
+    name: "Kumo",
+    logoText: "KU",
     accentColor: "#EC4899",
     deliveryTime: "31 min",
     resId: 19283710,
@@ -227,8 +227,8 @@ export const TOP_BRANDS_DATA: TopBrandEntity[] = [
   },
   {
     id: "brand_lavonne",
-    name: "Lavonne",
-    logoText: "LV",
+    name: "Sugar Atelier",
+    logoText: "SA",
     accentColor: "#8B5CF6",
     deliveryTime: "25 min",
     resId: 53579,
@@ -260,10 +260,10 @@ export const COUPON_OFFERS: CouponOffer[] = [
     membersOnly: true,
   },
   {
-    code: "ZPAYAXIS",
+    code: "KRAVECARD",
     title: "20% Instant Discount up to ₹300",
-    description: "Valid with Axis Burgundy & Reserve Cards on orders above ₹750.",
-    bankOrPartner: "AXIS BANK PARTNER",
+    description: "Valid on card payments (demo) for orders above ₹750.",
+    bankOrPartner: "CARD OFFER",
     discountType: "PERCENT",
     value: 20,
     maxDiscount: 300,
@@ -339,8 +339,8 @@ const SHARED_MODIFIER_GROUPS: Record<string, ModifierGroup> = {
 export const RESTAURANTS_DATA: RestaurantEntity[] = [
   {
     resId: 19677790,
-    slug: "haldirams-janpath-new-delhi",
-    name: "Haldiram's Heritage & Sweets",
+    slug: "mithaas-janpath-new-delhi",
+    name: "Mithaas Heritage & Sweets",
     heroImage: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=900&q=80",
@@ -541,8 +541,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
   },
   {
     resId: 19495371,
-    slug: "out-of-the-box-courtyard-connaught-place",
-    name: "Out Of The Box Courtyard",
+    slug: "open-sky-courtyard-connaught-place",
+    name: "Open Sky Courtyard",
     heroImage: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=900&q=80",
@@ -691,8 +691,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
   },
   {
     resId: 18238278,
-    slug: "farzi-cafe-connaught-place-new-delhi",
-    name: "Farzi Cafe — Modern Indian Bistro",
+    slug: "tamasha-bistro-connaught-place-new-delhi",
+    name: "Tamasha — Modern Indian Bistro",
     heroImage: "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=900&q=80",
@@ -717,9 +717,9 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     collectionIds: [71343, 307074, 91202],
     offers: [
       {
-        code: "ZPAYAXIS",
+        code: "KRAVECARD",
         title: "20% OFF up to ₹300",
-        subtitle: "Use code ZPAYAXIS | Above ₹750",
+        subtitle: "Use code KRAVECARD | Above ₹750",
         discountType: "PERCENT",
         value: 20,
         maxDiscount: 300,
@@ -759,7 +759,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     menus: [
       {
         id: "ctg_farzi_signatures",
-        name: "Farzified Modern Indian Tapas & Mains",
+        name: "Tamasha Modern Indian Tapas & Mains",
         categories: [
           {
             id: "s_ctg_farzi_tapas",
@@ -833,8 +833,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
   },
   {
     resId: 301489,
-    slug: "bukhara-itc-maurya-chanakyapuri",
-    name: "Bukhara — ITC Maurya",
+    slug: "frontier-ember-chanakyapuri",
+    name: "Frontier Ember — The Residency",
     heroImage: "https://images.unsplash.com/photo-1585937421612-70a008356fbe?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1585937421612-70a008356fbe?auto=format&fit=crop&w=900&q=80",
@@ -845,7 +845,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     costForTwoText: "₹8,000 for two",
     locality: "Chanakyapuri, New Delhi",
     city: "Delhi NCR",
-    address: "ITC Maurya, Sardar Patel Marg, Diplomatic Enclave, Chanakyapuri, New Delhi",
+    address: "The Residency, Sardar Patel Marg, Chanakyapuri, New Delhi",
     distanceKm: 4.7,
     distanceText: "4.7 km",
     deliveryTimeMins: 38,
@@ -892,7 +892,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
     openingHours: "12:30 PM – 2:45 PM, 7:00 PM – 11:45 PM",
     isOpen: true,
     modifierGroups: SHARED_MODIFIER_GROUPS,
-    highlights: ["World's 50 Best Restaurants Icon", "18-Hour Slow-Cooked Dal Bukhara", "Luxury Five-Star Dining"],
+    highlights: ["Iconic Frontier Kitchen", "18-Hour Slow-Cooked Black Dal", "Luxury Five-Star Dining"],
     diningSlots: [
       { time: "12:45 PM", mealType: "Lunch", discountText: "Luxe Priority Table", seatsLeft: 3 },
       { time: "07:30 PM", mealType: "Dinner", discountText: "Luxe Priority Table", seatsLeft: 2 },
@@ -909,7 +909,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
             items: [
               {
                 id: "ctl_dal_bukhara",
-                name: "Signature Dal Bukhara",
+                name: "Signature Frontier Black Dal",
                 price: 1350,
                 default_price: 1350,
                 desc: "Whole black urad lentils simmered overnight for 18 hours over glowing charcoal embers with fresh tomato puree, ginger & white butter.",
@@ -968,16 +968,16 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
         reviewType: "DINING",
         rating: 5,
         timestamp: "5 days ago",
-        comment: "Dal Bukhara and Sikandari Raan remain a once-in-a-lifetime benchmark for Indian gastronomy.",
-        positiveTags: ["Legendary Dal Bukhara", "World-Class Hospitality"],
+        comment: "The black dal and Sikandari Raan remain a once-in-a-lifetime benchmark for Indian gastronomy.",
+        positiveTags: ["Legendary Black Dal", "World-Class Hospitality"],
         likes: 142,
       },
     ],
   },
   {
     resId: 19283710,
-    slug: "mount-fuji-japanese-pan-asian-connaught-place",
-    name: "Mount Fuji Japanese & Pan-Asian Bar",
+    slug: "kumo-japanese-pan-asian-connaught-place",
+    name: "Kumo Japanese & Pan-Asian Bar",
     heroImage: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=900&q=80",
@@ -1104,8 +1104,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
   },
   {
     resId: 18429140,
-    slug: "biryani-blues-connaught-place",
-    name: "Biryani Blues — Royal Hyderabadi Dum",
+    slug: "dum-dastaan-connaught-place",
+    name: "Dum Dastaan — Royal Hyderabadi Biryani",
     heroImage: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=900&q=80",
@@ -1229,8 +1229,8 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
   },
   {
     resId: 53579,
-    slug: "lavonne-cafe-patisserie-indiranagar",
-    name: "Lavonne — Academy & Artisan Patisserie",
+    slug: "sugar-atelier-patisserie-indiranagar",
+    name: "Sugar Atelier — Academy & Artisan Patisserie",
     heroImage: "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1200&q=80",
     galleryImages: [
       "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=900&q=80",
@@ -1346,7 +1346,7 @@ export const RESTAURANTS_DATA: RestaurantEntity[] = [
         reviewType: "DINING",
         rating: 5,
         timestamp: "2 days ago",
-        comment: "Lavonne's Valrhona chocolate dome and twice-baked almond croissant are pure heaven.",
+        comment: "Sugar Atelier's dark chocolate dome and twice-baked almond croissant are pure heaven.",
         positiveTags: ["Valrhona Chocolate", "Cozy Brick Patio"],
         likes: 94,
       },

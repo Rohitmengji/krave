@@ -105,7 +105,7 @@ test.describe("Dine-in terminal", () => {
     const table = {
       sessionId: `POS-${crypto.randomUUID()}`,
       outletId: 19677790,
-      outletName: "Haldiram's Heritage & Sweets",
+      outletName: "Mithaas Heritage & Sweets",
       tableId: "T1",
       guestCount: 2,
       serverName: "Asha",
@@ -169,7 +169,7 @@ test.describe("Dine-in terminal", () => {
     const tampered = {
       sessionId: `POS-${crypto.randomUUID()}`,
       outletId: 19677790,
-      outletName: "Haldiram's Heritage & Sweets",
+      outletName: "Mithaas Heritage & Sweets",
       tableId: "G1",
       guestCount: 2,
       serverName: "Asha",

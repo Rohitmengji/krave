@@ -26,27 +26,27 @@ interface ReaInspectorModalProps {
 
 const WEBMCP_TOOLS = [
   {
-    name: "zomato_search_restaurants",
+    name: "krave_search_restaurants",
     desc: "Search partner kitchens with context & limit (discovered in main-e6c9fe541e8ed0c4264b.js)",
   },
   {
-    name: "zomato_get_restaurant_menu",
-    desc: "Return structured menu categories & items for Haldiram's (#19677790)",
+    name: "krave_get_restaurant_menu",
+    desc: "Return structured menu categories & items for Mithaas (#19677790)",
   },
   {
-    name: "zomato_get_dish_options",
+    name: "krave_get_dish_options",
     desc: "Inspect modifierGroups for Ghee Assorted Sweets Box (ctl_820099425)",
   },
   {
-    name: "zomato_add_item_to_cart",
-    desc: "Add signature Dal Bukhara (#ctl_dal_bukhara) to live Redux cart",
+    name: "krave_add_item_to_cart",
+    desc: "Add the signature black dal (#ctl_dal_bukhara) to live Redux cart",
   },
   {
-    name: "zomato_quote_cart",
+    name: "krave_quote_cart",
     desc: "Compute itemized GST, packaging, coupon & Luxe discount quote",
   },
   {
-    name: "zomato_list_addresses",
+    name: "krave_list_addresses",
     desc: "List serviceable Delivery Subzones (DSZ) via chunk 3088 htiX",
   },
 ];
@@ -172,7 +172,7 @@ export function ReaInspectorModal({
             }
           >
             <Terminal className="w-3.5 h-3.5" />
-            3. Live zomato_webmcp Agent Tools (17 Tools)
+            3. Live krave_webmcp Agent Tools (17 Tools)
           </button>
         </div>
 
@@ -275,7 +275,8 @@ export function ReaInspectorModal({
                 REA static analysis of <code className="font-mono">main-e6c9fe541e8ed0c4264b.js</code> &{" "}
                 <code className="font-mono">3088-54e4d9b888124e3862e7.js</code> (module{" "}
                 <code className="font-mono">htiX</code>) uncovered Zomato&apos;s built-in{" "}
-                <code className="font-mono">window.zomato_webmcp</code> agent tool dispatcher. Click any tool below to invoke it live against this app:
+                <code className="font-mono">window.zomato_webmcp</code> agent tool dispatcher. This app exposes its own equivalent as{" "}
+                <code className="font-mono">window.krave_webmcp</code>. Click any tool below to invoke it live:
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -313,7 +314,7 @@ export function ReaInspectorModal({
                   <div className="flex items-center justify-between text-white/70 border-b border-white/10 pb-1.5">
                     <span className="flex items-center gap-1.5">
                       <Code2 className="w-4 h-4 text-emerald-400" />
-                      <span>Output of window.zomato_webmcp.{lastToolName}()</span>
+                      <span>Output of window.krave_webmcp.{lastToolName}()</span>
                     </span>
                     <span className="text-[10px] text-emerald-400">status: ok</span>
                   </div>

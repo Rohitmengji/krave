@@ -2,7 +2,6 @@ import type { NextConfig } from "next";
 import { securityHeaders } from "./src/lib/securityHeaders";
 
 const imageHosts = [
-  { protocol: "https", hostname: "b.zmtcdn.com" },
   { protocol: "https", hostname: "images.unsplash.com" },
 ] as const;
 

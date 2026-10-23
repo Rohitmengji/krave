@@ -130,7 +130,7 @@ test.describe("Storefront", () => {
     await resetBrowser(page);
 
     await page.goto("/restaurant/19677790", { waitUntil: "networkidle" });
-    await expect(page).toHaveTitle(/Haldiram/);
+    await expect(page).toHaveTitle(/Mithaas/);
     await expect(page.getByRole("dialog").first()).toBeVisible();
 
     const missing = await page.goto("/restaurant/999999");

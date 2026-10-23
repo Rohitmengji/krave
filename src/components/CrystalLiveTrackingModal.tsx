@@ -177,7 +177,7 @@ export function CrystalLiveTrackingModal({
               strokeWidth="10"
               strokeLinecap="round"
             />
-            {/* Active Polyline (libzomato_crystal.so decodePolyline) */}
+            {/* Active Polyline (decodePolyline) */}
             <path
               d="M 80 165 Q 280 55, 440 120 T 710 75"
               fill="none"

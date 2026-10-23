@@ -576,7 +576,7 @@ export function CartCheckoutDrawer({
               </div>
             </div>
 
-            {/* Itemized Bill Quote (zomato_quote_cart) */}
+            {/* Itemized Bill Quote (krave_quote_cart) */}
             <div
               className={`p-4 rounded-2xl border space-y-2 text-xs ${
                 isDark ? "bg-[#141A26] border-white/10" : "bg-slate-50 border-slate-200"

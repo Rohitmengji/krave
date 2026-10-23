@@ -108,9 +108,9 @@ describe("coupon eligibility", () => {
     expect(validateCheckout(checkout({ ...big, isGoldMember: true })).quote.couponCode).toBe("GOLDVIP");
   });
 
-  it("binds ZPAYAXIS to card payment", () => {
-    expect(() => validateCheckout(checkout({ couponCode: "ZPAYAXIS" }))).toThrow(/Card \(demo\)/);
-    const card = validateCheckout(checkout({ couponCode: "ZPAYAXIS", paymentMethod: "Card (demo)" }));
+  it("binds KRAVECARD to card payment", () => {
+    expect(() => validateCheckout(checkout({ couponCode: "KRAVECARD" }))).toThrow(/Card \(demo\)/);
+    const card = validateCheckout(checkout({ couponCode: "KRAVECARD", paymentMethod: "Card (demo)" }));
     expect(card.quote.couponDiscount).toBeGreaterThan(0);
   });
 
@@ -122,9 +122,9 @@ describe("coupon eligibility", () => {
   });
 
   it("does not judge a payment-bound offer before a method is chosen", () => {
-    expect(couponIneligibility("ZPAYAXIS", { isGoldMember: false })).toBeNull();
-    expect(couponIneligibility(" zpayaxis ", { isGoldMember: false, paymentMethod: "UPI (demo)" }))
-      .toMatch(/ZPAYAXIS/);
+    expect(couponIneligibility("KRAVECARD", { isGoldMember: false })).toBeNull();
+    expect(couponIneligibility(" kravecard ", { isGoldMember: false, paymentMethod: "UPI (demo)" }))
+      .toMatch(/KRAVECARD/);
     expect(couponIneligibility(null, { isGoldMember: false })).toBeNull();
     expect(couponIneligibility("NOT_A_CODE", { isGoldMember: false })).toBeNull();
   });

@@ -37,7 +37,7 @@ import {
   updateCartLineQuantity,
 } from "@/lib/cartEngine";
 
-describe("KRAVE (Rebranded Zomato Clone) — REA Reconstructed Engine", () => {
+describe("KRAVE — REA Reconstructed Engine", () => {
   it("keeps web evidence separate from unavailable Android analysis", () => {
     expect(REA_EVIDENCE_SUMMARY.webCapture.evidenceId).toMatch(/^ev_[a-f0-9]{64}$/);
     expect(REA_EVIDENCE_SUMMARY.jsAppGraph.evidenceId).toMatch(/^ev_[a-f0-9]{64}$/);
@@ -62,7 +62,7 @@ describe("KRAVE (Rebranded Zomato Clone) — REA Reconstructed Engine", () => {
       query: "Aburi Salmon",
     });
     expect(sushiSearch.map((r) => r.slug)).toContain(
-      "mount-fuji-japanese-pan-asian-connaught-place"
+      "kumo-japanese-pan-asian-connaught-place"
     );
   });
 
@@ -117,10 +117,10 @@ describe("KRAVE (Rebranded Zomato Clone) — REA Reconstructed Engine", () => {
     expect(() => calculateCartQuote([{ ...cart[0], quantity: Number.MAX_SAFE_INTEGER }])).toThrow();
   });
 
-  it("locates dishes across partner restaurants for zomato_webmcp tools", () => {
+  it("locates dishes across partner restaurants for krave_webmcp tools", () => {
     const found = findDishAcrossRestaurants("ctl_dal_bukhara");
     expect(found).not.toBeNull();
-    expect(found?.restaurant.name).toContain("Bukhara");
+    expect(found?.restaurant.name).toContain("Frontier Ember");
   });
 
   const checkout = {

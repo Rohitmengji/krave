@@ -216,7 +216,7 @@ export function Navbar({
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search restaurants, cuisines, or dishes (e.g. Dal Bukhara, Sushi, Chaat)..."
+                placeholder="Search restaurants, cuisines, or dishes (e.g. Black Dal, Sushi, Chaat)..."
                 data-testid="universal-search-input"
                 className="w-full bg-transparent text-sm outline-none placeholder:opacity-50"
               />

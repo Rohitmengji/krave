@@ -127,6 +127,10 @@ const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
 const NO_BILLS: DineInBill[] = [];
 const NO_DISPUTES: Dispute[] = [];
 
+// The inspector documents the reverse-engineering evidence behind this build. It is a
+// development aid, not something a public deployment shows its customers.
+const SHOW_DEVELOPER_INSPECTOR = process.env.NODE_ENV !== "production";
+
 function useStore<T>(store: PersistedStore<T> | MemoryStore<T>): T {
   return useSyncExternalStore(
     store.subscribe,
@@ -796,13 +800,13 @@ export function KraveApp({
     }
   };
 
-  // Implement Zomato's discovered window.zomato_webmcp agent tool dispatcher
+  // Agent tools exposed to the page as window.krave_webmcp.
   const invokeWebMcpTool = (toolName: string): Record<string, unknown> => {
     switch (toolName) {
-      case "zomato_search_restaurants":
+      case "krave_search_restaurants":
         return {
           ok: true,
-          tool: "zomato_search_restaurants",
+          tool: "krave_search_restaurants",
           context: activeMode,
           count: filteredRestaurants.length,
           results: filteredRestaurants.map((r) => ({
@@ -813,11 +817,11 @@ export function KraveApp({
             walkinOffer: r.walkinOffer.title,
           })),
         };
-      case "zomato_get_restaurant_menu": {
+      case "krave_get_restaurant_menu": {
         const res = RESTAURANTS_DATA[0];
         return {
           ok: true,
-          tool: "zomato_get_restaurant_menu",
+          tool: "krave_get_restaurant_menu",
           restaurantId: res.resId,
           restaurantName: res.name,
           menus: res.menus.map((m) => ({
@@ -829,11 +833,11 @@ export function KraveApp({
           })),
         };
       }
-      case "zomato_get_dish_options": {
+      case "krave_get_dish_options": {
         const found = findDishAcrossRestaurants("ctl_820099425");
         return {
           ok: true,
-          tool: "zomato_get_dish_options",
+          tool: "krave_get_dish_options",
           itemId: "ctl_820099425",
           dishName: found?.dish.name,
           modifierGroups: found?.dish.modifier_group_ids.map(
@@ -841,29 +845,29 @@ export function KraveApp({
           ),
         };
       }
-      case "zomato_add_item_to_cart": {
+      case "krave_add_item_to_cart": {
         const found = findDishAcrossRestaurants("ctl_dal_bukhara");
         if (found) {
           handleAddToCart(found.restaurant, found.dish, 1);
         }
         return {
           ok: true,
-          tool: "zomato_add_item_to_cart",
+          tool: "krave_add_item_to_cart",
           addedItem: found?.dish.name,
           restaurant: found?.restaurant.name,
           unitPrice: found?.dish.price,
         };
       }
-      case "zomato_quote_cart":
+      case "krave_quote_cart":
         return {
           ok: true,
-          tool: "zomato_quote_cart",
+          tool: "krave_quote_cart",
           quote: cartQuote,
         };
-      case "zomato_list_addresses":
+      case "krave_list_addresses":
         return {
           ok: true,
-          tool: "zomato_list_addresses",
+          tool: "krave_list_addresses",
           currentAddressId: currentAddress.id,
           addresses: SAVED_ADDRESSES,
         };
@@ -875,11 +879,10 @@ export function KraveApp({
   useEffect(() => {
     if (typeof window !== "undefined") {
       const w = window as unknown as Record<string, unknown>;
-      w.zomato_webmcp = {
+      w.krave_webmcp = {
         version: "rea-reconstructed-v1",
         invoke: invokeWebMcpTool,
       };
-      w.krave_webmcp = w.zomato_webmcp;
     }
   });
 
@@ -1735,7 +1738,7 @@ export function KraveApp({
 
           <div className="border-t border-white/10 pt-6 flex flex-col sm:flex-row justify-between gap-4 text-[11px]">
             <p>
-              Independent food-ordering demo informed by public web observations. Payments and tracking are simulated. No affiliation with Zomato.
+              Independent food-ordering demo. Restaurants are fictional; payments and tracking are simulated.
             </p>
             <div className="flex flex-wrap items-center gap-4">
               <a
@@ -1746,15 +1749,17 @@ export function KraveApp({
                 <Store className="w-3.5 h-3.5" />
                 Restaurant Billing Terminal (Staff)
               </a>
-              <button
-                type="button"
-                data-testid="open-rea-inspector"
-                onClick={() => setReaInspectorOpen(true)}
-                className="text-emerald-400 font-bold flex items-center gap-1 hover:underline"
-              >
-                <Cpu className="w-3.5 h-3.5" />
-                Developer Inspector
-              </button>
+              {SHOW_DEVELOPER_INSPECTOR && (
+                <button
+                  type="button"
+                  data-testid="open-rea-inspector"
+                  onClick={() => setReaInspectorOpen(true)}
+                  className="text-emerald-400 font-bold flex items-center gap-1 hover:underline"
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  Developer Inspector
+                </button>
+              )}
             </div>
           </div>
         </div>

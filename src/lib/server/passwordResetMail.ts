@@ -4,7 +4,7 @@ import { RESET_LINK_MINUTES, resetLink, SIGN_IN_PATH } from "@/lib/passwordReset
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-export type ResetChannel =
+export type MailChannel =
   | { readonly kind: "email"; readonly origin: string }
   | { readonly kind: "server-log"; readonly origin: string };
 
@@ -33,8 +33,8 @@ export function publicOrigin(requestOrigin: string, env: Env = process.env): str
   return env.NODE_ENV === "production" ? null : requestOrigin;
 }
 
-/** How a reset link would reach its owner here, or null when it cannot reach them at all. */
-export function resetChannel(requestOrigin: string, env: Env = process.env): ResetChannel | null {
+/** How a link in an account email would reach its owner here, or null when it cannot. */
+export function mailChannel(requestOrigin: string, env: Env = process.env): MailChannel | null {
   const mail = readMailConfig(env);
   const origin = publicOrigin(requestOrigin, env);
   if (!origin) {
@@ -46,11 +46,11 @@ export function resetChannel(requestOrigin: string, env: Env = process.env): Res
   return env.NODE_ENV === "production" ? null : { kind: "server-log", origin };
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
-function layout(heading: string, body: string): string {
+export function emailLayout(heading: string, body: string): string {
   return `<!doctype html><html><body style="margin:0;padding:24px;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;padding:28px">
 <p style="margin:0 0 16px;font-size:20px;font-weight:900;color:#047857">KRAVE</p>
@@ -59,8 +59,8 @@ ${body}
 </div></body></html>`;
 }
 
-const PARAGRAPH = "margin:0 0 14px;font-size:15px;line-height:1.6";
-const SMALL = "margin:0 0 14px;font-size:13px;line-height:1.6;color:#475569";
+export const EMAIL_PARAGRAPH = "margin:0 0 14px;font-size:15px;line-height:1.6";
+export const EMAIL_SMALL = "margin:0 0 14px;font-size:13px;line-height:1.6;color:#475569";
 
 export function passwordResetMessage(to: string, link: string): MailMessage {
   const href = escapeHtml(link);
@@ -75,33 +75,44 @@ export function passwordResetMessage(to: string, link: string): MailMessage {
       "",
       "If this wasn't you, ignore this email. Your password stays the same.",
     ].join("\n"),
-    html: layout(
+    html: emailLayout(
       "Reset your password",
-      `<p style="${PARAGRAPH}">Someone asked to reset the password for your KRAVE account.</p>
+      `<p style="${EMAIL_PARAGRAPH}">Someone asked to reset the password for your KRAVE account.</p>
 <p style="margin:0 0 18px"><a href="${href}" style="display:inline-block;background:#047857;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:12px">Choose a new password</a></p>
-<p style="${SMALL}">The link works once and expires in ${RESET_LINK_MINUTES} minutes. If the button doesn't open, copy this address into your browser:<br><span style="word-break:break-all">${href}</span></p>
-<p style="${SMALL}">If this wasn't you, ignore this email. Your password stays the same.</p>`
+<p style="${EMAIL_SMALL}">The link works once and expires in ${RESET_LINK_MINUTES} minutes. If the button doesn't open, copy this address into your browser:<br><span style="word-break:break-all">${href}</span></p>
+<p style="${EMAIL_SMALL}">If this wasn't you, ignore this email. Your password stays the same.</p>`
     ),
   };
 }
 
-export function passwordChangedMessage(to: string, signInUrl: string): MailMessage {
+/** "reset" signed out every device; "settings" kept the one that made the change. */
+export type PasswordChangeSource = "reset" | "settings";
+
+export function passwordChangedMessage(
+  to: string,
+  signInUrl: string,
+  source: PasswordChangeSource = "reset"
+): MailMessage {
   const href = escapeHtml(signInUrl);
+  const what =
+    source === "reset"
+      ? "The password for your KRAVE account was just changed, and every device was signed out."
+      : "The password for your KRAVE account was just changed from its account settings, and your other devices were signed out.";
   return {
     to,
     subject: "Your KRAVE password was changed",
     text: [
-      "The password for your KRAVE account was just changed, and every device was signed out.",
+      what,
       "",
       `If that was you, sign in with the new password: ${signInUrl}`,
       "",
       "If it wasn't you, choose \"Forgot password?\" on the sign-in screen to take the account back, and change your email password too.",
     ].join("\n"),
-    html: layout(
+    html: emailLayout(
       "Your password was changed",
-      `<p style="${PARAGRAPH}">The password for your KRAVE account was just changed, and every device was signed out.</p>
-<p style="${PARAGRAPH}">If that was you, <a href="${href}" style="color:#047857;font-weight:700">sign in with the new password</a>.</p>
-<p style="${SMALL}">If it wasn't you, choose "Forgot password?" on the sign-in screen to take the account back, and change your email password too.</p>`
+      `<p style="${EMAIL_PARAGRAPH}">${escapeHtml(what)}</p>
+<p style="${EMAIL_PARAGRAPH}">If that was you, <a href="${href}" style="color:#047857;font-weight:700">sign in with the new password</a>.</p>
+<p style="${EMAIL_SMALL}">If it wasn't you, choose "Forgot password?" on the sign-in screen to take the account back, and change your email password too.</p>`
     ),
   };
 }
@@ -110,7 +121,7 @@ export function passwordChangedMessage(to: string, signInUrl: string): MailMessa
  * Issues a token and sends it. Runs after the response, so an unknown address (no token, no
  * email) answers exactly as fast as a known one.
  */
-export async function deliverPasswordReset(email: string, channel: ResetChannel): Promise<void> {
+export async function deliverPasswordReset(email: string, channel: MailChannel): Promise<void> {
   const reset = await createPasswordReset({ email });
   if (!reset) return;
   const link = resetLink(channel.origin, reset.token);
@@ -121,8 +132,12 @@ export async function deliverPasswordReset(email: string, channel: ResetChannel)
   await sendMail(passwordResetMessage(email, link));
 }
 
-/** Tells the owner their password changed, so a reset they did not make does not go unseen. */
-export async function notifyPasswordChanged(email: string, origin: string): Promise<void> {
+/** Tells the owner their password changed, so a change they did not make does not go unseen. */
+export async function notifyPasswordChanged(
+  email: string,
+  origin: string,
+  source: PasswordChangeSource = "reset"
+): Promise<void> {
   if (!readMailConfig()) return;
-  await sendMail(passwordChangedMessage(email, `${origin}${SIGN_IN_PATH}`));
+  await sendMail(passwordChangedMessage(email, `${origin}${SIGN_IN_PATH}`, source));
 }

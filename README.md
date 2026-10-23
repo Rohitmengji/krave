@@ -160,6 +160,9 @@ These are deliberate for a demo and must be closed before taking real money:
   with a Z-report. Signed in, the floor also syncs to the database and survives clearing
   this browser; signed out or offline, it keeps billing from the device and syncs later.
 - Installable offline shell, so `/` and `/pos` reload without a network after one visit.
+- Account settings at `/account`: name and mobile number, email change confirmed by a link
+  to the new address (the old one is told), password change that signs other devices out,
+  sign-out everywhere, and account deletion behind the password and a typed confirmation.
 
 The order history lives in this browser's localStorage, retains up to 50 orders,
 and is not a server receipt. Invalid records are ignored. Restoring history
@@ -193,15 +196,15 @@ salted and hashed with scrypt and never stored in plain text. Sign-in is throttl
 account and per client, a reset token can recover a locked account, and a reset signs out
 every device. "Forgot password?" emails a single-use link valid for 30 minutes; the token
 rides in the URL fragment, so it never reaches a server log or a Referer header, and the
-owner is emailed when the password changes. There is still no email verification at
-sign-up, so an address is not proven to belong to whoever registered it. Do not reuse a
-real password.
+owner is emailed when the password changes. New accounts get a link to confirm their
+address; staff access granted by email does not check that confirmation yet. Do not reuse
+a real password.
 
 ## Next Milestones
 
 1. Automatic merge for concurrent terminals, not just conflict detection.
-2. Email verification at sign-up, so staff access by email address cannot be claimed by
-   whoever registers the address first.
+2. Require a confirmed address for staff access granted by email, so it cannot be claimed
+   by whoever registers the address first.
 3. Licensed restaurant data and payment-provider sandbox integration with webhooks.
 4. Restaurant/merchant operations for accepting and dispatching delivery orders.
 5. Authorized genuine Android APK investigation before making parity claims.

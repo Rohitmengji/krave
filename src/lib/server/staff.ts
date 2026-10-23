@@ -56,6 +56,16 @@ export async function isAnyOutletStaff(userId: string): Promise<boolean> {
   return row !== undefined;
 }
 
+/** Staff access given to this particular account, ignoring the open demo mode. */
+export async function hasAssignedStaffAccess(user: {
+  id: string;
+  email: string;
+}): Promise<boolean> {
+  if (configuredStaffEmails().has(user.email.toLowerCase())) return true;
+  const row = await one("SELECT 1 FROM outlet_staff WHERE user_id = $1", [user.id]);
+  return row !== undefined;
+}
+
 export async function assertOutletStaff(userId: string, outletId: number): Promise<void> {
   if (!(await isOutletStaff(userId, outletId))) {
     // Deliberately the same wording whether the outlet is unknown or merely not

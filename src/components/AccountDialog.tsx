@@ -1,18 +1,22 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { LogIn, UserPlus, X } from "lucide-react";
 import { OverlayDialog } from "./OverlayDialog";
 import { ForgotPasswordPanel } from "./ForgotPasswordPanel";
 import { requestJson } from "@/lib/requestJson";
 import type { BrandThemePreset } from "@/types/krave";
 import { primaryFill } from "@/lib/themeContrast";
+import { ACCOUNT_PATH } from "@/lib/accountRules";
 
 export interface AccountUser {
   id: string;
   email: string;
   displayName: string;
   isGoldMember: boolean;
+  phone: string | null;
+  emailVerified: boolean;
 }
 
 export function AccountDialog({
@@ -116,6 +120,21 @@ export function AccountDialog({
                 <dd className="font-bold">{user.isGoldMember ? "Active" : "Off"}</dd>
               </div>
             </dl>
+            {!user.emailVerified && (
+              <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs leading-relaxed">
+                Confirm your email address so you can always get back in. Look for our link at{" "}
+                <strong className="wrap-break-word">{user.email}</strong>, or send a new one from
+                Manage account.
+              </p>
+            )}
+            <Link
+              href={ACCOUNT_PATH}
+              data-testid="account-manage"
+              className="flex min-h-11 w-full items-center justify-center rounded-2xl py-2.5 text-xs font-black text-white"
+              style={{ backgroundColor: primaryFill(theme.primaryHex) }}
+            >
+              Manage account
+            </Link>
             <button
               type="button"
               data-testid="account-sign-out"

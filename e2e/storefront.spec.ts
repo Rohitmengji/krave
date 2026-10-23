@@ -76,8 +76,16 @@ test.describe("Storefront", () => {
     await addFirstDishToCart(page);
     await placeDemoOrder(page);
 
-    page.once("dialog", (dialog) => dialog.accept());
+    // The safe choice has focus, and Escape backs out without cancelling.
     await page.getByTestId("cancel-order").click();
+    const confirmation = page.getByRole("alertdialog", { name: "Cancel this order?" });
+    await expect(confirmation.getByRole("button", { name: "Keep order" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(confirmation).toBeHidden();
+    await expect(page.getByTestId("order-history-entry")).toHaveCount(1);
+
+    await page.getByTestId("cancel-order").click();
+    await confirmation.getByRole("button", { name: "Cancel order" }).click();
     await expect(page.getByTestId("order-history-entry")).toHaveCount(0);
   });
 

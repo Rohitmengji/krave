@@ -51,3 +51,15 @@ export function latestResetLink(address: string): string | null {
     )?.[0] ?? null
   );
 }
+
+/** The newest email-confirmation or address-change link sent to this address. */
+export function latestConfirmLink(address: string): string | null {
+  const mail = mailTo(address)
+    .filter((candidate) => /^Subject: Confirm your (new )?KRAVE email address/m.test(candidate.raw))
+    .at(-1);
+  if (!mail) return null;
+  return (
+    /https?:\/\/[^\s"<>]+\/verify-email#token=[A-Za-z0-9_-]+/.exec(decodeQuotedPrintable(mail.raw))?.[0] ??
+    null
+  );
+}

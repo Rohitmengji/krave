@@ -111,6 +111,7 @@ import {
   scheduleDialogPreload,
 } from "./lazyDialogs";
 import { OverlayDialog } from "./OverlayDialog";
+import { useConfirm } from "./ConfirmDialog";
 import { Toast } from "./Toast";
 import { PAGE_ANNOUNCER_ID } from "@/lib/announcer";
 import { primaryFill, primaryInk } from "@/lib/themeContrast";
@@ -293,6 +294,7 @@ export function KraveApp({
   // Each toast has its own id, so a repeated message restarts the full display time.
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastSeq = useRef(0);
+  const [confirm, confirmDialog] = useConfirm({ isDark, primaryHex: theme.primaryHex });
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   // Part of the quote, not just the drawer: some offers are bound to how the customer pays.
@@ -491,7 +493,7 @@ export function KraveApp({
     return () => controller.abort();
   }, [cartItems, quotedCoupon, paymentMethod, isGoldMember, riderTip, currentAddress.id]);
 
-  const handleAddToCart = (
+  const handleAddToCart = async (
     restaurant: RestaurantEntity,
     dish: DishItem,
     quantity: number,
@@ -511,8 +513,18 @@ export function KraveApp({
       showToast(selectionProblem);
       return;
     }
-    if (cartItems.length && cartItems[0].resId !== restaurant.resId &&
-        !window.confirm(`Replace your ${cartItems[0].restaurantName} cart with items from ${restaurant.name}?`)) return;
+    if (
+      cartItems.length &&
+      cartItems[0].resId !== restaurant.resId &&
+      !(await confirm({
+        title: "Start a new cart?",
+        description: `Your cart has items from ${cartItems[0].restaurantName}. Adding this dish replaces them with ${restaurant.name}.`,
+        confirmLabel: "Start new cart",
+        cancelLabel: "Keep my cart",
+      }))
+    ) {
+      return;
+    }
     // Judged against the cart as stored now, which another tab may have changed since render.
     const outcome = { refusal: null as string | null };
     updateSession("cartItems", (prev) => {
@@ -635,7 +647,18 @@ export function KraveApp({
   };
 
   const handleCancelOrder = async (orderId: string) => {
-    if (!window.confirm("Cancel this demo order? It will be removed from your history.")) return;
+    if (
+      !(await confirm({
+        title: "Cancel this order?",
+        description:
+          "The kitchen hasn't started it yet. It will be withdrawn and removed from your order history.",
+        confirmLabel: "Cancel order",
+        cancelLabel: "Keep order",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     const cancelled = orderHistory.find((order) => order.orderId === orderId);
     const epoch = accountState.epoch;
     try {
@@ -698,9 +721,11 @@ export function KraveApp({
     const first = order.items[0];
     if (!first) return;
     if (
-      !window.confirm(
-        `Report "${first.item.name}" as missing from this order? The refund is worked out from what you paid.`
-      )
+      !(await confirm({
+        title: "Report a missing item?",
+        description: `"${first.item.name}" will be reported as missing from this order. The refund is worked out from what you paid.`,
+        confirmLabel: "Report missing item",
+      }))
     ) {
       return;
     }
@@ -957,6 +982,7 @@ export function KraveApp({
 
       {/* Toast Notification */}
       {toast && <Toast key={toast.id} message={toast.message} />}
+      {confirmDialog}
       <div id={PAGE_ANNOUNCER_ID} role="status" aria-live="polite" className="sr-only" />
 
       {/* Main Content Container */}
@@ -1507,10 +1533,16 @@ export function KraveApp({
                             type="button"
                             disabled={checkoutPending}
                             className="px-3 py-1.5 border border-current/15 rounded-xl text-xs font-bold hover:bg-white/5 disabled:opacity-50"
-                            onClick={() => {
+                            onClick={async () => {
                               if (
                                 cartItems.length &&
-                                !window.confirm("Replace your current cart with this order?")
+                                !(await confirm({
+                                  title: "Replace your cart?",
+                                  description:
+                                    "Reordering swaps what's in your cart now for this order's items.",
+                                  confirmLabel: "Replace cart",
+                                  cancelLabel: "Keep my cart",
+                                }))
                               )
                                 return;
                               updateSession("cartItems", order.items);

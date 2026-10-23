@@ -1,11 +1,13 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { one, run, transaction } from "./pg";
+import { DatabaseFault, one, run, transaction } from "./pg";
+import { hasAssignedStaffAccess } from "./staff";
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   RESET_LINK_MINUTES,
 } from "@/lib/passwordReset";
+import { DELETE_CONFIRMATION_WORD } from "@/lib/accountRules";
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -40,11 +42,23 @@ export const MAX_RESET_REQUESTS_PER_CLIENT = 10;
 export const RESET_LINK_INVALID = "That reset link is not valid.";
 export const RESET_LINK_SPENT = "That reset link has expired or was already used.";
 
+export const WRONG_CURRENT_PASSWORD = "Your current password is incorrect.";
+export const REAUTH_THROTTLED = `Too many wrong passwords. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`;
+export const SAME_PASSWORD = "Choose a password different from your current one.";
+export const PASSWORD_CHANGED_ELSEWHERE =
+  "Your password was just changed on another device. Sign in again with the new one.";
+export const DELETE_BLOCKED_BY_STAFF_ACCESS =
+  "This account has staff access. Ask whoever granted it to remove it first, so the outlet's records stay intact.";
+export const DELETE_BLOCKED_BY_RESTAURANT =
+  "This account still owns a restaurant. Transfer or delete the restaurant first, then try again.";
+
 export interface AccountUser {
   id: string;
   email: string;
   displayName: string;
   isGoldMember: boolean;
+  phone: string | null;
+  emailVerified: boolean;
 }
 
 export function normalizeEmail(value: unknown): string {
@@ -73,16 +87,25 @@ async function hashPassword(password: string, salt: string): Promise<string> {
 }
 
 /** Session tokens are stored hashed, so a database copy cannot be replayed as a login. */
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function rowToUser(row: Record<string, unknown>): AccountUser {
+/** The Postgres error code behind a driver failure, e.g. 23505 for a unique violation. */
+export function databaseErrorCode(error: unknown): string | null {
+  if (!(error instanceof DatabaseFault)) return null;
+  const code = (error.cause as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" ? code : null;
+}
+
+export function rowToUser(row: Record<string, unknown>): AccountUser {
   return {
     id: String(row.id),
     email: String(row.email),
     displayName: String(row.display_name),
     isGoldMember: Number(row.is_gold_member) === 1,
+    phone: typeof row.phone === "string" ? row.phone : null,
+    emailVerified: row.email_verified_at !== null && row.email_verified_at !== undefined,
   };
 }
 
@@ -143,7 +166,7 @@ async function reserveLoginAttempt(
   });
 }
 
-async function settleLoginSuccess(reservedIds: number[], email: string): Promise<void> {
+async function settleLoginSuccess(reservedIds: number[], accountKey: string): Promise<void> {
   // One statement, so it is atomic without a transaction's extra round trips.
   // A success clears the account's streak so a legitimate user is not punished for earlier
   // typos. Client failures are left to age out: an attacker spraying many accounts could
@@ -154,7 +177,7 @@ async function settleLoginSuccess(reservedIds: number[], email: string): Promise
      )
      DELETE FROM login_attempts
      WHERE attempt_key = $2 AND succeeded = 0 AND id <> ALL(SELECT id FROM marked)`,
-    [reservedIds, `email:${email}`]
+    [reservedIds, accountKey]
   );
 }
 
@@ -209,11 +232,13 @@ export async function registerUser(
   }
 
   const salt = randomBytes(16).toString("hex");
-  const user = {
+  const user: AccountUser = {
     id: `usr_${randomUUID()}`,
     email,
     displayName,
     isGoldMember: false,
+    phone: null,
+    emailVerified: false,
   };
 
   // The UNIQUE index decides, not a prior SELECT: two simultaneous signups for the same
@@ -260,7 +285,7 @@ export async function verifyCredentials(
     throw new Error("Email or password is incorrect.");
   }
 
-  await settleLoginSuccess(reserved, email);
+  await settleLoginSuccess(reserved, `email:${email}`);
   return rowToUser(row);
 }
 
@@ -405,4 +430,115 @@ export async function resetPassword(
     ]);
     return { email: owner ? String(owner.email) : null };
   });
+}
+
+/**
+ * Re-checks a signed-in user's password before a sensitive change. Throttled per account and
+ * per client like sign-in, so a stolen session cannot be used to guess the password.
+ */
+async function confirmCurrentPassword(
+  userId: string,
+  password: unknown,
+  clientKey: string
+): Promise<{ user: AccountUser; passwordHash: string }> {
+  const reserved = await reserveLoginAttempt(
+    [
+      [`reauth:${userId}`, MAX_LOGIN_ATTEMPTS],
+      [`client:${clientKey}`, MAX_CLIENT_LOGIN_ATTEMPTS],
+    ],
+    REAUTH_THROTTLED
+  );
+  const row = await one<Record<string, unknown>>("SELECT * FROM users WHERE id = $1", [userId]);
+  const salt = row ? String(row.password_salt) : randomBytes(16).toString("hex");
+  const candidate = Buffer.from(
+    await hashPassword(typeof password === "string" ? password : "", salt),
+    "hex"
+  );
+  const expected = row
+    ? Buffer.from(String(row.password_hash), "hex")
+    : Buffer.alloc(candidate.length);
+  if (!row || candidate.length !== expected.length || !timingSafeEqual(candidate, expected)) {
+    throw new Error(WRONG_CURRENT_PASSWORD);
+  }
+  await settleLoginSuccess(reserved, `reauth:${userId}`);
+  return { user: rowToUser(row), passwordHash: String(row.password_hash) };
+}
+
+export async function verifyAccountPassword(
+  userId: string,
+  password: unknown,
+  clientKey = "unknown-client"
+): Promise<AccountUser> {
+  return (await confirmCurrentPassword(userId, password, clientKey)).user;
+}
+
+/**
+ * Sets a new password for a signed-in user. Other devices are signed out and unused reset
+ * links stop working; the device that made the change stays signed in.
+ */
+export async function changePassword(
+  userId: string,
+  sessionToken: string | undefined,
+  input: unknown,
+  clientKey = "unknown-client"
+): Promise<AccountUser> {
+  const body = (input ?? {}) as Record<string, unknown>;
+  const next = assertPassword(body.newPassword);
+  if (body.currentPassword === next) throw new Error(SAME_PASSWORD);
+  const { user, passwordHash } = await confirmCurrentPassword(
+    userId,
+    body.currentPassword,
+    clientKey
+  );
+
+  const salt = randomBytes(16).toString("hex");
+  const hash = await hashPassword(next, salt);
+  await transaction(async (client) => {
+    // Conditional on the hash just checked, so a change or reset that landed during the
+    // slow hash is not silently overwritten.
+    const updated = await client.query(
+      "UPDATE users SET password_hash = $1, password_salt = $2 WHERE id = $3 AND password_hash = $4",
+      [hash, salt, userId, passwordHash]
+    );
+    if (updated.rowCount !== 1) throw new Error(PASSWORD_CHANGED_ELSEWHERE);
+    await client.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [
+      userId,
+      sessionToken ? hashToken(sessionToken) : "",
+    ]);
+    // A reset link sent before the change must not be able to undo it.
+    await client.query("DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL", [
+      userId,
+    ]);
+  });
+  return user;
+}
+
+/** Deletes the signed-in account and everything it owns. Resolves with who it was. */
+export async function deleteAccount(
+  userId: string,
+  input: unknown,
+  clientKey = "unknown-client"
+): Promise<AccountUser> {
+  const body = (input ?? {}) as Record<string, unknown>;
+  if (
+    typeof body.confirmation !== "string" ||
+    body.confirmation.trim() !== DELETE_CONFIRMATION_WORD
+  ) {
+    throw new Error(`Type ${DELETE_CONFIRMATION_WORD} to confirm.`);
+  }
+  const user = await verifyAccountPassword(userId, body.password, clientKey);
+  // Staff marks (sold-out dishes, shifts) belong to the outlet, and would go with the account.
+  if (await hasAssignedStaffAccess(user)) throw new Error(DELETE_BLOCKED_BY_STAFF_ACCESS);
+  try {
+    await run("DELETE FROM users WHERE id = $1", [userId]);
+  } catch (error) {
+    // A table that must keep its user (a restaurant's owner) refuses the delete: RESTRICT
+    // reports 23001, the default NO ACTION 23503.
+    const code = databaseErrorCode(error);
+    if (code === "23001" || code === "23503") {
+      throw new Error(DELETE_BLOCKED_BY_RESTAURANT, { cause: error });
+    }
+    throw error;
+  }
+  return user;
 }

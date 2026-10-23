@@ -23,12 +23,18 @@ import {
   QUOTE_LOCK_MINUTES,
 } from "@/lib/server/quoteLock";
 import {
+  changePassword,
   createSession,
+  deleteAccount,
+  DELETE_BLOCKED_BY_RESTAURANT,
+  DELETE_BLOCKED_BY_STAFF_ACCESS,
   destroySession,
   getUserForToken,
   LOGIN_WINDOW_MINUTES,
   MAX_GUEST_ORDERS_PER_CLIENT,
   normalizeEmail,
+  PASSWORD_CHANGED_ELSEWHERE,
+  REAUTH_THROTTLED,
   registerUser,
   reserveClientQuota,
   reservePasswordResetRequest,
@@ -42,11 +48,23 @@ import {
   type AccountUser,
 } from "@/lib/server/auth";
 import {
+  ACCOUNT_EMAILS_THROTTLED,
+  confirmEmailToken,
+  createVerificationToken,
+  EMAIL_LINK_SPENT,
+  EMAIL_LINK_STALE,
+  EMAIL_TAKEN,
+  requestEmailChange,
+  requestVerification,
+  updateProfile,
+} from "@/lib/server/accountService";
+import { deliverEmailLink, notifyAccountDeleted, notifyEmailChanged } from "@/lib/server/accountMail";
+import {
   deliverPasswordReset,
   notifyPasswordChanged,
   publicOrigin,
-  resetChannel,
-  type ResetChannel,
+  mailChannel,
+  type MailChannel,
 } from "@/lib/server/passwordResetMail";
 import {
   advanceOrderStage,
@@ -91,6 +109,52 @@ function clientKey(request: NextRequest): string {
     request.headers.get("x-real-ip") ||
     "local"
   );
+}
+
+/** Status for a refusal the customer can read and act on. */
+function refusalStatus(error: unknown): number {
+  const message = error instanceof Error ? error.message : "";
+  if (message === REAUTH_THROTTLED || message === ACCOUNT_EMAILS_THROTTLED) return 429;
+  if (
+    message === DELETE_BLOCKED_BY_STAFF_ACCESS ||
+    message === DELETE_BLOCKED_BY_RESTAURANT ||
+    message === PASSWORD_CHANGED_ELSEWHERE ||
+    message === EMAIL_TAKEN
+  ) {
+    return 409;
+  }
+  return 400;
+}
+
+function emailUnavailable() {
+  return NextResponse.json(
+    { status: "error", message: "Email isn't set up on this server yet, so links can't be sent." },
+    { status: 503 }
+  );
+}
+
+/** Emails a new account its confirmation link. Never fails the sign-up itself. */
+function sendWelcomeVerification(user: AccountUser, request: NextRequest): void {
+  let channel: MailChannel | null;
+  try {
+    channel = mailChannel(request.nextUrl.origin);
+  } catch (error) {
+    console.error("[krave] Could not send the email confirmation.", error);
+    return;
+  }
+  // The server log is a `next dev` convenience; any other run without mail sends nothing.
+  if (!channel || (channel.kind === "server-log" && process.env.NODE_ENV !== "development")) {
+    return;
+  }
+  const reachable = channel;
+  after(async () => {
+    try {
+      const token = await createVerificationToken(user);
+      await deliverEmailLink(reachable, "verify", user.email, token, user.email);
+    } catch (error) {
+      console.error("[krave] Could not send the email confirmation.", error);
+    }
+  });
 }
 
 async function accountPayload(user: AccountUser) {
@@ -339,6 +403,7 @@ export async function POST(
           ? await registerUser(body, clientKey(request))
           : await verifyCredentials(body, clientKey(request));
       const { token, expiresAt } = await createSession(user.id);
+      if (routePath === "/webroutes/auth/register") sendWelcomeVerification(user, request);
       return withSessionCookie(
         NextResponse.json(await accountPayload(user), { status: 201 }),
         token,
@@ -350,9 +415,9 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/auth/forgot") {
-    let channel: ResetChannel | null;
+    let channel: MailChannel | null;
     try {
-      channel = resetChannel(request.nextUrl.origin);
+      channel = mailChannel(request.nextUrl.origin);
     } catch (error) {
       return failed(error, "Could not send a reset link.");
     }
@@ -418,6 +483,150 @@ export async function POST(
       }
       return failed(error, "Could not reset that password.");
     }
+  }
+
+  // The link in a confirmation email is the proof, so this needs no session.
+  if (routePath === "/webroutes/auth/verify-email") {
+    try {
+      const confirmed = await confirmEmailToken((body as { token?: unknown } | null)?.token);
+      if (confirmed.purpose === "change") {
+        const origin = publicOrigin(request.nextUrl.origin);
+        if (origin) {
+          after(() =>
+            notifyEmailChanged(confirmed.previousEmail, confirmed.email, origin).catch(
+              (error: unknown) => {
+                console.error("[krave] Could not send the email-changed notice.", error);
+              }
+            )
+          );
+        }
+      }
+      return NextResponse.json({
+        status: "success",
+        purpose: confirmed.purpose,
+        email: confirmed.email,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === EMAIL_LINK_SPENT || error.message === EMAIL_LINK_STALE)
+      ) {
+        return failed(error, EMAIL_LINK_SPENT, 410);
+      }
+      return failed(error, "Could not confirm that email address.", refusalStatus(error));
+    }
+  }
+
+  if (routePath === "/webroutes/account/profile") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to update your profile.", 401);
+    try {
+      return NextResponse.json({ status: "success", user: await updateProfile(user.id, body) });
+    } catch (error) {
+      return failed(error, "Could not save your profile.");
+    }
+  }
+
+  if (routePath === "/webroutes/account/password") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to change your password.", 401);
+    try {
+      await changePassword(
+        user.id,
+        request.cookies.get(SESSION_COOKIE)?.value,
+        body,
+        clientKey(request)
+      );
+    } catch (error) {
+      return failed(error, "Could not change your password.", refusalStatus(error));
+    }
+    const origin = publicOrigin(request.nextUrl.origin);
+    if (origin) {
+      after(() =>
+        notifyPasswordChanged(user.email, origin, "settings").catch((error: unknown) => {
+          console.error("[krave] Could not send the password-changed notice.", error);
+        })
+      );
+    }
+    return NextResponse.json({ status: "success" });
+  }
+
+  if (routePath === "/webroutes/account/email") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to change your email address.", 401);
+    let channel: MailChannel | null;
+    try {
+      channel = mailChannel(request.nextUrl.origin);
+    } catch (error) {
+      return failed(error, "Could not send a confirmation link.");
+    }
+    if (!channel) return emailUnavailable();
+    let change: { email: string; token: string };
+    try {
+      change = await requestEmailChange(user, body, clientKey(request));
+    } catch (error) {
+      return failed(error, "Could not start the email change.", refusalStatus(error));
+    }
+    const reachable = channel;
+    after(() =>
+      deliverEmailLink(reachable, "change", change.email, change.token, user.email).catch(
+        (error: unknown) => {
+          console.error("[krave] Could not send the email-change link.", error);
+        }
+      )
+    );
+    return NextResponse.json({
+      status: "success",
+      pendingEmail: change.email,
+      delivery: reachable.kind,
+    });
+  }
+
+  if (routePath === "/webroutes/account/verify-email/resend") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to confirm your email address.", 401);
+    let channel: MailChannel | null;
+    try {
+      channel = mailChannel(request.nextUrl.origin);
+    } catch (error) {
+      return failed(error, "Could not send a confirmation link.");
+    }
+    if (!channel) return emailUnavailable();
+    let token: string | null;
+    try {
+      token = await requestVerification(user);
+    } catch (error) {
+      return failed(error, "Could not send a confirmation link.", refusalStatus(error));
+    }
+    if (token === null) return failed(null, "Your email address is already confirmed.", 409);
+    const issued = token;
+    const reachable = channel;
+    after(() =>
+      deliverEmailLink(reachable, "verify", user.email, issued, user.email).catch(
+        (error: unknown) => {
+          console.error("[krave] Could not send the email confirmation.", error);
+        }
+      )
+    );
+    return NextResponse.json({ status: "success", delivery: reachable.kind });
+  }
+
+  if (routePath === "/webroutes/account/delete") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to delete your account.", 401);
+    try {
+      await deleteAccount(user.id, body, clientKey(request));
+    } catch (error) {
+      return failed(error, "Could not delete your account.", refusalStatus(error));
+    }
+    after(() =>
+      notifyAccountDeleted(user.email).catch((error: unknown) => {
+        console.error("[krave] Could not send the account-deleted notice.", error);
+      })
+    );
+    const response = NextResponse.json({ status: "success", user: null });
+    response.cookies.delete(SESSION_COOKIE);
+    return response;
   }
 
   if (routePath === "/webroutes/account/membership") {

@@ -99,6 +99,9 @@ function readUser(value: unknown): AccountUser | null | undefined {
     email: user.email,
     displayName: user.displayName,
     isGoldMember: user.isGoldMember,
+    phone: typeof user.phone === "string" ? user.phone : null,
+    // Only an explicit true counts, so a malformed reply never hides the reminder to confirm.
+    emailVerified: user.emailVerified === true,
   };
 }
 

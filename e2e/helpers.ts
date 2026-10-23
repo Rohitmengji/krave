@@ -18,9 +18,19 @@ export function uniqueEmail(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@krave.test`;
 }
 
+/**
+ * Each sign-up comes from its own address, as real customers' do. From one address the
+ * whole suite would run into the per-address sign-up limit.
+ */
+function freshClientAddress(): string {
+  const part = () => Math.floor(Math.random() * 254) + 1;
+  return `10.${part()}.${part()}.${part()}`;
+}
+
 export async function registerAccount(page: Page, email: string, password: string) {
   const response = await page.request.post("/api/webroutes/auth/register", {
     data: { email, password, displayName: "E2E Guest" },
+    headers: { "x-forwarded-for": freshClientAddress() },
   });
   expect(response.status()).toBe(201);
 }

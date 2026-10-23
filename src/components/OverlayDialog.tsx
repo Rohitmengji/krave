@@ -32,6 +32,10 @@ type OverlayDialogProps = {
    */
   onDismiss?: () => void;
   label: string;
+  /** "alertdialog" for a question that interrupts the user, such as a confirmation. */
+  role?: "dialog" | "alertdialog";
+  /** Id of the element that explains the dialog, read out when it opens. */
+  describedBy?: string;
   className?: string;
   testId?: string;
   closeOnBackdrop?: boolean;
@@ -52,6 +56,8 @@ function OpenDialog({
   onClose,
   onDismiss = onClose,
   label,
+  role,
+  describedBy,
   className = CENTRED_PANEL,
   testId,
   closeOnBackdrop = true,
@@ -106,7 +112,9 @@ function OpenDialog({
   return (
     <dialog
       ref={dialogRef}
+      role={role}
       aria-label={label}
+      aria-describedby={describedBy}
       data-testid={testId}
       onKeyDown={(event) => {
         // Composition Escape (IME) and keys a child already handled are not dismissals.

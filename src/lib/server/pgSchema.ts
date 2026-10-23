@@ -46,6 +46,23 @@ CREATE TABLE IF NOT EXISTS password_resets (
 );
 CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets(user_id);
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+-- Accounts that predate verification count as verified; the default applies only to rows
+-- that exist when the column is added, and new sign-ups start unverified.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TEXT DEFAULT '2026-10-23T00:00:00.000Z';
+ALTER TABLE users ALTER COLUMN email_verified_at DROP DEFAULT;
+
+CREATE TABLE IF NOT EXISTS email_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify', 'change')),
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS email_tokens_user_idx ON email_tokens(user_id, purpose);
+
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -310,6 +327,7 @@ export const PG_TABLES = [
   "reservations",
   "order_lines",
   "orders",
+  "email_tokens",
   "password_resets",
   "login_attempts",
   "sessions",

@@ -198,3 +198,18 @@ describe("ST-18 · a dialog whose opener is gone hands focus to a fallback", () 
     expect(detached.focus).not.toHaveBeenCalled();
   });
 });
+
+describe("ST-19 · a restaurant page has one URL", () => {
+  it("resolves only the canonical spelling of an id", async () => {
+    const { findRestaurantByParam } = await import("@/lib/restaurantRoute");
+    const { RESTAURANTS_DATA } = await import("@/data/zomatoReconstructedData");
+    const { resId } = RESTAURANTS_DATA[0];
+    expect(findRestaurantByParam(String(resId))?.resId).toBe(resId);
+    for (const alias of [`0${resId}`, ` ${resId}`, `${resId}.0`, `+${resId}`, `0x${resId.toString(16)}`, `${resId / 10}e1`]) {
+      expect(findRestaurantByParam(alias), alias).toBeUndefined();
+    }
+    for (const junk of ["", "0", "-1", "abc", "9".repeat(40)]) {
+      expect(findRestaurantByParam(junk), junk).toBeUndefined();
+    }
+  });
+});

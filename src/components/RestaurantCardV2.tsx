@@ -76,6 +76,8 @@ export function RestaurantCardV2({
           <img
             src={restaurant.heroImage}
             alt={restaurant.name}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
@@ -102,6 +104,7 @@ export function RestaurantCardV2({
               onToggleBookmark(restaurant.resId);
             }}
             aria-label={`Bookmark ${restaurant.name}`}
+            aria-pressed={isBookmarked}
             className={`absolute top-3 right-3 p-2 rounded-full backdrop-blur-md border transition ${
               isBookmarked
                 ? "bg-amber-500 text-black border-amber-400"

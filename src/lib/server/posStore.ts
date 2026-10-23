@@ -150,7 +150,9 @@ export function syncPosState(userId: string, payload: unknown): PosSyncResult {
   const db = getDb();
   const rejected: PosSyncResult["rejected"] = [];
   const conflicts: PosSyncResult["conflicts"] = [];
-  db.exec("BEGIN");
+  // IMMEDIATE: writeSession reads a revision and then writes based on it, which must not
+  // interleave with another connection's write.
+  db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM pos_shifts WHERE user_id = ?").run(userId);
     if (shift) {
@@ -169,9 +171,15 @@ export function syncPosState(userId: string, payload: unknown): PosSyncResult {
     }
 
     for (const session of incoming) {
+      // Each table is all-or-nothing on its own: a failure after writeSession has deleted
+      // the old rows must not commit a half-written table alongside the accepted ones.
+      db.exec("SAVEPOINT pos_table");
       try {
         writeSession(userId, repriceSession(session));
+        db.exec("RELEASE pos_table");
       } catch (error) {
+        db.exec("ROLLBACK TO pos_table");
+        db.exec("RELEASE pos_table");
         const entry = {
           sessionId: session.sessionId,
           reason: error instanceof Error ? error.message : "Could not store this table.",

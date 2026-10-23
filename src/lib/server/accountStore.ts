@@ -22,7 +22,7 @@ export function saveOrder(
   input: { addressId: string; idempotencyKey: string | null }
 ): void {
   const db = getDb();
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(
       `INSERT INTO orders (id, user_id, res_id, address_id, payment_method, coupon_code,
@@ -236,21 +236,34 @@ export function sweepScheduledOrders(userId: string): string[] {
     .all(userId, new Date().toISOString()) as Record<string, unknown>[];
   if (due.length === 0) return [];
 
-  const advance = db.prepare("UPDATE orders SET stage = 'KITCHEN_PREPARING' WHERE id = ?");
+  // Conditional on the stage so that when two requests sweep the same order (two tabs, or
+  // two server processes), only the one whose UPDATE changed the row announces it.
+  const advance = db.prepare(
+    "UPDATE orders SET stage = 'KITCHEN_PREPARING' WHERE id = ? AND stage = 'ORDER_CONFIRMED'"
+  );
   const started: string[] = [];
-  for (const row of due) {
-    const orderId = String(row.id);
-    // An ASAP order is due the moment it is placed; announcing that adds nothing.
-    if (String(row.scheduled_slot) !== "ASAP") {
-      addNotification(
-        userId,
-        "ORDER",
-        "Your scheduled order has started",
-        `The kitchen began your ${String(row.scheduled_slot)} order.`
-      );
+  // The stage change and its announcement commit together, so a failure cannot leave an
+  // order started silently (it would never be announced, being no longer due).
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of due) {
+      const orderId = String(row.id);
+      if (advance.run(orderId).changes === 0) continue;
+      // An ASAP order is due the moment it is placed; announcing that adds nothing.
+      if (String(row.scheduled_slot) !== "ASAP") {
+        addNotification(
+          userId,
+          "ORDER",
+          "Your scheduled order has started",
+          `The kitchen began your ${String(row.scheduled_slot)} order.`
+        );
+      }
+      started.push(orderId);
     }
-    advance.run(orderId);
-    started.push(orderId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
   return started;
 }
@@ -309,7 +322,7 @@ export function setBookmarks(userId: string, resIds: unknown): number[] {
   ].slice(0, 200);
 
   const db = getDb();
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM bookmarks WHERE user_id = ?").run(userId);
     const insert = db.prepare("INSERT INTO bookmarks (user_id, res_id) VALUES (?, ?)");

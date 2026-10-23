@@ -78,11 +78,14 @@ export function CrystalLiveTrackingModal({
   onAdvanceStage,
 }: CrystalLiveTrackingModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // Keyed on the order's identity, not the object: a stage update must not close and
+  // reopen the dialog.
+  const openOrderId = order?.orderId;
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (order && dialog && !dialog.open) dialog.showModal();
+    if (openOrderId && dialog && !dialog.open) dialog.showModal();
     return () => { if (dialog?.open) dialog.close(); };
-  }, [order?.orderId]);
+  }, [openOrderId]);
   if (!order) return null;
 
   const currentStageIndex = STAGE_SEQUENCE.findIndex(

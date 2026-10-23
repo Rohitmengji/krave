@@ -1,9 +1,19 @@
 import js from "@eslint/js";
+import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: [".next/**", "node_modules/**", "public/sw.js", "next-env.d.ts"],
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "public/sw.js",
+      "next-env.d.ts",
+      // Playwright writes bundled trace viewers here; linting them reports hundreds of false errors.
+      "test-results/**",
+      "playwright-report/**",
+      "blob-report/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -19,6 +29,16 @@ export default tseslint.config(
       eqeqeq: ["error", "smart"],
       "prefer-const": "error",
       "no-var": "error",
+    },
+  },
+  {
+    // Only the two classic rules: the plugin's React Compiler rules assume a compiler this
+    // project does not run. Stale effect deps are warnings so existing code still lints.
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
     },
   },
   {

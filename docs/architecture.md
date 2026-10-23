@@ -1,9 +1,10 @@
 # Architecture
 
-The App Router page is a Server Component that renders the interactive KraveApp
-client boundary. KraveApp owns discovery, cart, modal, theme, and local history
-state. Child components render these values and call explicit action callbacks.
-The small seed catalog is shared by client and server; it is not a live feed.
+The App Router page is a Server Component that loads the published restaurants and renders
+the interactive KraveApp client boundary with them. KraveApp owns the restaurant search,
+cart, modal, theme, and local history state. Child components render these values and call
+explicit action callbacks. The legacy marketplace engines below still read a static catalog
+module, which now ships empty; their unit tests swap in a fictional fixture.
 
 ## Checkout
 
@@ -40,7 +41,10 @@ whole restore.
 
 ## Dine-In Terminal
 
-`/pos` is a separate client surface over posEngine. A table session stores the price
+`/pos` is a server page that loads the restaurants the signed-in account may bill (those it
+is a member of, or every restaurant that is not suspended for an administrator) with their
+orderable dishes, then renders the client terminal over posEngine. Each portion of a dish is
+its own terminal item. A table session stores the price
 captured when each line was ordered, so a later menu edit cannot move an open bill.
 Fired kitchen tickets are retained on the session, which is what makes a reprint show
 what the kitchen actually received rather than the table's current state.
@@ -65,8 +69,11 @@ at all. When an account is signed in, changes are pushed to the database after t
 a failed push leaves the queue on the device and the header says it is waiting to sync. A
 device with no local floor adopts the account's stored one on load.
 
-The payload is never trusted for money. Catalog dishes are repriced from the catalog on the
-way in, and only genuinely off-menu items keep the operator's price, within the same bounds
+The payload is never trusted for money. A line the server already holds keeps the price it
+was captured at; a new line is priced from the restaurant's menu in the database, including
+a dish taken off sale after it was ordered. A table for an outlet the account cannot bill for
+is rejected, and stored bills carry the restaurant's own name. Only genuinely off-menu items
+keep the operator's price, within the same bounds
 the terminal enforces. A table whose price cannot be resolved is rejected individually and
 reported, rather than failing the whole sync. Totals are recomputed with `calculatePosBill`,
 so a settled figure reflects the server's arithmetic, not the terminal's.

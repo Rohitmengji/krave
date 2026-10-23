@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REQUEST_COPY, RequestFailure, requestJson } from "@/lib/requestJson";
 import { DINING_PAY_LIMITS, readDiningPayBill } from "@/lib/cartEngine";
 
+// The storefront engines are tested on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
+
 function stubFetch(impl: (url: string, init: RequestInit) => Promise<Response>) {
   const fetchMock = vi.fn(impl);
   vi.stubGlobal("fetch", fetchMock);

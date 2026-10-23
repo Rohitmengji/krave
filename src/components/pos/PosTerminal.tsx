@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -29,8 +29,6 @@ import {
   calculatePosBill,
   closeShift,
   findKitchenTicket,
-  getPosMenu,
-  getPosOutlets,
   getShiftSessions,
   mergeTableSessions,
   openShift,
@@ -49,7 +47,9 @@ import {
   summarizeShift,
   transferTableSession,
   voidLine,
+  type PosCatalog,
   type PosKitchenTicket,
+  type PosOutlet,
   type PosPaymentMethod,
   type PosShift,
   type PosTableSession,
@@ -62,7 +62,6 @@ import type { Dispute } from "@/lib/server/disputeStore";
 
 const FLAG_LABELS = new Map(KITCHEN_FLAGS.map((flag) => [flag.id as string, flag.label]));
 
-const OUTLETS = getPosOutlets();
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
 
 /** A reservation handed over from the storefront, consumed once then cleared. */
@@ -129,8 +128,61 @@ function DietaryMark({ dietary }: { dietary: "veg" | "non-veg" | "egg" }) {
   );
 }
 
-export function PosTerminal() {
-  const [outletId, setOutletId] = useState(OUTLETS[0].outletId);
+export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
+  if (catalog.status === "ready" && catalog.outlets.length > 0) {
+    return <PosFloor outlets={catalog.outlets} />;
+  }
+  const message =
+    catalog.status === "signed-out"
+      ? {
+          title: "Sign in to take table orders",
+          body: "The terminal bills from your restaurant's own menu, so it needs the account that runs the restaurant.",
+          href: "/signin",
+          action: "Sign in",
+        }
+      : catalog.status === "unavailable"
+      ? {
+          title: "Your menu could not be loaded",
+          body: "Check the connection and try again. Nothing has been lost.",
+          href: "/pos",
+          action: "Try again",
+        }
+      : {
+          title: "No restaurant on this account yet",
+          body: "Set up your restaurant and its menu in the owner workspace, or ask the owner to add you to the team.",
+          href: "/owner",
+          action: "Open owner workspace",
+        };
+  return (
+    <main className="min-h-screen bg-[#0A0D12] px-4 py-10 text-white">
+      <div className="mx-auto max-w-lg space-y-5">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold hover:bg-white/5"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Storefront
+        </Link>
+        <section
+          data-testid="pos-unavailable"
+          className="space-y-3 rounded-3xl border border-white/10 bg-[#121721] p-6"
+        >
+          <h1 className="text-xl font-black">{message.title}</h1>
+          <p className="text-sm text-white/75">{message.body}</p>
+          <Link
+            href={message.href}
+            className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 text-sm font-black text-white hover:bg-emerald-600"
+          >
+            {message.action}
+          </Link>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
+  const [outletId, setOutletId] = useState(outlets[0].outletId);
   const [sessions, setSessions] = useState<PosTableSession[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
@@ -199,19 +251,31 @@ export function PosTerminal() {
   // Settled bills history drawer state
   const [settledDrawerOpen, setSettledDrawerOpen] = useState(false);
 
+  const isKnownOutlet = useEffectEvent((id: number) =>
+    outlets.some((outlet) => outlet.outletId === id)
+  );
+
   useEffect(() => {
     try {
-      setSessions(restorePosSessions(localStorage.getItem(POS_STORAGE_KEY)));
+      // Tables at an outlet this account cannot bill for (one from the retired sample catalog,
+      // or a restaurant it was removed from) would only ever be refused by the server.
+      setSessions(
+        restorePosSessions(localStorage.getItem(POS_STORAGE_KEY)).filter((session) =>
+          isKnownOutlet(session.outletId)
+        )
+      );
       const restoredShift = restorePosShift(localStorage.getItem(POS_SHIFT_STORAGE_KEY));
-      setActiveShift(restoredShift);
-      if (restoredShift) setOutletId(restoredShift.outletId);
+      if (restoredShift && isKnownOutlet(restoredShift.outletId)) {
+        setActiveShift(restoredShift);
+        setOutletId(restoredShift.outletId);
+      }
       setUnavailableItemIds(restoreAvailability(localStorage.getItem(AVAILABILITY_KEY)));
 
       const handoff = readSeatHandoff();
       if (handoff) {
         // A booking is seated once; clearing immediately stops a refresh from re-opening it.
         localStorage.removeItem(POS_SEAT_HANDOFF_KEY);
-        if (OUTLETS.some((outlet) => outlet.outletId === handoff.resId)) {
+        if (isKnownOutlet(handoff.resId)) {
           setSeatHandoff(handoff);
           setOutletId(handoff.resId);
           setGuestCount(handoff.guests);
@@ -355,14 +419,16 @@ export function PosTerminal() {
         });
         if (!response.ok || cancelled) return;
         const state = await response.json();
-        const stored = restorePosSessions(JSON.stringify(state.sessions ?? []));
+        const stored = restorePosSessions(JSON.stringify(state.sessions ?? [])).filter((session) =>
+          isKnownOutlet(session.outletId)
+        );
         for (const session of stored) {
           syncRevisions.current.set(session.sessionId, session.revision);
         }
         setSessions((current) => (current.length === 0 ? stored : current));
-        setActiveShift((current) =>
-          current ?? restorePosShift(JSON.stringify(state.shift ?? null))
-        );
+        const storedShift = restorePosShift(JSON.stringify(state.shift ?? null));
+        const adoptableShift = storedShift && isKnownOutlet(storedShift.outletId) ? storedShift : null;
+        setActiveShift((current) => current ?? adoptableShift);
         setSyncState("synced");
       })
       .catch(() => {
@@ -416,7 +482,8 @@ export function PosTerminal() {
     return () => clearTimeout(timer);
   }, [sessions, activeShift, hydrated, syncAccount]);
 
-  const menu = useMemo(() => getPosMenu(outletId), [outletId]);
+  const currentOutlet = outlets.find((outlet) => outlet.outletId === outletId) ?? outlets[0];
+  const menu = currentOutlet.menu;
   const categories = useMemo(
     () => [...new Set(menu.map((item) => item.categoryName))],
     [menu]
@@ -531,6 +598,7 @@ export function PosTerminal() {
     run(() => {
       const session = openTableSession({
         outletId,
+        outletName: currentOutlet.name,
         tableId: openTableForm.tableId,
         guestCount,
         serverName,
@@ -582,6 +650,7 @@ export function PosTerminal() {
     run(() => {
       const opened = openShift({
         outletId,
+        outletName: currentOutlet.name,
         openedBy: cashierName,
         openingCash: Number(openingCash || 0),
       });
@@ -700,7 +769,7 @@ export function PosTerminal() {
               }}
               className="rounded-xl border border-white/15 bg-[#121721] px-3 py-2 font-bold"
             >
-              {OUTLETS.map((outlet) => (
+              {outlets.map((outlet) => (
                 <option key={outlet.outletId} value={outlet.outletId}>
                   {outlet.name}
                 </option>

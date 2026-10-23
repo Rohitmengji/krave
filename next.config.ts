@@ -14,7 +14,12 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/(.*)",
-        headers: securityHeaders({ isDev: process.env.NODE_ENV === "development", imageHosts }),
+        headers: securityHeaders({
+          isDev: process.env.NODE_ENV === "development",
+          imageHosts,
+          // Read at build time: changing the storage endpoint needs a redeploy.
+          storageEndpoint: process.env.AWS_ENDPOINT_URL_S3,
+        }),
       },
       {
         // The worker itself is never cached, so an updated shell always reaches the device.

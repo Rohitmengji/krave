@@ -23,8 +23,12 @@ export const hasTestDatabase = Boolean(testUrl());
  * resetTestDatabase truncates every table, so pointing it at production would erase it.
  */
 function assertNotProduction(url: string): void {
-  const appUrl = process.env.DATABASE_URL;
-  if (appUrl && new URL(url).host === new URL(appUrl).host) {
+  // Pooled and direct hosts of one Neon endpoint differ only by "-pooler".
+  const endpoint = (value: string) => new URL(value).host.replace("-pooler.", ".");
+  const appHosts = [process.env.DATABASE_URL, process.env.DATABASE_URL_UNPOOLED]
+    .filter((value): value is string => Boolean(value))
+    .map(endpoint);
+  if (appHosts.includes(endpoint(url))) {
     throw new Error(
       "TEST_DATABASE_URL points at the same host as DATABASE_URL. Use a separate Neon branch: the suite truncates every table."
     );

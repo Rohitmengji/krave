@@ -24,6 +24,12 @@ import {
   stopTestDatabase,
 } from "./support/testDb";
 
+// Demo orders are priced from the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
+
 const CREDENTIALS = { email: "launch@krave.test", password: "correct-horse-battery" };
 const CHECKOUT = {
   items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"] }],

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { hasTestDatabase, resetTestDatabase, startTestDatabase, stopTestDatabase } from "./support/testDb";
 import { NextRequest } from "next/server";
 import { GET, POST } from "@/app/api/webroutes/[...slug]/route";
 import {
@@ -36,6 +37,18 @@ import {
   findDishAcrossRestaurants,
   updateCartLineQuantity,
 } from "@/lib/cartEngine";
+
+// The marketplace engines are tested on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
+
+const checkout = {
+  items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"], unitPrice: 1 }],
+  addressId: "addr_cp_514", paymentMethod: DEMO_PAYMENT_METHODS[0],
+  couponCode: "KRAVE50", isGoldMember: true, riderTip: 20,
+};
 
 describe("KRAVE — REA Reconstructed Engine", () => {
   it("keeps web evidence separate from unavailable Android analysis", () => {
@@ -123,12 +136,6 @@ describe("KRAVE — REA Reconstructed Engine", () => {
     expect(found?.restaurant.name).toContain("Frontier Ember");
   });
 
-  const checkout = {
-    items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"], unitPrice: 1 }],
-    addressId: "addr_cp_514", paymentMethod: DEMO_PAYMENT_METHODS[0],
-    couponCode: "KRAVE50", isGoldMember: true, riderTip: 20,
-  };
-
   it("rebuilds checkout totals from catalog prices and creates explicitly demo orders", () => {
     const result = validateCheckout(checkout);
     expect(result.quote.itemTotal).toBe(732);
@@ -147,17 +154,6 @@ describe("KRAVE — REA Reconstructed Engine", () => {
       { ...checkout, couponCode: "FAKE" }]) {
       expect(() => validateCheckout(body)).toThrow();
     }
-  });
-
-  it("returns a validated demo confirmation from the checkout route", async () => {
-    const request = new NextRequest("http://localhost/api/webroutes/order/makeOrder", {
-      method: "POST", body: JSON.stringify(checkout), headers: { "Content-Type": "application/json" },
-    });
-    const response = await POST(request, { params: Promise.resolve({ slug: ["order", "makeOrder"] }) });
-    expect(response.status).toBe(201);
-    const result = await response.json();
-    expect(result.demo).toBe(true);
-    expect(result.order.quote.itemTotal).toBe(732);
   });
 
   it("rejects malformed JSON and invalid cart bodies at the route boundary", async () => {
@@ -484,5 +480,23 @@ describe("KRAVE — REA Reconstructed Engine", () => {
     expect(restoreNotifications(JSON.stringify([{ ...entry, kind: "SPAM" }]))).toEqual([]);
     expect(restoreNotifications("not-json")).toEqual([]);
     expect(restoreNotifications(null)).toEqual([]);
+  });
+});
+
+// The route reads live sell-outs from Postgres, so the happy path needs the test branch.
+describe.skipIf(!hasTestDatabase)("checkout route against Postgres", () => {
+  beforeAll(startTestDatabase);
+  beforeEach(resetTestDatabase);
+  afterAll(stopTestDatabase);
+
+  it("returns a validated demo confirmation from the checkout route", async () => {
+    const request = new NextRequest("http://localhost/api/webroutes/order/makeOrder", {
+      method: "POST", body: JSON.stringify(checkout), headers: { "Content-Type": "application/json" },
+    });
+    const response = await POST(request, { params: Promise.resolve({ slug: ["order", "makeOrder"] }) });
+    expect(response.status).toBe(201);
+    const result = await response.json();
+    expect(result.demo).toBe(true);
+    expect(result.order.quote.itemTotal).toBe(732);
   });
 });

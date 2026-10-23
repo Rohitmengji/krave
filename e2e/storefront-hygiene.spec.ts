@@ -1,17 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { addFirstDishToCart, placeDemoOrder, resetBrowser } from "./helpers";
+import { resetBrowser } from "./helpers";
 
 // Behaviours that only exist in a real browser: focus movement, lazy-chunk mounting,
 // response headers and routing. The unit suite covers the logic behind each one.
 test.describe("Storefront hygiene", () => {
-  test("returns focus to Track Order after checkout's tracking view closes", async ({ page }) => {
-    await resetBrowser(page);
-    await addFirstDishToCart(page);
-    // The opener (the drawer's pay button) is gone by the time tracking closes.
-    await placeDemoOrder(page);
-    await expect(page.getByRole("button", { name: /Track Order/ }).first()).toBeFocused();
-  });
-
   test("a lazily loaded dialog keeps typed input across close and reopen", async ({ page }) => {
     await resetBrowser(page);
     const signIn = page.getByRole("button", { name: /Sign in/ }).first();
@@ -40,26 +32,10 @@ test.describe("Storefront hygiene", () => {
     expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
     expect(headers["x-content-type-options"]).toBe("nosniff");
 
-    // Opening a dialog fetches its chunk and images; those must pass the policy too.
-    await page.getByRole("button", { name: "Order Menu" }).first().click();
-    await expect(page.getByTestId("restaurant-detail-modal")).toBeVisible();
+    // Opening a dialog fetches its chunk; that must pass the policy too.
+    await page.getByRole("button", { name: /Sign in/ }).first().click();
+    await expect(page.locator("dialog[open]")).toBeVisible();
     expect(violations).toEqual([]);
-  });
-
-  test("one Escape closes one layer of nested dialogs", async ({ page }) => {
-    await resetBrowser(page);
-    await page.getByRole("button", { name: "Order Menu" }).first().click();
-    const menu = page.getByTestId("restaurant-detail-modal");
-    await menu.getByRole("button", { name: "ADD" }).first().click();
-    const customise = page.getByRole("button", { name: /Add Item to Cart/ });
-    await expect(customise).toBeVisible();
-
-    await page.keyboard.press("Escape");
-    await expect(customise).toBeHidden();
-    await expect(menu).toBeVisible();
-
-    await page.keyboard.press("Escape");
-    await expect(menu).toBeHidden();
   });
 
   test("a toast raised inside a modal is seen above it and heard from within it", async ({ page }) => {
@@ -88,30 +64,6 @@ test.describe("Storefront hygiene", () => {
     );
   });
 
-  test("DiningPay refuses a bill it cannot price and says why", async ({ page }) => {
-    await resetBrowser(page);
-    await page.getByRole("button", { name: "Order Menu" }).first().click();
-    const menu = page.getByTestId("restaurant-detail-modal");
-    await menu.getByRole("button", { name: /Book Table & DiningPay/ }).click();
-    const amount = menu.getByLabel(/Table Bill Amount/);
-    const pay = menu.getByRole("button", { name: /^Pay ₹/ });
-
-    for (const [typed, reason] of [
-      ["", "Enter your table bill amount."],
-      ["12.5", "Enter the bill in whole rupees."],
-      ["1e3", "Enter the bill as a number of rupees."],
-    ] as const) {
-      await amount.fill(typed);
-      await expect(amount).toHaveAttribute("aria-invalid", "true");
-      await expect(menu.getByText(reason)).toBeVisible();
-      await expect(pay).toBeDisabled();
-    }
-
-    await amount.fill("2500");
-    await expect(amount).toHaveAttribute("aria-invalid", "false");
-    await expect(pay).toBeEnabled();
-  });
-
   test("reloads the storefront offline from the service worker", async ({ page, context }) => {
     await resetBrowser(page);
     await page.evaluate(async () => {
@@ -123,18 +75,9 @@ test.describe("Storefront hygiene", () => {
     await context.setOffline(true);
     try {
       await page.reload();
-      await expect(page.getByRole("button", { name: "Order Menu" }).first()).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Restaurants on KRAVE" })).toBeVisible();
     } finally {
       await context.setOffline(false);
-    }
-  });
-
-  test("restaurant pages answer on one canonical URL only", async ({ request }) => {
-    const canonical = await request.get("/restaurant/19677790");
-    expect(canonical.status()).toBe(200);
-    for (const alias of ["019677790", "19677790.0", "1.967779e7", "0x12c425e"]) {
-      const response = await request.get(`/restaurant/${alias}`);
-      expect(response.status(), alias).toBe(404);
     }
   });
 });

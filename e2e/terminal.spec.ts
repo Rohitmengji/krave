@@ -1,17 +1,83 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { addDishAndFire, openTable, registerAccount, resetBrowser, uniqueEmail } from "./helpers";
+import { createRestaurant, openTerminal, type E2eRestaurant } from "./restaurants";
 
 const PASSWORD = "e2e-demo-password";
-const KAJU = /Royal Kaju Katli Reserve/;
-const KACHORI = /Royal Raj Kachori/;
+const PANEER = /Paneer Tikka/;
+const KARI_FULL = /Chicken Kari \(Full\)/;
+
+/**
+ * Every test bills its own restaurant. The staff account's floor and shift live on the server,
+ * so a shared outlet would hand one test the tables another left open.
+ */
+async function freshTerminal(page: Page, label: string): Promise<E2eRestaurant> {
+  await resetBrowser(page);
+  const restaurant = await createRestaurant(page, `Terminal ${label}`);
+  await openTerminal(page, restaurant);
+  return restaurant;
+}
+
+/** The outlet id the terminal bills under, and the Paneer Tikka's menu item id. */
+async function posIds(page: Page, restaurant: E2eRestaurant) {
+  const option = page.getByLabel("Outlet").locator("option", { hasText: restaurant.name });
+  const outletId = Number(await option.getAttribute("value"));
+  const menu = await (await page.request.get(`/api/owner/${restaurant.id}/menu`)).json();
+  const paneer = menu.categories
+    .flatMap((category: { items: { id: string; name: string }[] }) => category.items)
+    .find((item: { name: string }) => item.name === "Paneer Tikka");
+  return { outletId, itemId: String(paneer.id) };
+}
+
+function tableSession(outletId: number, outletName: string, itemId: string) {
+  return {
+    sessionId: `POS-${crypto.randomUUID()}`,
+    outletId,
+    outletName,
+    tableId: "T1",
+    guestCount: 2,
+    serverName: "Asha",
+    openedAt: new Date().toISOString(),
+    status: "OPEN",
+    lines: [
+      {
+        lineId: "L-1",
+        itemId,
+        name: "Paneer Tikka",
+        unitPrice: 240,
+        quantity: 1,
+        dietary: "veg",
+        note: "",
+        kotNumber: 1,
+      },
+    ],
+    voids: [],
+    discountPercent: 0,
+    serviceChargePercent: 0,
+    nextKotNumber: 2,
+    payment: null,
+    shiftId: null,
+    tickets: [
+      {
+        kotNumber: 1,
+        firedAt: new Date().toISOString(),
+        mergedFrom: null,
+        lines: [{ name: "Paneer Tikka", quantity: 1, note: "", dietary: "veg" }],
+      },
+    ],
+    mergedIntoSessionId: null,
+    revision: 0,
+  };
+}
 
 test.describe("Dine-in terminal", () => {
-  test("opens a table, fires a ticket, and reprints what the kitchen received", async ({ page }) => {
-    await resetBrowser(page, "/pos");
+  test("bills from the restaurant's own menu, fires a ticket and reprints it", async ({ page }) => {
+    await freshTerminal(page, "Reprint");
     await openTable(page, "T1");
-    await addDishAndFire(page, KAJU);
+    // Each portion of a dish is its own button, at the price on the restaurant's menu.
+    await expect(page.getByRole("button", { name: /Chicken Kari \(Half\)/ })).toContainText("₹70");
+    await addDishAndFire(page, PANEER);
 
-    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹609");
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹252");
 
     // Void the item, then confirm the reprint still shows it.
     await page.getByRole("button", { name: "Void" }).click();
@@ -22,33 +88,33 @@ test.describe("Dine-in terminal", () => {
     await page.getByTestId("pos-reprint-kot-1").click();
     const ticket = page.getByRole("dialog", { name: "Kitchen ticket" });
     await expect(ticket).toContainText("REPRINT");
-    await expect(ticket).toContainText("Royal Kaju Katli Reserve");
+    await expect(ticket).toContainText("Paneer Tikka");
   });
 
   test("merges one table into another and frees the source", async ({ page }) => {
-    await resetBrowser(page, "/pos");
+    await freshTerminal(page, "Merge");
     await openTable(page, "T1");
-    await addDishAndFire(page, KAJU);
+    await addDishAndFire(page, PANEER);
 
     await openTable(page, "T2");
-    await addDishAndFire(page, KACHORI);
+    await addDishAndFire(page, KARI_FULL);
 
     const select = page.getByTestId("pos-merge-select");
     await select.selectOption({ index: 1 });
 
     await expect(page.getByTestId("pos-table-T1")).toContainText("Free");
-    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹835");
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
     await expect(page.getByText(/Kitchen tickets \(2\)/)).toBeVisible();
   });
 
   test("settles a bill and closes a shift with a balanced Z-report", async ({ page }) => {
-    await resetBrowser(page, "/pos");
+    await freshTerminal(page, "Shift");
 
     await page.getByTestId("pos-shift-control").click();
     await page.getByTestId("pos-confirm-shift").click();
 
     await openTable(page, "T3");
-    await addDishAndFire(page, KAJU);
+    await addDishAndFire(page, PANEER);
 
     await page.getByTestId("pos-settle").click();
     await page.getByTestId("pos-confirm-settle").click();
@@ -65,86 +131,63 @@ test.describe("Dine-in terminal", () => {
   });
 
   test("keeps billing with no network and reloads from the device", async ({ page, context }) => {
-    await resetBrowser(page, "/pos");
+    const restaurant = await freshTerminal(page, "Offline");
+    // Load the terminal once through the service worker, so its saved copy knows this outlet.
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByLabel("Outlet").selectOption({ label: restaurant.name });
+
     await openTable(page, "T4");
-    await addDishAndFire(page, KAJU);
+    await addDishAndFire(page, PANEER);
 
     await context.setOffline(true);
-    await addDishAndFire(page, KACHORI);
-    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹835");
+    try {
+      await addDishAndFire(page, KARI_FULL);
+      await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
 
-    // The cached shell plus the local queue must carry a full reload.
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("pos-table-T4")).toContainText("₹835");
-
-    await context.setOffline(false);
+      // The cached shell plus the local queue must carry a full reload.
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.getByLabel("Outlet").selectOption({ label: restaurant.name });
+      await expect(page.getByTestId("pos-table-T4")).toContainText("₹378");
+    } finally {
+      await context.setOffline(false);
+    }
   });
 
-  test("syncs the floor to an account and recovers it after a wipe", async ({ page }) => {
-    await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("terminal"), PASSWORD);
-    await page.reload({ waitUntil: "networkidle" });
-    await expect(page.getByTestId("pos-sync-status")).toContainText("Saved to");
+  test("syncs the floor to the account and recovers it after a wipe", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Recovery");
+    // The first push rewrites every table the shared staff account holds, over the network.
+    await expect(page.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
 
     await openTable(page, "T5");
-    await addDishAndFire(page, KAJU);
+    await addDishAndFire(page, PANEER);
     await expect.poll(async () => {
-      const state = await page.request.get("/api/webroutes/pos/state");
-      return (await state.json()).sessions.length;
-    }, { timeout: 15_000 }).toBe(1);
+      const state = await (await page.request.get("/api/webroutes/pos/state")).json();
+      return state.sessions.some(
+        (session: { outletName: string; tableId: string }) =>
+          session.outletName === restaurant.name && session.tableId === "T5"
+      );
+    }, { timeout: 15_000 }).toBe(true);
 
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: "networkidle" });
-    await expect(page.getByTestId("pos-table-T5")).toContainText("₹609");
+    await page.getByLabel("Outlet").selectOption({ label: restaurant.name });
+    await expect(page.getByTestId("pos-table-T5")).toContainText("₹252");
   });
 
   test("refuses a stale write instead of overwriting a live table", async ({ page }) => {
-    await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("conflict"), PASSWORD);
-
-    const table = {
-      sessionId: `POS-${crypto.randomUUID()}`,
-      outletId: 19677790,
-      outletName: "Mithaas Heritage & Sweets",
-      tableId: "T1",
-      guestCount: 2,
-      serverName: "Asha",
-      openedAt: new Date().toISOString(),
-      status: "OPEN",
-      lines: [
-        {
-          lineId: "L-1",
-          itemId: "ctl_820099425",
-          name: "Ghee Assorted Sweets Box",
-          unitPrice: 732,
-          quantity: 1,
-          dietary: "veg",
-          note: "",
-          kotNumber: 1,
-        },
-      ],
-      voids: [],
-      discountPercent: 0,
-      serviceChargePercent: 0,
-      nextKotNumber: 2,
-      payment: null,
-      shiftId: null,
-      tickets: [
-        {
-          kotNumber: 1,
-          firedAt: new Date().toISOString(),
-          mergedFrom: null,
-          lines: [{ name: "Ghee Assorted Sweets Box", quantity: 1, note: "", dietary: "veg" }],
-        },
-      ],
-      mergedIntoSessionId: null,
-      revision: 0,
-    };
+    const restaurant = await freshTerminal(page, "Conflict");
+    const { outletId, itemId } = await posIds(page, restaurant);
+    const table = tableSession(outletId, restaurant.name, itemId);
 
     const first = await (
       await page.request.post("/api/webroutes/pos/sync", { data: { sessions: [table], shift: null } })
     ).json();
-    const storedRevision = first.sessions[0].revision;
+    const storedRevision = first.sessions.find(
+      (session: { sessionId: string }) => session.sessionId === table.sessionId
+    ).revision;
 
     const stale = { ...table, lines: [{ ...table.lines[0], quantity: 9 }], revision: 0 };
     const conflicted = await (
@@ -153,68 +196,68 @@ test.describe("Dine-in terminal", () => {
 
     expect(conflicted.conflicts).toHaveLength(1);
     expect(conflicted.conflicts[0].reason).toContain("another terminal");
-    expect(conflicted.sessions[0].lines[0].quantity).toBe(1);
+    const kept = conflicted.sessions.find(
+      (session: { sessionId: string }) => session.sessionId === table.sessionId
+    );
+    expect(kept.lines[0].quantity).toBe(1);
 
     const fresh = { ...table, lines: [{ ...table.lines[0], quantity: 3 }], revision: storedRevision };
     const accepted = await (
       await page.request.post("/api/webroutes/pos/sync", { data: { sessions: [fresh], shift: null } })
     ).json();
-    expect(accepted.sessions[0].lines[0].quantity).toBe(3);
+    const saved = accepted.sessions.find(
+      (session: { sessionId: string }) => session.sessionId === table.sessionId
+    );
+    expect(saved.lines[0].quantity).toBe(3);
   });
 
-  test("reprices a tampered terminal payload from the catalog", async ({ page }) => {
-    await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("reprice"), PASSWORD);
-
-    const tampered = {
-      sessionId: `POS-${crypto.randomUUID()}`,
-      outletId: 19677790,
-      outletName: "Mithaas Heritage & Sweets",
-      tableId: "G1",
-      guestCount: 2,
-      serverName: "Asha",
-      openedAt: new Date().toISOString(),
-      status: "OPEN",
-      lines: [
-        {
-          lineId: "L-9",
-          itemId: "ctl_820099425",
-          name: "Ghee Assorted Sweets Box",
-          unitPrice: 1,
-          quantity: 1,
-          dietary: "veg",
-          note: "",
-          kotNumber: 1,
-        },
-      ],
-      voids: [],
-      discountPercent: 0,
-      serviceChargePercent: 0,
-      nextKotNumber: 2,
-      payment: null,
-      shiftId: null,
-      tickets: [],
-      mergedIntoSessionId: null,
-      revision: 0,
-    };
+  test("reprices a tampered payload from the restaurant's menu", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Reprice");
+    const { outletId, itemId } = await posIds(page, restaurant);
+    const base = tableSession(outletId, "Somewhere Else", itemId);
+    const tampered = { ...base, lines: [{ ...base.lines[0], unitPrice: 1 }] };
 
     const result = await (
-      await page.request.post("/api/webroutes/pos/sync", {
-        data: { sessions: [tampered], shift: null },
-      })
+      await page.request.post("/api/webroutes/pos/sync", { data: { sessions: [tampered], shift: null } })
     ).json();
-    expect(result.sessions[0].lines[0].unitPrice).toBe(732);
+    const stored = result.sessions.find(
+      (session: { sessionId: string }) => session.sessionId === tampered.sessionId
+    );
+    expect(stored.lines[0].unitPrice).toBe(240);
+    // The bill carries the restaurant's own name, not the device's.
+    expect(stored.outletName).toBe(restaurant.name);
   });
 });
 
 test.describe("Terminal access control", () => {
-  test("refuses terminal sync to a signed-out browser", async ({ page }) => {
+  test("asks a signed-out browser to sign in and refuses it sync", async ({ page }) => {
     await resetBrowser(page, "/pos");
+    await expect(page.getByTestId("pos-unavailable")).toContainText("Sign in to take table orders");
 
     expect((await page.request.get("/api/webroutes/pos/state")).status()).toBe(401);
     const sync = await page.request.post("/api/webroutes/pos/sync", {
       data: { sessions: [], shift: null },
     });
     expect(sync.status()).toBe(401);
+  });
+
+  test("bills only for the account's own restaurants", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Guarded");
+    const { outletId, itemId } = await posIds(page, restaurant);
+
+    await page.request.post("/api/webroutes/auth/logout");
+    await registerAccount(page, uniqueEmail("no-restaurant"), PASSWORD);
+    await page.goto("/pos", { waitUntil: "networkidle" });
+    await expect(page.getByTestId("pos-unavailable")).toContainText("No restaurant on this account yet");
+
+    // Knowing another restaurant's outlet and dish ids is not enough to bill as it.
+    const table = tableSession(outletId, restaurant.name, itemId);
+    const result = await (
+      await page.request.post("/api/webroutes/pos/sync", { data: { sessions: [table], shift: null } })
+    ).json();
+    expect(result.sessions).toEqual([]);
+    expect(result.rejected).toEqual([
+      { sessionId: table.sessionId, reason: `This account cannot bill for ${restaurant.name}.` },
+    ]);
   });
 });

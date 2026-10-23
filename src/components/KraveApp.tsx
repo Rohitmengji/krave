@@ -15,7 +15,6 @@ import {
   DELIVERY_SLOTS,
   DEMO_PAYMENT_METHODS,
   restoreOrderHistory,
-  type KraveSessionState,
 } from "@/lib/checkout";
 import { POS_SEAT_HANDOFF_KEY } from "@/lib/pos/posEngine";
 import { formatBookingDate } from "@/lib/outletClock";
@@ -30,17 +29,16 @@ import {
 import {
   accountReducer,
   INITIAL_ACCOUNT_STATE,
-  toggleBookmark,
   upsertOrder,
   upsertReservation,
   type AccountAction,
 } from "@/lib/accountState";
 import { createLatestSync } from "@/lib/latestSync";
-import { filtersReducer, INITIAL_FILTERS, toFilterCriteria, type RestaurantSort } from "@/lib/discoveryFilters";
+import { filtersReducer, INITIAL_FILTERS, toFilterCriteria } from "@/lib/discoveryFilters";
 import type { MemoryStore, PersistedStore } from "@/lib/persistedStore";
+import type { RestaurantListing } from "@/lib/restaurantDirectory";
 import {
   availabilityStore,
-  guestBookmarksStore,
   guestNotificationsStore,
   guestOrdersStore,
   guestReservationsStore,
@@ -52,29 +50,18 @@ import type { DineInBill } from "@/lib/server/dineInStore";
 import type { Dispute } from "@/lib/server/disputeStore";
 import {
   Bike,
-  UtensilsCrossed,
-  Wine,
-  Sparkles,
-  Filter,
-  Leaf,
-  Zap,
-  Star,
-  ArrowUpDown,
   ShoppingBag,
   ArrowRight,
   Cpu,
-  Calendar,
-  Clock,
   Store,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import {
   BRAND_THEME_PRESETS,
-  COLLECTIONS_DATA,
   COUPON_OFFERS,
   RESTAURANTS_DATA,
   SAVED_ADDRESSES,
-  TOP_BRANDS_DATA,
 } from "@/data/zomatoReconstructedData";
 import {
   addOrIncrementCartItem,
@@ -100,7 +87,7 @@ import {
   RestaurantEntity,
 } from "@/types/krave";
 import { Navbar } from "./Navbar";
-import { RestaurantCardV2 } from "./RestaurantCardV2";
+import { RestaurantDirectory } from "./RestaurantDirectory";
 import {
   AccountDialog,
   BrandThemeModal,
@@ -190,10 +177,6 @@ function adoptServerState(
   dispatch({ type: "SERVER_STATE", epoch, payload });
 }
 
-const sendBookmarks = createLatestSync<number[]>(async (bookmarks) => {
-  await postJson("/api/webroutes/account/bookmarks", { bookmarks });
-});
-
 const sendMembership = createLatestSync<boolean>(async (isGoldMember) => {
   await postJson("/api/webroutes/account/membership", { isGoldMember });
 });
@@ -207,9 +190,12 @@ interface ClaimFormState {
 export function KraveApp({
   initialRestaurantId,
   initialView,
+  listing,
 }: {
   initialRestaurantId?: number;
   initialView?: "orders" | "signin";
+  /** Published restaurants, loaded by the page on the server. */
+  listing?: RestaurantListing;
 } = {}) {
   // Device-owned state lives in browser storage, one store per key, shared live with other
   // tabs. Account-owned state lives in a reducer and is never written to this device.
@@ -218,7 +204,6 @@ export function KraveApp({
   const guestOrders = useStore(guestOrdersStore);
   const guestReservations = useStore(guestReservationsStore);
   const guestNotifications = useStore(guestNotificationsStore);
-  const guestBookmarks = useStore(guestBookmarksStore);
   const unavailableItemIds = useStore(availabilityStore);
   const storageWarningMessage = useStore(storageWarning);
 
@@ -228,7 +213,6 @@ export function KraveApp({
   const orderHistory = accountData ? accountData.orders : guestOrders;
   const reservations = accountData ? accountData.reservations : guestReservations;
   const notifications = accountData ? accountData.notifications : guestNotifications;
-  const bookmarkedIds = accountData ? accountData.bookmarks : guestBookmarks;
   const dineInBills = accountData?.dineInBills ?? NO_BILLS;
   const disputes = accountData?.disputes ?? NO_DISPUTES;
   const isGoldMember = account ? account.isGoldMember : session.isGoldMember;
@@ -389,7 +373,6 @@ export function KraveApp({
   /** Any change still queued for the previous session must not reach the next one. */
   function endAccountSession() {
     refreshController.current?.abort();
-    sendBookmarks.discard();
     sendMembership.discard();
   }
 
@@ -417,19 +400,9 @@ export function KraveApp({
     showToast("Signed out. This browser is back in local demo mode.");
   }
 
-  const changeMode = (mode: KraveSessionState["mode"]) => {
-    dispatchFilters({ type: "SET_MODE", mode });
-    updateSession("mode", mode);
-  };
-
   const filteredRestaurants = useMemo(
     () => filterAndSortRestaurants(RESTAURANTS_DATA, toFilterCriteria(filters)),
     [filters]
-  );
-
-  const visibleCollections = useMemo(
-    () => COLLECTIONS_DATA.filter((c) => c.modes.includes(activeMode)),
-    [activeMode]
   );
 
   // The applied code stays saved; it is simply not quoted while this customer cannot use it,
@@ -769,19 +742,6 @@ export function KraveApp({
     });
   };
 
-  const handleToggleBookmark = (resId: number) => {
-    const saved = !bookmarkedIds.includes(resId);
-    if (!account) {
-      guestBookmarksStore.set((previous) => toggleBookmark(previous, resId, saved));
-      return;
-    }
-    dispatchAccount({ type: "BOOKMARK_SET", epoch: accountState.epoch, resId, saved });
-    sendBookmarks.push(toggleBookmark(bookmarkedIds, resId, saved)).catch(() => {
-      showToast("Could not save that bookmark to your account.");
-      void refreshAccount();
-    });
-  };
-
   const handleToggleAvailability = async (itemId: string, dishName: string) => {
     if (!account) {
       showToast("Sign in as staff to change what the kitchen is serving.");
@@ -844,6 +804,7 @@ export function KraveApp({
         };
       case "krave_get_restaurant_menu": {
         const res = RESTAURANTS_DATA[0];
+        if (!res) return { ok: false, tool: "krave_get_restaurant_menu", error: "No restaurants in the catalog." };
         return {
           ok: true,
           tool: "krave_get_restaurant_menu",
@@ -910,12 +871,6 @@ export function KraveApp({
       };
     }
   });
-
-  const selectedCollectionObj = useMemo(
-    () =>
-      COLLECTIONS_DATA.find((c) => c.id === filters.collectionId) || null,
-    [filters.collectionId]
-  );
 
   const unreadNotificationCount = useMemo(
     () => notifications.filter((entry) => !entry.read).length,
@@ -998,431 +953,43 @@ export function KraveApp({
         >
           <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             <div className="space-y-3 max-w-2xl">
-              <div className="inline-flex flex-wrap items-center gap-2">
-                <span
-                  className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider text-white"
-                  style={{ backgroundColor: primaryFill(theme.primaryHex) }}
-                >
-                  {theme.brandName} • {currentAddress.cityName}
-                </span>
-                <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-emerald-300 border border-white/15">
-                  Express Delivery & Curated Dining
-                </span>
-              </div>
+              <span
+                className="inline-flex px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider text-white"
+                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
+              >
+                {theme.brandName}
+              </span>
 
               <h1 className="text-3xl sm:text-4xl font-black leading-tight">
                 {theme.tagline}
               </h1>
 
               <p className="text-xs sm:text-sm text-white/75 leading-relaxed">
-                Order from iconic neighbourhood kitchens, reserve courtyard tables with instant walk-in savings, and unlock complimentary delivery with{" "}
-                <strong className="text-amber-300">{theme.membershipName}</strong>.
+                Browse menus published by the restaurants themselves, at the prices they set. Order
+                online where a restaurant has switched it on, or eat in and save your table bill to
+                your account.
               </p>
             </div>
 
-            {/* Customer Value Highlights */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  dispatchFilters({ type: "SHOW_FAST_DELIVERY" });
-                  updateSession("mode", "delivery");
-                }}
-                className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition"
-              >
-                <Clock className="w-4 h-4 text-emerald-400 mb-1" />
-                <div className="text-lg font-black">22–35 Min</div>
-                <div className="text-[11px] text-white/65">Express Delivery</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => changeMode("dineout")}
-                className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition"
-              >
-                <Calendar className="w-4 h-4 text-amber-400 mb-1" />
-                <div className="text-lg font-black">Up to 30% Off</div>
-                <div className="text-[11px] text-white/65">Table Reservations</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setBrandStudioOpen(true)}
-                className="col-span-2 sm:col-span-1 p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition"
-              >
-                <Sparkles className="w-4 h-4 text-indigo-400 mb-1" />
-                <div className="text-lg font-black">4 Themes</div>
-                <div className="text-[11px] text-white/65">Live Brand Studio</div>
-              </button>
-            </div>
+            <Link
+              href="/owner"
+              className="shrink-0 inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-black hover:bg-white/10 transition"
+            >
+              <Store className="w-4 h-4 text-emerald-300" aria-hidden="true" />
+              Own a restaurant? List it on {theme.brandName}
+            </Link>
           </div>
         </section>
 
-        {/* Mode Tabs: Delivery | Dining Out | Nightlife */}
-        <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-current/10 pb-4">
-          <div className="flex items-center gap-3 overflow-x-auto">
-            {(
-              [
-                {
-                  key: "delivery",
-                  title: "Delivery",
-                  subtitle: "22–38 min Express",
-                  icon: Bike,
-                },
-                {
-                  key: "dineout",
-                  title: "Dining Out",
-                  subtitle: "Book Table + Flat 25% Off",
-                  icon: UtensilsCrossed,
-                },
-                {
-                  key: "nightlife",
-                  title: "Nightlife",
-                  subtitle: "Rooftops & Craft Bars",
-                  icon: Wine,
-                },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              const isSelected = activeMode === tab.key;
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => changeMode(tab.key)}
-                  data-testid={`mode-tab-${tab.key}`}
-                  className={`flex items-center gap-3 px-5 py-3 rounded-2xl border transition shrink-0 ${
-                    isSelected
-                      ? "text-white shadow-lg border-transparent"
-                      : isDark
-                      ? "bg-[#121721] border-white/10 hover:border-white/25"
-                      : "bg-white border-slate-200 hover:border-slate-300"
-                  }`}
-                  style={
-                    isSelected ? { backgroundColor: primaryFill(theme.primaryHex) } : undefined
-                  }
-                >
-                  <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                      isSelected ? "bg-black/25 text-white" : "bg-current/10"
-                    }`}
-                  >
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-black text-sm">{tab.title}</div>
-                    <div
-                      className={`text-[11px] ${
-                        isSelected ? "text-white" : "opacity-60"
-                      }`}
-                    >
-                      {tab.subtitle}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="text-xs opacity-70 hidden xl:block font-medium">
-            {filteredRestaurants.length} curated places in {currentAddress.displayTitle}
-          </div>
-        </section>
-
-        {/* Curated Collections Carousel */}
-        <section className="space-y-4">
-          <div className="flex items-end justify-between gap-2">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-black tracking-tight">
-                Curated Collections in {currentAddress.cityName}
-              </h2>
-              <p className="text-xs opacity-65 mt-0.5">
-                Explore handpicked lists of top restaurants, courtyards, and bars based on trends
-              </p>
-            </div>
-            {selectedCollectionObj && (
-              <button
-                type="button"
-                onClick={() => dispatchFilters({ type: "CLEAR_COLLECTION" })}
-                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-400 flex items-center gap-1"
-              >
-                <X className="w-3.5 h-3.5" />
-                Clear Collection: {selectedCollectionObj.name}
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {visibleCollections.map((col) => {
-              const active = filters.collectionId === col.id;
-              return (
-                <button
-                  key={col.id}
-                  type="button"
-                  onClick={() =>
-                    dispatchFilters({ type: "TOGGLE_COLLECTION", collectionId: col.id })
-                  }
-                  data-testid={`collection-card-${col.id}`}
-                  data-surface="dark"
-                  className={`group relative h-52 rounded-3xl overflow-hidden text-left border transition-all ${
-                    active
-                      ? "ring-4 ring-emerald-400 border-emerald-400"
-                      : "border-white/10 hover:-translate-y-1"
-                  }`}
-                >
-                  <img
-                    src={col.image}
-                    alt={col.name}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent" />
-                  <span
-                    className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white"
-                    style={{ backgroundColor: primaryFill(theme.primaryHex) }}
-                  >
-                    {col.tag}
-                  </span>
-                  <div className="absolute bottom-3.5 left-4 right-4 text-white">
-                    <div className="font-black text-base leading-snug">
-                      {col.name}
-                    </div>
-                    <div className="text-[11px] text-white/75 line-clamp-1 mt-0.5">
-                      {col.subtitle}
-                    </div>
-                    <div className="text-xs font-bold text-emerald-300 mt-1">
-                      {col.placesCount} →
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Top Brands Rail (For Delivery Mode) */}
-        {activeMode === "delivery" && (
-          <section className="space-y-4">
-            <div>
-              <h2 className="text-lg sm:text-xl font-black tracking-tight">
-                Top Brands for You
-              </h2>
-              <p className="text-xs opacity-65">
-                Order from your most-loved neighbourhood kitchens and iconic dining brands
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              {TOP_BRANDS_DATA.map((brand) => {
-                const targetRes = RESTAURANTS_DATA.find(
-                  (r) => r.resId === brand.resId
-                );
-                return (
-                  <button
-                    key={brand.id}
-                    type="button"
-                    onClick={() => {
-                      if (targetRes) {
-                        setSelectedRestaurant({
-                          restaurant: targetRes,
-                          initialTab: "menu",
-                        });
-                      }
-                    }}
-                    className={`p-3.5 rounded-2xl border text-center transition hover:-translate-y-0.5 ${
-                      isDark
-                        ? "bg-[#121721] border-white/10 hover:border-white/25"
-                        : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"
-                    }`}
-                  >
-                    <img
-                      src={brand.image}
-                      alt={brand.name}
-                      className="w-16 h-16 rounded-full object-cover mx-auto border-2"
-                      style={{ borderColor: brand.accentColor }}
-                    />
-                    <div className="font-extrabold text-xs mt-2.5 truncate">
-                      {brand.name}
-                    </div>
-                    <div className="text-[11px] opacity-60 mt-0.5">
-                      {brand.deliveryTime}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+        {listing && (
+          <RestaurantDirectory
+            listing={listing}
+            query={filters.query}
+            onClearQuery={() => dispatchFilters({ type: "SET_QUERY", query: "" })}
+            isDark={isDark}
+            primaryHex={theme.primaryHex}
+          />
         )}
-
-        {/* Smart Filter Pills & Sort Controls */}
-        <section className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold opacity-60 flex items-center gap-1 mr-1">
-              <Filter className="w-3.5 h-3.5" /> Filters:
-            </span>
-
-            <button
-              type="button"
-              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "minRating43" })}
-              data-testid="filter-rating-43"
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                filters.minRating43
-                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
-                  : isDark
-                  ? "bg-[#121721] border-white/10"
-                  : "bg-white border-slate-200"
-              }`}
-            >
-              <Star className="w-3.5 h-3.5 text-amber-400 fill-current" />
-              Rating 4.3+
-            </button>
-
-            <button
-              type="button"
-              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "pureVegOnly" })}
-              data-testid="filter-pure-veg"
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                filters.pureVegOnly
-                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
-                  : isDark
-                  ? "bg-[#121721] border-white/10"
-                  : "bg-white border-slate-200"
-              }`}
-            >
-              <Leaf className="w-3.5 h-3.5 text-emerald-400" />
-              Pure Veg
-            </button>
-
-            <button
-              type="button"
-              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "fastDeliveryOnly" })}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                filters.fastDeliveryOnly
-                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
-                  : isDark
-                  ? "bg-[#121721] border-white/10"
-                  : "bg-white border-slate-200"
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              Under 28 Mins
-            </button>
-
-            <button
-              type="button"
-              onClick={() => dispatchFilters({ type: "TOGGLE", filter: "walkinOfferOnly" })}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-                filters.walkinOfferOnly
-                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
-                  : isDark
-                  ? "bg-[#121721] border-white/10"
-                  : "bg-white border-slate-200"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              Flat 15%+ Walk-in Off
-            </button>
-
-            {["North Indian", "Japanese", "Biryani", "Cafe"].map((cuisine) => {
-              const active = filters.cuisine === cuisine;
-              return (
-                <button
-                  key={cuisine}
-                  type="button"
-                  onClick={() => dispatchFilters({ type: "TOGGLE_CUISINE", cuisine })}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
-                    active
-                      ? "border-indigo-400 bg-indigo-500/20 text-indigo-300"
-                      : isDark
-                      ? "bg-[#121721] border-white/10"
-                      : "bg-white border-slate-200"
-                  }`}
-                >
-                  {cuisine}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Sort Dropdown */}
-          <div className="flex items-center gap-2">
-            <ArrowUpDown className="w-3.5 h-3.5 opacity-60" />
-            <select
-              value={filters.sortBy}
-              onChange={(e) =>
-                dispatchFilters({ type: "SET_SORT", sortBy: e.target.value as RestaurantSort })
-              }
-              aria-label="Sort restaurants"
-              className={`px-3 py-2 rounded-xl border text-xs font-bold ${
-                isDark
-                  ? "bg-[#121721] border-white/10 text-white"
-                  : "bg-white border-slate-200 text-slate-900"
-              }`}
-            >
-              <option value="relevance">Sort: Relevance (Promoted)</option>
-              <option value="rating_desc">Sort: Rating (High to Low)</option>
-              <option value="delivery_time">Sort: Fastest Delivery</option>
-              <option value="cost_asc">Sort: Cost (Low to High)</option>
-              <option value="cost_desc">Sort: Cost (High to Low)</option>
-            </select>
-          </div>
-        </section>
-
-        {/* RestaurantCardV2 Grid */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight">
-              {activeMode === "delivery"
-                ? `Best Food Delivery in ${currentAddress.displayTitle}`
-                : activeMode === "dineout"
-                ? `Trending Dining Out Places in ${currentAddress.cityName}`
-                : `Midnight Lounges & Bars in ${currentAddress.cityName}`}
-            </h2>
-            <span className="text-xs opacity-60 font-semibold">
-              Showing {filteredRestaurants.length} places
-            </span>
-          </div>
-
-          {filteredRestaurants.length === 0 ? (
-            <div
-              className={`p-12 rounded-3xl border text-center space-y-3 ${
-                isDark ? "bg-[#121721] border-white/10" : "bg-white border-slate-200"
-              }`}
-            >
-              <p className="font-bold text-base">
-                No restaurants match your current filters
-              </p>
-              <button
-                type="button"
-                onClick={() => dispatchFilters({ type: "RESET" })}
-                className="px-4 py-2 rounded-xl text-xs font-black text-white"
-                style={{ backgroundColor: primaryFill(theme.primaryHex) }}
-              >
-                Reset All Filters
-              </button>
-            </div>
-          ) : (
-            <div
-              data-testid="restaurant-grid"
-              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-            >
-              {filteredRestaurants.map((restaurant) => (
-                <RestaurantCardV2
-                  key={restaurant.resId}
-                  restaurant={restaurant}
-                  activeMode={activeMode}
-                  theme={theme}
-                  isDark={isDark}
-                  isGoldMember={isGoldMember}
-                  isBookmarked={bookmarkedIds.includes(restaurant.resId)}
-                  onToggleBookmark={handleToggleBookmark}
-                  onOpenRestaurant={(res, tab = "menu") =>
-                    setSelectedRestaurant({ restaurant: res, initialTab: tab })
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </section>
 
         {/* Recent Orders & Table Reservations Section */}
         <section
@@ -1458,7 +1025,7 @@ export function KraveApp({
 
           {!orderHistory.length && !reservations.length ? (
             <p className="text-xs opacity-65">
-              No recent orders or table reservations yet. Choose a restaurant above to order or book a table.
+              No recent orders or table reservations yet.
             </p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1757,20 +1324,12 @@ export function KraveApp({
                 {theme.tagline}
               </span>
             </div>
-
-            <div className="flex flex-wrap gap-2 text-[11px]">
-              <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10">
-                Delhi NCR • Bengaluru • Gurgaon
-              </span>
-              <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10">
-                {theme.membershipName} Dining & Delivery
-              </span>
-            </div>
           </div>
 
           <div className="border-t border-white/10 pt-6 flex flex-col sm:flex-row justify-between gap-4 text-[11px]">
             <p>
-              Independent food-ordering demo. Restaurants are fictional; payments and tracking are simulated.
+              Restaurants, menus and prices are published by the restaurants themselves. KRAVE takes no
+              online payments: you pay the restaurant directly.
             </p>
             <div className="flex flex-wrap items-center gap-4">
               <a
@@ -1935,6 +1494,11 @@ export function KraveApp({
               </button>
             </div>
 
+            {COUPON_OFFERS.length === 0 && (
+              <p data-testid="offers-empty" className="text-sm opacity-75">
+                No offers are running right now. Restaurants show any discount on their own menu.
+              </p>
+            )}
             <ul className="space-y-2">
               {COUPON_OFFERS.map((offer) => (
                 <li

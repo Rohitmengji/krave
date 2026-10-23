@@ -283,6 +283,262 @@ CREATE TABLE IF NOT EXISTS outlet_staff (
   PRIMARY KEY (user_id, outlet_id)
 );
 
+CREATE TABLE IF NOT EXISTS managed_restaurants (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  slug TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  phone TEXT,
+  email TEXT,
+  address TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '',
+  postal_code TEXT NOT NULL DEFAULT '',
+  service_areas JSONB NOT NULL DEFAULT '[]'::jsonb,
+  logo_asset_id TEXT,
+  cover_asset_id TEXT,
+  gallery_asset_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  delivery_enabled INTEGER NOT NULL DEFAULT 0,
+  takeaway_enabled INTEGER NOT NULL DEFAULT 1,
+  dine_in_enabled INTEGER NOT NULL DEFAULT 1,
+  minimum_order_paise INTEGER NOT NULL DEFAULT 0 CHECK (minimum_order_paise >= 0),
+  delivery_fee_paise INTEGER NOT NULL DEFAULT 0 CHECK (delivery_fee_paise >= 0),
+  tax_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (tax_rate_bps BETWEEN 0 AND 10000),
+  tax_enabled INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'pending', 'published', 'suspended')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  published_at TEXT
+);
+CREATE INDEX IF NOT EXISTS managed_restaurants_owner_idx
+  ON managed_restaurants(owner_user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS managed_restaurants_public_idx
+  ON managed_restaurants(status, slug);
+
+CREATE TABLE IF NOT EXISTS restaurant_memberships (
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'manager', 'staff')),
+  granted_at TEXT NOT NULL,
+  granted_by TEXT NOT NULL,
+  PRIMARY KEY (restaurant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS restaurant_memberships_user_idx
+  ON restaurant_memberships(user_id, restaurant_id);
+
+CREATE TABLE IF NOT EXISTS restaurant_operating_hours (
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  opens_at TEXT,
+  closes_at TEXT,
+  is_closed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (restaurant_id, weekday),
+  CHECK ((is_closed = 1 AND opens_at IS NULL AND closes_at IS NULL)
+    OR (is_closed = 0 AND opens_at IS NOT NULL AND closes_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS restaurant_assets (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  uploaded_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  object_key TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('menu_document', 'menu_item_image', 'logo', 'cover', 'gallery')),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  source_url TEXT,
+  source_name TEXT,
+  license TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (id, restaurant_id)
+);
+CREATE INDEX IF NOT EXISTS restaurant_assets_owner_idx
+  ON restaurant_assets(restaurant_id, kind, created_at DESC);
+ALTER TABLE managed_restaurants DROP CONSTRAINT IF EXISTS managed_restaurants_logo_asset_fk;
+ALTER TABLE managed_restaurants ADD CONSTRAINT managed_restaurants_logo_asset_fk
+  FOREIGN KEY (logo_asset_id, id) REFERENCES restaurant_assets(id, restaurant_id)
+  ON DELETE SET NULL (logo_asset_id);
+ALTER TABLE managed_restaurants DROP CONSTRAINT IF EXISTS managed_restaurants_cover_asset_fk;
+ALTER TABLE managed_restaurants ADD CONSTRAINT managed_restaurants_cover_asset_fk
+  FOREIGN KEY (cover_asset_id, id) REFERENCES restaurant_assets(id, restaurant_id)
+  ON DELETE SET NULL (cover_asset_id);
+
+CREATE TABLE IF NOT EXISTS menu_categories (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (id, restaurant_id),
+  UNIQUE (restaurant_id, name)
+);
+CREATE INDEX IF NOT EXISTS menu_categories_order_idx
+  ON menu_categories(restaurant_id, visible, display_order);
+
+CREATE TABLE IF NOT EXISTS menu_import_jobs (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  source_asset_id TEXT NOT NULL,
+  requested_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL CHECK (status IN ('uploaded', 'processing', 'review', 'failed', 'imported')),
+  extracted_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  imported_at TEXT,
+  FOREIGN KEY (source_asset_id, restaurant_id)
+    REFERENCES restaurant_assets(id, restaurant_id) ON DELETE CASCADE,
+  UNIQUE (id, restaurant_id)
+);
+CREATE INDEX IF NOT EXISTS menu_import_jobs_restaurant_idx
+  ON menu_import_jobs(restaurant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS menu_items (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  category_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  price_paise INTEGER NOT NULL CHECK (price_paise >= 0),
+  discounted_price_paise INTEGER CHECK (discounted_price_paise >= 0),
+  dietary_tags TEXT[] NOT NULL DEFAULT '{}',
+  allergens TEXT[] NOT NULL DEFAULT '{}',
+  portion_size TEXT NOT NULL DEFAULT '',
+  prep_minutes INTEGER CHECK (prep_minutes IS NULL OR prep_minutes BETWEEN 0 AND 1440),
+  spicy_level SMALLINT CHECK (spicy_level IS NULL OR spicy_level BETWEEN 0 AND 5),
+  available INTEGER NOT NULL DEFAULT 1,
+  published INTEGER NOT NULL DEFAULT 0,
+  featured INTEGER NOT NULL DEFAULT 0,
+  image_asset_id TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  source_import_id TEXT,
+  source_import_item_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (id, restaurant_id),
+  FOREIGN KEY (category_id, restaurant_id)
+    REFERENCES menu_categories(id, restaurant_id) ON DELETE RESTRICT,
+  FOREIGN KEY (image_asset_id, restaurant_id)
+    REFERENCES restaurant_assets(id, restaurant_id) ON DELETE SET NULL (image_asset_id),
+  FOREIGN KEY (source_import_id, restaurant_id)
+    REFERENCES menu_import_jobs(id, restaurant_id) ON DELETE SET NULL (source_import_id),
+  CHECK (discounted_price_paise IS NULL OR discounted_price_paise <= price_paise)
+);
+-- Optimistic concurrency: an edit names the revision it was based on, so a save from a
+-- stale tab or second device is refused instead of silently overwriting the newer one.
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS menu_items_public_idx
+  ON menu_items(restaurant_id, published, available, category_id, display_order);
+CREATE UNIQUE INDEX IF NOT EXISTS menu_items_import_source_idx
+  ON menu_items(source_import_id, source_import_item_id)
+  WHERE source_import_id IS NOT NULL AND source_import_item_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS menu_item_variants (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  price_delta_paise INTEGER NOT NULL CHECK (price_delta_paise >= 0),
+  display_order INTEGER NOT NULL DEFAULT 0,
+  available INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY (item_id, restaurant_id)
+    REFERENCES menu_items(id, restaurant_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS menu_item_variants_item_idx
+  ON menu_item_variants(restaurant_id, item_id, display_order);
+
+CREATE TABLE IF NOT EXISTS menu_item_addons (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  price_paise INTEGER NOT NULL CHECK (price_paise >= 0),
+  display_order INTEGER NOT NULL DEFAULT 0,
+  available INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY (item_id, restaurant_id)
+    REFERENCES menu_items(id, restaurant_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS menu_item_addons_item_idx
+  ON menu_item_addons(restaurant_id, item_id, display_order);
+
+CREATE TABLE IF NOT EXISTS restaurant_audit (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  action TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS restaurant_audit_history_idx
+  ON restaurant_audit(restaurant_id, created_at DESC);
+
+-- Online ordering from the public menu stays off until the owner switches it on.
+ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS accepting_orders INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS time_zone TEXT NOT NULL DEFAULT 'Asia/Kolkata';
+-- The table terminal and its bills key outlets by integer; existing rows are numbered on add.
+ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS pos_outlet_id INTEGER GENERATED BY DEFAULT AS IDENTITY;
+CREATE UNIQUE INDEX IF NOT EXISTS managed_restaurants_pos_outlet_idx ON managed_restaurants(pos_outlet_id);
+
+-- Orders from a managed menu. Payment is collected by the restaurant (at the counter or
+-- on delivery); nothing here records or moves money online.
+CREATE TABLE IF NOT EXISTS restaurant_orders (
+  id TEXT PRIMARY KEY,
+  -- RESTRICT: order history outlives any attempt to remove the restaurant.
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE RESTRICT,
+  order_number INTEGER NOT NULL CHECK (order_number > 0),
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  customer_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  fulfilment TEXT NOT NULL CHECK (fulfilment IN ('takeaway', 'dine_in', 'delivery')),
+  delivery_address TEXT,
+  service_area TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  subtotal_paise INTEGER NOT NULL CHECK (subtotal_paise > 0),
+  delivery_fee_paise INTEGER NOT NULL CHECK (delivery_fee_paise >= 0),
+  tax_rate_bps INTEGER NOT NULL CHECK (tax_rate_bps BETWEEN 0 AND 10000),
+  tax_paise INTEGER NOT NULL CHECK (tax_paise >= 0),
+  total_paise INTEGER NOT NULL
+    CHECK (total_paise = subtotal_paise + delivery_fee_paise + tax_paise),
+  payment_method TEXT NOT NULL DEFAULT 'pay_at_restaurant'
+    CHECK (payment_method IN ('pay_at_restaurant', 'pay_on_delivery')),
+  status TEXT NOT NULL
+    CHECK (status IN ('placed', 'accepted', 'preparing', 'ready', 'completed', 'cancelled', 'rejected')),
+  status_reason TEXT,
+  status_changed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  placed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK ((fulfilment = 'delivery') = (delivery_address IS NOT NULL)),
+  UNIQUE (restaurant_id, idempotency_key),
+  UNIQUE (restaurant_id, order_number)
+);
+CREATE INDEX IF NOT EXISTS restaurant_orders_queue_idx
+  ON restaurant_orders(restaurant_id, status, placed_at DESC);
+CREATE INDEX IF NOT EXISTS restaurant_orders_history_idx
+  ON restaurant_orders(restaurant_id, placed_at DESC, id DESC);
+
+-- A snapshot of each line as it was priced. Deliberately no foreign key to menu_items:
+-- editing or deleting a dish later must not change or remove what was ordered.
+CREATE TABLE IF NOT EXISTS restaurant_order_lines (
+  order_id TEXT NOT NULL REFERENCES restaurant_orders(id) ON DELETE CASCADE,
+  line_no SMALLINT NOT NULL CHECK (line_no > 0),
+  menu_item_id TEXT NOT NULL,
+  variant_id TEXT,
+  item_name TEXT NOT NULL,
+  variant_name TEXT,
+  addons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  unit_price_paise INTEGER NOT NULL CHECK (unit_price_paise >= 0),
+  quantity INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 20),
+  line_total_paise INTEGER NOT NULL CHECK (line_total_paise = unit_price_paise * quantity),
+  PRIMARY KEY (order_id, line_no)
+);
+
 -- Append-only is enforced by the database, so a later bug or a careless query cannot
 -- quietly rewrite the record of who did what.
 CREATE OR REPLACE FUNCTION audit_log_append_only() RETURNS trigger AS $$
@@ -311,6 +567,18 @@ FOR EACH STATEMENT EXECUTE FUNCTION audit_log_append_only();
 
 /** Every table, for the test helper that empties the database between cases. */
 export const PG_TABLES = [
+  "restaurant_order_lines",
+  "restaurant_orders",
+  "restaurant_audit",
+  "menu_item_addons",
+  "menu_item_variants",
+  "menu_items",
+  "menu_import_jobs",
+  "menu_categories",
+  "restaurant_assets",
+  "restaurant_operating_hours",
+  "restaurant_memberships",
+  "managed_restaurants",
   "audit_log",
   "outlet_staff",
   "disputes",

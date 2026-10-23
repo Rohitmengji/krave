@@ -17,6 +17,12 @@ import { addOrIncrementCartItem, removeOrderedLines } from "@/lib/cartEngine";
 import { createDemoOrder, DEMO_PAYMENT_METHODS } from "@/lib/checkout";
 import { COLLECTIONS_DATA, RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
 
+// The storefront engines are tested on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
+
 function fakeStorage(seed: Record<string, string> = {}) {
   const data = new Map(Object.entries(seed));
   const area: StorageArea & { data: Map<string, string> } = {

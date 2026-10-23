@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hasTestDatabase,
   resetTestDatabase,
   startTestDatabase,
   stopTestDatabase,
 } from "./support/testDb";
+import { outletInput } from "./support/posFixture";
+import { seedPosOutlet } from "./support/posRestaurant";
 import { one, run } from "@/lib/server/pg";
 import {
   createPasswordReset,
@@ -18,6 +20,7 @@ import {
   revokeAllSessions,
   setGoldMembership,
   verifyCredentials,
+  type AccountUser,
 } from "@/lib/server/auth";
 import {
   addNotification,
@@ -78,14 +81,21 @@ import {
   addCustomItemToSession,
   addItemToSession,
   calculatePosBill,
-  getPosMenu,
-  getPosOutlets,
   openShift,
   openTableSession,
   sendPendingToKitchen,
   settleSession,
+  type PosMenuItem,
+  type PosOutlet,
 } from "@/lib/pos/posEngine";
 import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
+
+// Orders, bookmarks, availability and kitchen tickets are the legacy marketplace engines,
+// which still run on the fictional catalog the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
 
 const CREDENTIALS = { email: "Chef@Krave.test", password: "correct-horse-battery" };
 const CHECKOUT = {
@@ -412,14 +422,22 @@ describe("Accounts and durable orders", () => {
 });
 
 describe("Dine-in terminal sync", () => {
-  const OUTLET_ID = getPosOutlets()[0].outletId;
-  const MENU = getPosMenu(OUTLET_ID);
+  // Each test runs as the owner of a real restaurant whose menu is in the database.
+  let user: AccountUser;
+  let outlet: PosOutlet;
+  let MENU: PosMenuItem[];
+
+  beforeEach(async () => {
+    user = await registerUser(CREDENTIALS);
+    outlet = await seedPosOutlet(user);
+    MENU = outlet.menu;
+  });
 
   function firedTable(tableId = "T1") {
     return sendPendingToKitchen(
       addItemToSession(
         openTableSession({
-          outletId: OUTLET_ID,
+          ...outletInput(outlet),
           tableId,
           guestCount: 2,
           serverName: "Asha",
@@ -431,8 +449,7 @@ describe("Dine-in terminal sync", () => {
   }
 
   it("stores a terminal's tables, tickets and shift, then returns them intact", async () => {
-    const user = await registerUser(CREDENTIALS);
-    const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000 });
+    const shift = openShift({ ...outletInput(outlet), openedBy: "Meera", openingCash: 2000 });
     const session = firedTable();
 
     const result = await syncPosState(user.id, { sessions: [session], shift });
@@ -450,8 +467,7 @@ describe("Dine-in terminal sync", () => {
     expect((await loadPosState(user.id)).sessions).toHaveLength(1);
   });
 
-  it("reprices catalog dishes from the catalog instead of trusting the terminal", async () => {
-    const user = await registerUser(CREDENTIALS);
+  it("reprices menu dishes from the restaurant's menu instead of trusting the terminal", async () => {
     const session = firedTable();
     // An offline terminal could send anything; the money must not come from it.
     const tampered = {
@@ -460,16 +476,76 @@ describe("Dine-in terminal sync", () => {
     };
 
     const [stored] = (await syncPosState(user.id, { sessions: [tampered], shift: null })).sessions;
-    expect(stored.lines[0].unitPrice).toBe(MENU[0].price);
+    expect(MENU[0]).toMatchObject({ name: "Mutton Biriyani (Half)", price: 120 });
+    expect(stored.lines[0].unitPrice).toBe(120);
     expect(calculatePosBill(stored).grandTotal).toBe(calculatePosBill(session).grandTotal);
   });
 
+  it("names the bill after the restaurant, not whatever the terminal sent", async () => {
+    const renamed = { ...firedTable(), outletName: "Somebody Else's Cafe" };
+    const shift = { ...openShift({ ...outletInput(outlet), openedBy: "Meera", openingCash: 500 }), outletName: "Elsewhere" };
+
+    const result = await syncPosState(user.id, { sessions: [renamed], shift });
+    expect(result.sessions[0].outletName).toBe("Jagadamba Maratha Khanawali");
+    expect(result.shift?.outletName).toBe("Jagadamba Maratha Khanawali");
+  });
+
+  it("refuses tables and shifts for a restaurant this account does not run", async () => {
+    const rival = await registerUser({ email: "rival@krave.test", password: CREDENTIALS.password });
+    // The rival's terminal claims the owner's outlet; an unknown outlet id is no better.
+    const intruding = firedTable();
+    const unknown = { ...firedTable("T2"), outletId: outlet.outletId + 999 };
+    const shift = openShift({ ...outletInput(outlet), openedBy: "Meera", openingCash: 500 });
+
+    const result = await syncPosState(rival.id, { sessions: [intruding, unknown], shift });
+    expect(result.sessions).toEqual([]);
+    expect(result.shift).toBeNull();
+    expect(result.rejected.map((entry) => entry.sessionId).sort()).toEqual(
+      [intruding.sessionId, unknown.sessionId].sort()
+    );
+    expect(result.rejected[0].reason).toMatch(/cannot bill/i);
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("keeps the price a dish was rung up at when the menu changes mid-meal", async () => {
+    const first = await syncPosState(user.id, { sessions: [firedTable()], shift: null });
+    const [stored] = first.sessions;
+    const [itemId] = MENU[0].itemId.split("~");
+    await run("UPDATE menu_items SET price_paise = 15000 WHERE id = $1", [itemId]);
+
+    // Another plate of the same dish after the change is charged the new price.
+    const more = sendPendingToKitchen(addItemToSession(stored, MENU[0], 1)).session;
+    const [after] = (await syncPosState(user.id, { sessions: [more], shift: null })).sessions;
+    expect(after.lines.map((line) => line.unitPrice)).toEqual([120, 150]);
+  });
+
+  it("still settles a dish taken off the menu after it was ordered, but not one deleted", async () => {
+    const session = firedTable();
+    const [itemId] = MENU[0].itemId.split("~");
+    await run("UPDATE menu_items SET available = 0, published = 0 WHERE id = $1", [itemId]);
+
+    const settled = await syncPosState(user.id, {
+      sessions: [settleSession(session, "CASH", 100000)],
+      shift: null,
+    });
+    expect(settled.rejected).toEqual([]);
+    expect(settled.sessions[0].lines[0].unitPrice).toBe(120);
+
+    const chickenId = MENU[2].itemId.split("~")[0];
+    const orphan = firedTable("T2");
+    const withChicken = addItemToSession(orphan, MENU[2], 1);
+    await run("DELETE FROM menu_items WHERE id = $1", [chickenId]);
+    const result = await syncPosState(user.id, { sessions: [withChicken], shift: null });
+    expect(result.rejected).toEqual([
+      { sessionId: orphan.sessionId, reason: `"${MENU[2].name}" is no longer on the menu.` },
+    ]);
+  });
+
   it("keeps an operator's off-menu price but refuses an impossible one", async () => {
-    const user = await registerUser(CREDENTIALS);
     const custom = sendPendingToKitchen(
       addCustomItemToSession(
         openTableSession({
-          outletId: OUTLET_ID,
+          ...outletInput(outlet),
           tableId: "T2",
           guestCount: 2,
           serverName: "Asha",
@@ -493,7 +569,6 @@ describe("Dine-in terminal sync", () => {
   });
 
   it("reports the settled total it computed rather than one the terminal supplied", async () => {
-    const user = await registerUser(CREDENTIALS);
     const settled = settleSession(firedTable(), "CASH", 100000);
     const expected = calculatePosBill(settled).grandTotal;
 
@@ -503,16 +578,14 @@ describe("Dine-in terminal sync", () => {
   });
 
   it("keeps one account's floor out of another's", async () => {
-    const owner = await registerUser(CREDENTIALS);
     const other = await registerUser({ email: "other@krave.test", password: CREDENTIALS.password });
-    await syncPosState(owner.id, { sessions: [firedTable()], shift: null });
+    await syncPosState(user.id, { sessions: [firedTable()], shift: null });
 
     expect((await loadPosState(other.id)).sessions).toHaveLength(0);
-    expect((await loadPosState(owner.id)).sessions).toHaveLength(1);
+    expect((await loadPosState(user.id)).sessions).toHaveLength(1);
   });
 
   it("replaces the stored floor on each sync instead of duplicating it", async () => {
-    const user = await registerUser(CREDENTIALS);
     const session = firedTable();
 
     await syncPosState(user.id, { sessions: [session], shift: null });
@@ -524,7 +597,6 @@ describe("Dine-in terminal sync", () => {
   });
 
   it("drops a malformed table rather than failing the whole sync", async () => {
-    const user = await registerUser(CREDENTIALS);
     const good = firedTable();
     const result = await syncPosState(user.id, {
       sessions: [good, { sessionId: "not-a-session" }, null],
@@ -535,7 +607,6 @@ describe("Dine-in terminal sync", () => {
   });
 
   it("rejects a second terminal's stale write instead of overwriting the first", async () => {
-    const user = await registerUser(CREDENTIALS);
     const session = firedTable();
 
     // Terminal A syncs and learns the new revision.
@@ -1171,15 +1242,22 @@ describe("Quote locks", () => {
 });
 
 describe("Claiming a dine-in bill", () => {
-  const OUTLET_ID = getPosOutlets()[0].outletId;
-  const MENU = getPosMenu(OUTLET_ID);
+  let staff: AccountUser;
+  let outlet: PosOutlet;
+  let MENU: PosMenuItem[];
+
+  beforeEach(async () => {
+    staff = await registerUser(CREDENTIALS);
+    outlet = await seedPosOutlet(staff);
+    MENU = outlet.menu;
+  });
 
   function settledTable(tableId = "T1") {
     return settleSession(
       sendPendingToKitchen(
         addItemToSession(
           openTableSession({
-            outletId: OUTLET_ID,
+            ...outletInput(outlet),
             tableId,
             guestCount: 2,
             serverName: "Asha",
@@ -1194,8 +1272,7 @@ describe("Claiming a dine-in bill", () => {
   }
 
   it("records a settled table once, with a total the server computed", async () => {
-    const staff = await registerUser(CREDENTIALS);
-    // The terminal claims ₹1000 for a dish the catalog prices at MENU[0].price.
+    // The terminal claims ₹1000 for a dish the menu prices at MENU[0].price.
     const settled = settledTable();
     const catalogTotal = calculatePosBill({
       ...settled,
@@ -1223,7 +1300,6 @@ describe("Claiming a dine-in bill", () => {
   });
 
   it("never hands the claim code back to a claimer", async () => {
-    const staff = await registerUser(CREDENTIALS);
     const settled = settledTable();
     const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
@@ -1238,7 +1314,6 @@ describe("Claiming a dine-in bill", () => {
   });
 
   it("lets only the first holder claim a bill", async () => {
-    const staff = await registerUser(CREDENTIALS);
     const settled = settledTable();
     const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
@@ -1255,7 +1330,6 @@ describe("Claiming a dine-in bill", () => {
   });
 
   it("answers identically for unknown, malformed and expired codes", async () => {
-    const staff = await registerUser(CREDENTIALS);
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
     const settled = settledTable();
     const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
@@ -1276,7 +1350,6 @@ describe("Claiming a dine-in bill", () => {
   });
 
   it("accepts a code typed in lower case or with stray spacing", async () => {
-    const staff = await registerUser(CREDENTIALS);
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
     const settled = settledTable();
     const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
@@ -1287,11 +1360,10 @@ describe("Claiming a dine-in bill", () => {
   });
 
   it("does not make an unsettled table claimable", async () => {
-    const staff = await registerUser(CREDENTIALS);
     const open = sendPendingToKitchen(
       addItemToSession(
         openTableSession({
-          outletId: OUTLET_ID,
+          ...outletInput(outlet),
           tableId: "T2",
           guestCount: 2,
           serverName: "Asha",

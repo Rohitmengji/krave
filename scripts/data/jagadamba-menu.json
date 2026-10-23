@@ -1,0 +1,93 @@
+{
+  "source": "Owner's menu boards (printed Half/Full board and hand-painted veg plate board) and the Google Maps listing, shared 23 Oct 2026. Where the two boards disagree, the printed board is used.",
+  "restaurant": {
+    "slug": "jagadamba-maratha-khanawali",
+    "name": "Jagadamba Maratha Khanawali",
+    "description": "Maratha khanawali (Savaji) serving biryanis, mutton, chicken, egg and fish dishes with rotis and parota. Also known as Ramesh Hotel.",
+    "address": "Yadgir Main Road, near Kismat Talkies, Moomenpur",
+    "city": "Wadi",
+    "state": "Karnataka",
+    "postalCode": "585225",
+    "dineInEnabled": true,
+    "takeawayEnabled": true,
+    "deliveryEnabled": false
+  },
+  "categories": [
+    {
+      "name": "Biryani & Rice",
+      "items": [
+        { "name": "Mutton Biriyani", "dietary": ["non-vegetarian"], "variants": [["Half", 120], ["Full", 200]] },
+        { "name": "Chicken Biriyani", "dietary": ["non-vegetarian"], "variants": [["Half", 60], ["Full", 100]] },
+        { "name": "Egg Biriyani", "dietary": ["contains-egg"], "variants": [["Half", 40], ["Full", 70]] },
+        { "name": "Biriyani Rice", "dietary": [], "variants": [["Half", 30], ["Full", 50]] },
+        { "name": "Jeera Rice", "dietary": ["vegetarian"], "variants": [["Half", 40], ["Full", 60]] },
+        { "name": "White Rice", "dietary": ["vegetarian"], "variants": [["Half", 25], ["Full", 35]] }
+      ]
+    },
+    {
+      "name": "Mutton",
+      "items": [
+        { "name": "Mutton Kari", "dietary": ["non-vegetarian"], "variants": [["Half", 100], ["Full", 180]] },
+        { "name": "Mutton Fry", "dietary": ["non-vegetarian"], "variants": [["Half", 120], ["Full", 220]] },
+        { "name": "Mutton Keema", "dietary": ["non-vegetarian"], "variants": [["Half", 100], ["Full", 180]] },
+        { "name": "Keema Fry", "dietary": ["non-vegetarian"], "variants": [["Half", 120], ["Full", 200]] },
+        { "name": "Keema Kofta", "dietary": ["non-vegetarian"], "variants": [["Half", 130], ["Full", 220]] },
+        { "name": "Kaleja Kari", "dietary": ["non-vegetarian"], "variants": [["Half", 100], ["Full", 200]] },
+        { "name": "Kaleja Fry", "dietary": ["non-vegetarian"], "variants": [["Half", 120], ["Full", 220]] },
+        { "name": "Boti (Vajadi)", "dietary": ["non-vegetarian"], "variants": [["Half", 70], ["Full", 120]] },
+        { "name": "Mutton Paya", "dietary": ["non-vegetarian"], "variants": [["Half", 130], ["Full", 250]] }
+      ]
+    },
+    {
+      "name": "Chicken",
+      "items": [
+        { "name": "Chicken Kari", "dietary": ["non-vegetarian"], "variants": [["Half", 70], ["Full", 120]] },
+        { "name": "Chicken Fry", "dietary": ["non-vegetarian"], "variants": [["Half", 80], ["Full", 130]] },
+        { "name": "Chicken 65", "dietary": ["non-vegetarian"], "rupees": 50, "portion": "1 plate" }
+      ]
+    },
+    {
+      "name": "Egg",
+      "items": [
+        { "name": "Egg Burji", "dietary": ["contains-egg"], "variants": [["Half", 50], ["Full", 80]] },
+        { "name": "Egg Kari", "dietary": ["contains-egg"], "variants": [["Half", 30], ["Full", 50]] },
+        { "name": "Amlet (Omelette)", "dietary": ["contains-egg"], "variants": [["Half", 40], ["Full", 60]] }
+      ]
+    },
+    {
+      "name": "Fish",
+      "items": [
+        { "name": "Fish Fry", "dietary": ["non-vegetarian"], "variants": [["1 piece", 30], ["2 pieces", 60], ["3 pieces", 80]] }
+      ]
+    },
+    {
+      "name": "Roti & Parota",
+      "items": [
+        { "name": "2 Roti Serva", "dietary": [], "rupees": 30, "portion": "2 roti with serva" },
+        { "name": "Roti", "dietary": ["vegetarian"], "rupees": 10, "portion": "1 piece" },
+        { "name": "Chapati", "dietary": ["vegetarian"], "rupees": 12, "portion": "1 piece" },
+        { "name": "Parota", "dietary": ["vegetarian"], "rupees": 15, "portion": "1 piece" }
+      ]
+    },
+    {
+      "name": "Sunday & Thursday Special",
+      "items": [
+        {
+          "name": "Solai",
+          "description": "Made on Sundays and Thursdays only.",
+          "dietary": [],
+          "variants": [["Half", 60], ["Full", 100]]
+        }
+      ]
+    },
+    {
+      "name": "Veg Plate & Extras",
+      "items": [
+        { "name": "Veg Rice Plate", "description": "Rice, 2 roti, papad and curd.", "dietary": ["vegetarian"], "rupees": 60 },
+        { "name": "Papad", "dietary": ["vegetarian"], "rupees": 5 },
+        { "name": "Curd", "dietary": ["vegetarian"], "rupees": 5 },
+        { "name": "Water Bottle", "dietary": ["vegetarian"], "rupees": 15 }
+      ]
+    }
+  ]
+}

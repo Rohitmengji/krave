@@ -17,8 +17,9 @@ const useTest = process.argv.includes("--test");
 const url = urlArg
   ? urlArg.slice("--url=".length)
   : useTest
-    ? process.env.TEST_DATABASE_URL
-    : process.env.DATABASE_URL;
+    ? process.env.TEST_DATABASE_URL_UNPOOLED || process.env.TEST_DATABASE_URL
+    : // DDL goes over a direct connection; Neon's pooler runs in transaction mode.
+      process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 
 if (!url) {
   console.error(
@@ -33,8 +34,12 @@ if (!url) {
 // same host as the application database.
 const reset = process.argv.includes("--reset");
 if (reset) {
-  const appHost = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).host : null;
-  if (!useTest || (appHost && new URL(url).host === appHost)) {
+  // Pooled and direct hosts of one Neon endpoint differ only by "-pooler".
+  const endpoint = (value) => new URL(value).host.replace("-pooler.", ".");
+  const appHosts = [process.env.DATABASE_URL, process.env.DATABASE_URL_UNPOOLED]
+    .filter(Boolean)
+    .map(endpoint);
+  if (!useTest || appHosts.includes(endpoint(url))) {
     console.error("Refusing --reset: it is only allowed with --test, on a host other than DATABASE_URL.");
     process.exit(1);
   }
@@ -91,6 +96,9 @@ try {
   const { rows: version } = await client.query("SELECT version()");
   console.info(`Connected. ${String(version[0].version).split(",")[0]}`);
 
+  // Fail fast instead of queueing behind live traffic and blocking it in turn.
+  await client.query("SET lock_timeout = '10s'");
+  // One multi-statement query runs as a single implicit transaction: all or nothing.
   await client.query(loadSchema());
   console.info("Schema applied.");
 

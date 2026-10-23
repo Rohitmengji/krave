@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createDemoOrder,
   createValidatedReservation,
@@ -19,6 +19,12 @@ import {
   parseSlotTime,
 } from "@/lib/outletClock";
 import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
+
+// Bookings and delivery slots are tested on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
 
 // Every instant is written in UTC with its IST reading alongside, so the expectations hold on
 // any host. The suite also runs the host in another zone: server-local maths would fail here.

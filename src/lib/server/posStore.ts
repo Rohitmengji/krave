@@ -1,5 +1,5 @@
 import { one, rows, transaction, type Queryable } from "./pg";
-import { findDishAcrossRestaurants } from "@/lib/cartEngine";
+import { loadPosPriceBook, type PosPriceBook } from "./posCatalog";
 import {
   calculatePosBill,
   restorePosSessions,
@@ -12,14 +12,27 @@ import { getClaimCode, recordSettledBills } from "./dineInStore";
 const CUSTOM_ITEM_PREFIX = "custom_";
 const MAX_CUSTOM_PRICE = 100000;
 
+type CapturedPrices = Map<string, { itemId: string; unitPrice: number }>;
+
 /**
  * A terminal may have been offline for a whole service, so its payload is never trusted for
- * money. Catalog dishes are repriced from the catalog; only genuinely off-menu items keep the
- * operator's price, and then only within the range the terminal itself allows.
+ * money. A line the server already holds keeps the price it was captured at, so a menu edit
+ * mid-meal never changes an open bill; a new line takes the restaurant's current price. Only
+ * genuinely off-menu items keep the operator's price, within the range the terminal allows.
  */
-function repriceSession(session: PosTableSession): PosTableSession {
+function repriceSession(
+  session: PosTableSession,
+  prices: PosPriceBook,
+  captured: CapturedPrices
+): PosTableSession {
+  const outletName = prices.outlets.get(session.outletId);
+  if (outletName === undefined) {
+    throw new Error(`This account cannot bill for ${session.outletName}.`);
+  }
   return {
     ...session,
+    // Receipts and claimed bills show this, so it comes from the restaurant, not the device.
+    outletName,
     lines: session.lines.map((line) => {
       if (line.itemId.startsWith(CUSTOM_ITEM_PREFIX)) {
         const price = Math.round(line.unitPrice);
@@ -28,13 +41,38 @@ function repriceSession(session: PosTableSession): PosTableSession {
         }
         return { ...line, unitPrice: price };
       }
-      const found = findDishAcrossRestaurants(line.itemId);
-      if (!found) {
-        throw new Error(`"${line.name}" is no longer on any menu.`);
+      const stored = captured.get(line.lineId);
+      if (stored && stored.itemId === line.itemId) {
+        return { ...line, unitPrice: stored.unitPrice };
       }
-      return { ...line, unitPrice: Math.round(found.dish.price) };
+      const price = prices.priceOf(session.outletId, line.itemId);
+      if (price === null) {
+        throw new Error(`"${line.name}" is no longer on the menu.`);
+      }
+      return { ...line, unitPrice: price };
     }),
   };
+}
+
+/** Read before any table is rewritten, so lines moved by a merge or transfer keep their price. */
+async function capturedLinePrices(
+  client: Queryable,
+  userId: string,
+  lineIds: string[]
+): Promise<CapturedPrices> {
+  if (lineIds.length === 0) return new Map();
+  const found = await client.query<Record<string, unknown>>(
+    `SELECT l.line_id, l.item_id, l.unit_price FROM pos_lines l
+     JOIN pos_sessions s ON s.id = l.session_id
+     WHERE s.user_id = $1 AND l.line_id = ANY($2::text[])`,
+    [userId, lineIds]
+  );
+  return new Map(
+    found.rows.map((row) => [
+      String(row.line_id),
+      { itemId: String(row.item_id), unitPrice: Number(row.unit_price) },
+    ])
+  );
 }
 
 /** Thrown when a device edited a table that moved on underneath it; reloading resolves it. */
@@ -162,10 +200,13 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
 
   const rejected: PosSyncResult["rejected"] = [];
   const conflicts: PosSyncResult["conflicts"] = [];
+  const prices = await loadPosPriceBook(userId);
 
   await transaction(async (client) => {
     await client.query("DELETE FROM pos_shifts WHERE user_id = $1", [userId]);
-    if (shift) {
+    const shiftOutletName = shift ? prices.outlets.get(shift.outletId) : undefined;
+    // A shift at an outlet this account cannot bill for is not kept.
+    if (shift && shiftOutletName !== undefined) {
       await client.query(
         `INSERT INTO pos_shifts (id, user_id, outlet_id, outlet_name, opened_by, opened_at, opening_cash)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -173,7 +214,7 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
           shift.shiftId,
           userId,
           shift.outletId,
-          shift.outletName,
+          shiftOutletName,
           shift.openedBy,
           shift.openedAt,
           shift.openingCash,
@@ -181,12 +222,17 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
       );
     }
 
+    const captured = await capturedLinePrices(
+      client,
+      userId,
+      incoming.flatMap((session) => session.lines.map((line) => line.lineId))
+    );
     for (const session of incoming) {
       // Each table is all-or-nothing on its own: a failure after writeSession has deleted
       // the old rows must not commit a half-written table alongside the accepted ones.
       await client.query("SAVEPOINT pos_table");
       try {
-        await writeSession(client, userId, repriceSession(session));
+        await writeSession(client, userId, repriceSession(session, prices, captured));
         await client.query("RELEASE SAVEPOINT pos_table");
       } catch (error) {
         await client.query("ROLLBACK TO SAVEPOINT pos_table");

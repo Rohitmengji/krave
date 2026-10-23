@@ -1,4 +1,3 @@
-import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
 import { newId } from "@/lib/ids";
 import type { DietaryType } from "@/types/krave";
 
@@ -47,10 +46,35 @@ export type PosSessionStatus = "OPEN" | "SETTLED" | "MERGED" | "RELEASED";
 export interface PosMenuItem {
   itemId: string;
   name: string;
+  /** Whole rupees. */
   price: number;
   categoryName: string;
   dietary: DietaryType;
   bestseller: boolean;
+}
+
+/** A restaurant this terminal may bill for, with the dishes it can ring up right now. */
+export interface PosOutlet {
+  outletId: number;
+  name: string;
+  locality: string;
+  menu: PosMenuItem[];
+}
+
+/** What the server could load for the signed-in account when the terminal page was served. */
+export type PosCatalog =
+  | { status: "signed-out" }
+  | { status: "unavailable" }
+  | { status: "ready"; outlets: PosOutlet[] };
+
+const POS_MAX_OUTLET_NAME = 120;
+
+function assertOutlet(outletId: number, outletName: string, action: string): string {
+  const name = outletName.trim();
+  if (!Number.isSafeInteger(outletId) || outletId < 1 || !name || name.length > POS_MAX_OUTLET_NAME) {
+    throw new Error(`Select a valid outlet before ${action}.`);
+  }
+  return name;
 }
 
 export interface PosOrderLine {
@@ -263,34 +287,6 @@ function assertOpen(session: PosTableSession): void {
   }
 }
 
-export function getPosOutlets() {
-  return RESTAURANTS_DATA.map((restaurant) => ({
-    outletId: restaurant.resId,
-    name: restaurant.name,
-    locality: restaurant.locality,
-  }));
-}
-
-/** Flatten an outlet's nested catalog into the flat list a billing terminal taps through. */
-export function getPosMenu(outletId: number): PosMenuItem[] {
-  const restaurant = RESTAURANTS_DATA.find((candidate) => candidate.resId === outletId);
-  if (!restaurant) {
-    throw new Error("Unknown outlet.");
-  }
-  return restaurant.menus.flatMap((menu) =>
-    menu.categories.flatMap((category) =>
-      category.items.map((item) => ({
-        itemId: item.id,
-        name: item.name,
-        price: Math.round(item.price),
-        categoryName: category.name,
-        dietary: item.dietary,
-        bestseller: Boolean(item.bestseller),
-      }))
-    )
-  );
-}
-
 /**
  * Seat a table. Pass the current floor so a table that became occupied meanwhile (another
  * terminal's state adopted while the seat dialog was open) is refused instead of getting a
@@ -299,6 +295,7 @@ export function getPosMenu(outletId: number): PosMenuItem[] {
 export function openTableSession(
   input: {
     outletId: number;
+    outletName: string;
     tableId: string;
     guestCount: number;
     serverName: string;
@@ -306,10 +303,10 @@ export function openTableSession(
   },
   floor: readonly PosTableSession[] = []
 ): PosTableSession {
-  const outlet = getPosOutlets().find((candidate) => candidate.outletId === input.outletId);
-  if (!outlet) {
-    throw new Error("Select a valid outlet before opening a table.");
-  }
+  const outlet = {
+    outletId: input.outletId,
+    name: assertOutlet(input.outletId, input.outletName, "opening a table"),
+  };
   if (!POS_TABLES.some((table) => table.tableId === input.tableId)) {
     throw new Error("Unknown table.");
   }
@@ -893,13 +890,14 @@ export function summarizeShift(sessions: PosTableSession[]): PosShiftSummary {
 
 export function openShift(input: {
   outletId: number;
+  outletName: string;
   openedBy: string;
   openingCash: number;
 }): PosShift {
-  const outlet = getPosOutlets().find((candidate) => candidate.outletId === input.outletId);
-  if (!outlet) {
-    throw new Error("Select a valid outlet before opening a shift.");
-  }
+  const outlet = {
+    outletId: input.outletId,
+    name: assertOutlet(input.outletId, input.outletName, "opening a shift"),
+  };
   const openedBy = input.openedBy.trim();
   if (openedBy.length < 2 || openedBy.length > 40) {
     throw new Error("Enter the name of the cashier opening the shift.");

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createDemoOrder,
   createNotification,
@@ -23,6 +23,12 @@ import {
 import { customiserProblem, customiserReducer, type CustomiserState } from "@/lib/dishCustomiser";
 import { COUPON_OFFERS, RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
 import type { DishItem, ModifierGroup } from "@/types/krave";
+
+// The cart and checkout engines are tested on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
 
 // A ₹732 sweets box with one required single-choice group (default "opt_500g").
 const SWEETS = "ctl_820099425";

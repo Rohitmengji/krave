@@ -211,12 +211,12 @@ export function Navbar({
               <Search className="w-4 h-4 opacity-50 shrink-0" />
               <input
                 type="search"
-                aria-label="Search restaurants, cuisines, or dishes"
+                aria-label="Search restaurants"
                 value={searchQuery}
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search restaurants, cuisines, or dishes (e.g. Black Dal, Sushi, Chaat)..."
+                placeholder="Search restaurants by name or place"
                 data-testid="universal-search-input"
                 className="w-full bg-transparent text-sm outline-none placeholder:opacity-50"
               />
@@ -325,8 +325,9 @@ export function Navbar({
             </div>
           )}
 
-          {/* Universal Search Autosuggest Dropdown (layoutEntries-uniSearchDesContainer) */}
-          {searchFocused && normalizedQuery.length > 0 && (
+          {/* Universal Search Autosuggest Dropdown (layoutEntries-uniSearchDesContainer).
+              With no catalog to suggest from, the query filters the restaurant list on the page. */}
+          {searchFocused && normalizedQuery.length > 0 && restaurants.length > 0 && (
             <div
               className={`absolute left-0 right-0 mt-2 rounded-2xl border p-4 shadow-2xl z-50 max-h-[420px] overflow-y-auto ${
                 isDark
@@ -528,6 +529,20 @@ export function Navbar({
           >
             <Receipt className="w-4 h-4" />
             <span className="hidden md:inline">Table POS</span>
+          </Link>
+
+          <Link
+            href="/owner"
+            data-testid="navbar-owner-link"
+            title="Manage your restaurant and menu"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition ${
+              isDark
+                ? "bg-white/5 border-white/10 hover:bg-white/10"
+                : "bg-slate-100 border-slate-200 hover:bg-slate-200"
+            }`}
+          >
+            <Utensils className="w-4 h-4" />
+            <span className="hidden md:inline">Owner menu</span>
           </Link>
 
           {/* Dark / Light Surface Toggle */}

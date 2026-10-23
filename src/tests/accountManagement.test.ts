@@ -26,6 +26,12 @@ vi.mock("@/lib/server/mailer", async (importOriginal) => {
   };
 });
 
+// Bookmarks name restaurants from the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
+
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/webroutes/[...slug]/route";
 import { one, run } from "@/lib/server/pg";

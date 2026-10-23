@@ -6,8 +6,6 @@ import {
   calculatePosBill,
   closeShift,
   findKitchenTicket,
-  getPosMenu,
-  getPosOutlets,
   getShiftSessions,
   mergeTableSessions,
   openShift,
@@ -24,14 +22,11 @@ import {
   transferTableSession,
   voidLine,
 } from "@/lib/pos/posEngine";
-
-const OUTLET_ID = getPosOutlets()[0].outletId;
-const SECOND_OUTLET_ID = getPosOutlets()[1].outletId;
-const MENU = getPosMenu(OUTLET_ID);
+import { MENU, OUTLET, SECOND_OUTLET } from "./support/posFixture";
 
 function freshSession(tableId: string = POS_TABLES[0].tableId) {
   return openTableSession({
-    outletId: OUTLET_ID,
+    ...OUTLET,
     tableId,
     guestCount: 2,
     serverName: "Asha",
@@ -45,16 +40,19 @@ describe("Dine-in POS billing engine", () => {
     expect(session.lines).toHaveLength(0);
 
     expect(() =>
-      openTableSession({ outletId: -1, tableId: "T1", guestCount: 2, serverName: "Asha" })
+      openTableSession({ ...OUTLET, outletId: -1, tableId: "T1", guestCount: 2, serverName: "Asha" })
     ).toThrow();
     expect(() =>
-      openTableSession({ outletId: OUTLET_ID, tableId: "ZZ", guestCount: 2, serverName: "Asha" })
+      openTableSession({ ...OUTLET, outletName: " ", tableId: "T1", guestCount: 2, serverName: "Asha" })
+    ).toThrow(/valid outlet/);
+    expect(() =>
+      openTableSession({ ...OUTLET, tableId: "ZZ", guestCount: 2, serverName: "Asha" })
     ).toThrow();
     expect(() =>
-      openTableSession({ outletId: OUTLET_ID, tableId: "T1", guestCount: 0, serverName: "Asha" })
+      openTableSession({ ...OUTLET, tableId: "T1", guestCount: 0, serverName: "Asha" })
     ).toThrow();
     expect(() =>
-      openTableSession({ outletId: OUTLET_ID, tableId: "T1", guestCount: 2, serverName: " " })
+      openTableSession({ ...OUTLET, tableId: "T1", guestCount: 2, serverName: " " })
     ).toThrow();
   });
 
@@ -282,7 +280,7 @@ describe("Dine-in POS billing engine", () => {
     const target = freshSession("T1");
     const empty = freshSession("T2");
     const other = openTableSession({
-      outletId: SECOND_OUTLET_ID,
+      ...SECOND_OUTLET,
       tableId: "T3",
       guestCount: 2,
       serverName: "Ravi",
@@ -308,17 +306,17 @@ describe("Dine-in POS billing engine", () => {
   });
 
   it("closes a shift with a cash variance and claims only its own bills", () => {
-    const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000 });
-    expect(() => openShift({ outletId: OUTLET_ID, openedBy: "M", openingCash: 2000 })).toThrow();
+    const shift = openShift({ ...OUTLET, openedBy: "Meera", openingCash: 2000 });
+    expect(() => openShift({ ...OUTLET, openedBy: "M", openingCash: 2000 })).toThrow();
     expect(() =>
-      openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: -1 })
+      openShift({ ...OUTLET, openedBy: "Meera", openingCash: -1 })
     ).toThrow();
 
     const inShift = settleSession(
       sendPendingToKitchen(
         addItemToSession(
           openTableSession({
-            outletId: OUTLET_ID,
+            ...OUTLET,
             tableId: "T1",
             guestCount: 2,
             serverName: "Asha",
@@ -335,7 +333,7 @@ describe("Dine-in POS billing engine", () => {
       sendPendingToKitchen(
         addItemToSession(
           openTableSession({
-            outletId: SECOND_OUTLET_ID,
+            ...SECOND_OUTLET,
             tableId: "T2",
             guestCount: 2,
             serverName: "Ravi",
@@ -367,7 +365,7 @@ describe("Dine-in POS billing engine", () => {
   });
 
   it("restores an unfinished shift and drops a closed or malformed one", () => {
-    const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000 });
+    const shift = openShift({ ...OUTLET, openedBy: "Meera", openingCash: 2000 });
     expect(restorePosShift(JSON.stringify(shift))?.shiftId).toBe(shift.shiftId);
 
     const { shift: closed } = closeShift(shift, [], { closedBy: "Meera", countedCash: 2000 });

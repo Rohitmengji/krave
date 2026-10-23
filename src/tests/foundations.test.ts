@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hasTestDatabase,
   resetTestDatabase,
   startTestDatabase,
   stopTestDatabase,
 } from "./support/testDb";
+import { outletInput } from "./support/posFixture";
+import { seedPosOutlet } from "./support/posRestaurant";
 import { run } from "@/lib/server/pg";
 import { registerUser } from "@/lib/server/auth";
 import { listNotifications, saveOrder, sweepScheduledOrders } from "@/lib/server/accountStore";
@@ -12,11 +14,15 @@ import { loadPosState, syncPosState } from "@/lib/server/posStore";
 import { createDemoOrder, DEMO_PAYMENT_METHODS } from "@/lib/checkout";
 import {
   addItemToSession,
-  getPosMenu,
-  getPosOutlets,
   openTableSession,
   sendPendingToKitchen,
 } from "@/lib/pos/posEngine";
+
+// Demo orders are priced from the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
 
 const CREDENTIALS = { email: "chef@krave.test", password: "correct-horse-battery" };
 const CHECKOUT = {
@@ -43,14 +49,13 @@ beforeEach(async () => {
 });
 
 describe("Terminal sync is all-or-nothing per table", () => {
-  const OUTLET_ID = getPosOutlets()[0].outletId;
-  const MENU = getPosMenu(OUTLET_ID);
-
   it("keeps the stored table intact when writing its update fails part-way", async () => {
     const user = await registerUser(CREDENTIALS);
+    const outlet = await seedPosOutlet(user);
+    const MENU = outlet.menu;
     const session = sendPendingToKitchen(
       addItemToSession(
-        openTableSession({ outletId: OUTLET_ID, tableId: "T1", guestCount: 2, serverName: "Asha" }),
+        openTableSession({ ...outletInput(outlet), tableId: "T1", guestCount: 2, serverName: "Asha" }),
         MENU[0],
         2
       )

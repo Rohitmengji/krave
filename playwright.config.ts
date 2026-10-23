@@ -17,10 +17,12 @@ const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 if (!TEST_DATABASE_URL) {
   throw new Error("TEST_DATABASE_URL is not set. E2E needs its own Neon branch.");
 }
-if (
-  process.env.DATABASE_URL &&
-  new URL(TEST_DATABASE_URL).host === new URL(process.env.DATABASE_URL).host
-) {
+// Pooled and direct hosts of one Neon endpoint differ only by "-pooler".
+const endpoint = (value: string) => new URL(value).host.replace("-pooler.", ".");
+const appEndpoints = [process.env.DATABASE_URL, process.env.DATABASE_URL_UNPOOLED]
+  .filter((value): value is string => Boolean(value))
+  .map(endpoint);
+if (appEndpoints.includes(endpoint(TEST_DATABASE_URL))) {
   throw new Error("TEST_DATABASE_URL points at the application database. Refusing to run E2E.");
 }
 
@@ -60,6 +62,13 @@ export default defineConfig({
       SMTP_PASS: "",
       EMAIL_FROM: "KRAVE <no-reply@krave.test>",
       KRAVE_PUBLIC_URL: BASE_URL,
+      // Paid and external services stay off, so a run can never bill the AI provider or
+      // write to a real bucket, and the suite covers the unconfigured states owners see.
+      DATABASE_URL_UNPOOLED: "",
+      OPENAI_API_KEY: "",
+      AWS_ACCESS_KEY_ID: "",
+      AWS_SECRET_ACCESS_KEY: "",
+      AWS_ENDPOINT_URL_S3: "",
     },
   },
 });

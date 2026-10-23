@@ -253,9 +253,11 @@ export async function GET(
   }
 
   if (routePath === "/webroutes/restaurant/info" || routePath === "/webroutes/menu/viewMenu") {
-    const resId = Number(searchParams.get("resId") || RESTAURANTS_DATA[0].resId);
-    const restaurant =
-      RESTAURANTS_DATA.find((r) => r.resId === resId) || RESTAURANTS_DATA[0];
+    const resId = Number(searchParams.get("resId"));
+    const restaurant = RESTAURANTS_DATA.find((r) => r.resId === resId);
+    if (!restaurant) {
+      return NextResponse.json({ status: "error", message: "Restaurant not found." }, { status: 404 });
+    }
     return NextResponse.json({
       status: "success",
       webroute: routePath,

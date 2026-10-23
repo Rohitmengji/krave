@@ -5,8 +5,6 @@ import {
   calculateItemizedSplit,
   calculatePosBill,
   closeShift,
-  getPosMenu,
-  getPosOutlets,
   openShift,
   openTableSession,
   POS_MAX_STORED_SESSIONS,
@@ -20,13 +18,12 @@ import {
   type PosMenuItem,
   type PosTableSession,
 } from "@/lib/pos/posEngine";
+import { MENU, OUTLET, SECOND_OUTLET } from "./support/posFixture";
 
-const OUTLET_ID = getPosOutlets()[0].outletId;
-const SECOND_OUTLET_ID = getPosOutlets()[1].outletId;
-const DISH = getPosMenu(OUTLET_ID)[0];
+const DISH = MENU[0];
 
-function seat(tableId = "T1", guestCount = 2, outletId = OUTLET_ID, shiftId: string | null = null) {
-  return openTableSession({ outletId, tableId, guestCount, serverName: "Asha", shiftId });
+function seat(tableId = "T1", guestCount = 2, outlet = OUTLET, shiftId: string | null = null) {
+  return openTableSession({ ...outlet, tableId, guestCount, serverName: "Asha", shiftId });
 }
 
 function priced(price: number): PosMenuItem {
@@ -69,7 +66,7 @@ describe("POS-6 · cooking notes typed into a controlled input", () => {
 describe("POS-9 · seating a table that became occupied", () => {
   it("refuses a second open bill on the same table at the same outlet", () => {
     const floor = [seat("T1")];
-    expect(() => openTableSession({ outletId: OUTLET_ID, tableId: "T1", guestCount: 2, serverName: "Ravi" }, floor)).toThrow(
+    expect(() => openTableSession({ ...OUTLET, tableId: "T1", guestCount: 2, serverName: "Ravi" }, floor)).toThrow(
       "Table T1 is already occupied."
     );
   });
@@ -77,9 +74,9 @@ describe("POS-9 · seating a table that became occupied", () => {
   it("allows it when the earlier bill is closed or belongs to another outlet", () => {
     const settled = settleSession(sendPendingToKitchen(addItemToSession(seat("T1"), DISH, 1)).session, "UPI", 0);
     const released = releaseTable(seat("T1"));
-    const elsewhere = seat("T1", 2, SECOND_OUTLET_ID);
+    const elsewhere = seat("T1", 2, SECOND_OUTLET);
     const floor = [settled, released, elsewhere];
-    expect(openTableSession({ outletId: OUTLET_ID, tableId: "T1", guestCount: 2, serverName: "Ravi" }, floor).status).toBe(
+    expect(openTableSession({ ...OUTLET, tableId: "T1", guestCount: 2, serverName: "Ravi" }, floor).status).toBe(
       "OPEN"
     );
   });
@@ -117,8 +114,8 @@ describe("POS-10 · releasing empty tables and partial voids", () => {
   });
 
   it("counts the voids of a fully voided, released table in the shift report", () => {
-    const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 1000 });
-    const fired = sendPendingToKitchen(addItemToSession(seat("T2", 2, OUTLET_ID, shift.shiftId), DISH, 2)).session;
+    const shift = openShift({ ...OUTLET, openedBy: "Meera", openingCash: 1000 });
+    const fired = sendPendingToKitchen(addItemToSession(seat("T2", 2, OUTLET, shift.shiftId), DISH, 2)).session;
     const released = releaseTable(voidLine(fired, fired.lines[0].lineId, "Guest walked out"));
 
     const { report } = closeShift(shift, [released], { closedBy: "Meera", countedCash: 1000 });
@@ -222,8 +219,8 @@ describe("STK-5 / POS-17 · money in integer paise, no silent rounding of inputs
     expect(() => settleSession(fired, "CASH", 1100.5)).toThrow("whole rupee amount of at least ₹1050");
     expect(settleSession(fired, "CASH", 1100).payment?.changeDue).toBe(50);
 
-    expect(() => openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000.5 })).toThrow("whole rupee");
-    const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000 });
+    expect(() => openShift({ ...OUTLET, openedBy: "Meera", openingCash: 2000.5 })).toThrow("whole rupee");
+    const shift = openShift({ ...OUTLET, openedBy: "Meera", openingCash: 2000 });
     expect(() => closeShift(shift, [], { closedBy: "Meera", countedCash: 10.4 })).toThrow("whole rupee");
     expect(() => addCustomItemToSession(seat(), { name: "Masala Soda", price: 99.5 })).toThrow("whole rupee");
   });

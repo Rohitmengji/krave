@@ -1,13 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { addDishAndFire, openTable, registerAccount, resetBrowser, uniqueEmail } from "./helpers";
+import { createRestaurant, openTerminal } from "./restaurants";
 
 const PASSWORD = "e2e-demo-password";
-const KAJU = /Royal Kaju Katli Reserve/;
+const PANEER = /Paneer Tikka/;
 
 /** Settle a table on the counter and return the claim code printed on its receipt. */
 async function settleTableAndReadCode(page: import("@playwright/test").Page, tableId: string) {
   await openTable(page, tableId);
-  await addDishAndFire(page, KAJU);
+  await addDishAndFire(page, PANEER);
   await page.getByTestId("pos-settle").click();
   await page.getByTestId("pos-confirm-settle").click();
 
@@ -29,9 +30,9 @@ test.describe("Dine-in bill claiming", () => {
 
   test("carries a table bill onto the guest's own account", async ({ page, browser }) => {
     // The counter settles a table. It never learns who the guest is.
-    await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("counter"), PASSWORD);
-    await page.reload({ waitUntil: "networkidle" });
+    await resetBrowser(page);
+    const restaurant = await createRestaurant(page, "Claim Counter");
+    await openTerminal(page, restaurant);
     const code = await settleTableAndReadCode(page, "T1");
     expect(code).toMatch(/^[2345679BCDFGHJKLMNPQRSTVWXYZ]{10}$/);
 
@@ -46,7 +47,8 @@ test.describe("Dine-in bill claiming", () => {
     await guest.getByTestId("claim-bill-submit").click();
 
     await expect(guest.getByTestId("dine-in-bill-entry")).toHaveCount(1);
-    await expect(guest.getByTestId("dine-in-bill-entry").first()).toContainText("₹609");
+    await expect(guest.getByTestId("dine-in-bill-entry").first()).toContainText("₹252");
+    await expect(guest.getByTestId("dine-in-bill-entry").first()).toContainText(restaurant.name);
 
     // It survives a wipe, because it lives on the account rather than the device.
     await guest.evaluate(() => localStorage.clear());
@@ -57,9 +59,9 @@ test.describe("Dine-in bill claiming", () => {
   });
 
   test("lets only the first holder claim a bill", async ({ page, browser }) => {
-    await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("counter2"), PASSWORD);
-    await page.reload({ waitUntil: "networkidle" });
+    await resetBrowser(page);
+    const restaurant = await createRestaurant(page, "Claim Counter Two");
+    await openTerminal(page, restaurant);
     const code = await settleTableAndReadCode(page, "T2");
 
     const firstContext = await browser.newContext();

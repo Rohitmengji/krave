@@ -25,12 +25,11 @@ import {
 } from "@/lib/server/kitchenStore";
 import {
   addItemToSession,
-  getPosMenu,
-  getPosOutlets,
   openShift,
   openTableSession,
   POS_TABLES,
 } from "@/lib/pos/posEngine";
+import { MENU, OUTLET } from "./support/posFixture";
 import {
   CHECKOUT_INTENT_STORAGE_KEY,
   checkoutFingerprint,
@@ -41,6 +40,12 @@ import {
 
 const CREDENTIALS = { email: "chef@krave.test", password: "correct-horse-battery" };
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// Demo orders and kitchen tickets run on the legacy fictional catalog, which the app no longer ships.
+vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/zomatoReconstructedData")>()),
+  ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
+}));
 
 function memoryStorage(seed: Record<string, string> = {}) {
   const data = new Map(Object.entries(seed));
@@ -74,16 +79,15 @@ describe("newId outside a secure context", () => {
   it("lets the POS open a table and ring up an item without randomUUID", () => {
     const real = globalThis.crypto;
     vi.stubGlobal("crypto", { getRandomValues: real.getRandomValues.bind(real) });
-    const outletId = getPosOutlets()[0].outletId;
     const session = openTableSession({
-      outletId,
+      ...OUTLET,
       tableId: POS_TABLES[0].tableId,
       guestCount: 2,
       serverName: "Asha",
     });
-    const withLine = addItemToSession(session, getPosMenu(outletId)[0]);
+    const withLine = addItemToSession(session, MENU[0]);
     expect(withLine.lines).toHaveLength(1);
-    expect(openShift({ outletId, openedBy: "Asha", openingCash: 500 }).shiftId).toMatch(/^SHIFT-/);
+    expect(openShift({ ...OUTLET, openedBy: "Asha", openingCash: 500 }).shiftId).toMatch(/^SHIFT-/);
   });
 });
 

@@ -42,15 +42,14 @@ describe("public build", () => {
     vi.unstubAllEnvs();
   });
 
-  it("names only fictional restaurants, brands and offers", () => {
-    const catalog = customerVisibleText({
-      BRAND_THEME_PRESETS,
-      COLLECTIONS_DATA,
-      COUPON_OFFERS,
-      RESTAURANTS_DATA,
-      SAVED_ADDRESSES,
-      TOP_BRANDS_DATA,
-    });
+  it("ships no restaurants, menus, collections, brands or offers of its own", () => {
+    // Customers see only what owners publish to the database; nothing invented can stand in.
+    expect(RESTAURANTS_DATA).toEqual([]);
+    expect(COLLECTIONS_DATA).toEqual([]);
+    expect(TOP_BRANDS_DATA).toEqual([]);
+    expect(COUPON_OFFERS).toEqual([]);
+
+    const catalog = customerVisibleText({ BRAND_THEME_PRESETS, SAVED_ADDRESSES });
     expect(catalog.match(REAL_BRANDS)).toBeNull();
     expect(catalog.match(LICENCE_NUMBER)).toBeNull();
   });

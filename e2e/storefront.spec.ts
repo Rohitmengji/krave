@@ -1,92 +1,51 @@
 import { expect, test } from "@playwright/test";
-import {
-  addFirstDishToCart,
-  placeDemoOrder,
-  registerAccount,
-  resetBrowser,
-  uniqueEmail,
-} from "./helpers";
+import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
+import { createRestaurant } from "./restaurants";
 
 const PASSWORD = "e2e-demo-password";
 
 test.describe("Storefront", () => {
-  test("browses, adds a dish, and places a demo order", async ({ page }) => {
+  test("lists only published restaurants and opens their real menu", async ({ page }) => {
     await resetBrowser(page);
-    await addFirstDishToCart(page);
-    await placeDemoOrder(page);
+    const listed = await createRestaurant(page, "Storefront Listed", { publish: true });
+    const draft = await createRestaurant(page, "Storefront Draft");
 
-    await expect(page.getByTestId("order-history-entry")).toHaveCount(1);
-    await expect(page.getByTestId("order-history-entry").first()).toContainText("ORDER CONFIRMED");
+    // A signed-out customer sees what owners have published, and nothing invented.
+    await page.request.post("/api/webroutes/auth/logout");
+    await page.goto("/", { waitUntil: "networkidle" });
+    const directory = page.getByTestId("restaurant-directory");
+    await expect(directory.getByRole("link", { name: listed.name })).toBeVisible();
+    await expect(directory.getByRole("link", { name: draft.name })).toHaveCount(0);
+    await expect(page.getByText(/Restaurants are fictional/)).toHaveCount(0);
+
+    await directory.getByRole("link", { name: listed.name }).click();
+    await page.waitForURL(`**/r/${listed.slug}`);
+    await expect(page.getByRole("heading", { level: 1, name: listed.name })).toBeVisible();
+    await expect(page.getByText("Paneer Tikka").first()).toBeVisible();
   });
 
-  test("keeps the cart across a refresh without storing prices", async ({ page }) => {
+  test("filters the list from the search box and says when nothing matches", async ({ page }) => {
     await resetBrowser(page);
-    await addFirstDishToCart(page);
-    const before = await page.getByTestId("floating-cart-bar").innerText();
+    const listed = await createRestaurant(page, "Storefront Searchable", { publish: true });
+    await page.goto("/", { waitUntil: "networkidle" });
+    const directory = page.getByTestId("restaurant-directory");
+    const search = page.getByTestId("universal-search-input");
 
-    const saved = await page.evaluate(() => localStorage.getItem("krave.session.v1"));
-    expect(saved).not.toContain("unitPrice");
+    await search.fill("  storefront SEARCHABLE ");
+    await expect(directory.getByTestId("restaurant-directory-item")).toHaveCount(1);
+    await expect(directory.getByRole("link", { name: listed.name })).toBeVisible();
 
-    await page.reload({ waitUntil: "networkidle" });
-    await expect(page.getByTestId("floating-cart-bar")).toBeVisible();
-    expect(await page.getByTestId("floating-cart-bar").innerText()).toBe(before);
+    await search.fill("no restaurant is called this");
+    await expect(directory).toContainText("No restaurants match");
+    await directory.getByRole("button", { name: "Clear search" }).click();
+    await expect(search).toHaveValue("");
+    await expect(directory.getByRole("link", { name: listed.name })).toBeVisible();
   });
 
-  test("never presents an undeclared dish as free of an allergen", async ({ page }) => {
-    await resetBrowser(page);
-    await page.getByRole("button", { name: "Order Menu" }).first().click();
-    const menu = page.getByTestId("restaurant-detail-modal");
-
-    // Before any filter is applied, nothing claims to be allergen-free.
-    await expect(menu.getByTestId("allergen-caveat")).toBeHidden();
-
-    await menu.getByTestId("allergen-TREE_NUT").click();
-    await expect(menu.getByTestId("allergen-caveat")).toBeVisible();
-
-    // Declared-contains dishes are called out, not silently hidden.
-    await expect(menu.getByText("Contains Tree nuts").first()).toBeVisible();
-
-    // The property that matters: dishes with no declaration say so rather than
-    // appearing alongside genuinely cleared dishes.
-    const undeclared = menu.getByText("Allergens not declared — ask the restaurant");
-    expect(await undeclared.count()).toBeGreaterThan(0);
-    await expect(undeclared.first()).toBeVisible();
-  });
-
-  test("holds the quoted price and says so before payment", async ({ page }) => {
-    await resetBrowser(page);
-    await addFirstDishToCart(page);
-    await page.getByTestId("floating-cart-bar").click();
-
-    const total = await page.getByTestId("cart-grand-total").innerText();
-    await expect(page.getByTestId("cart-lock-note")).toBeVisible();
-
-    await page.getByTestId("place-order-zpaykit-btn").click();
-    await expect(page.getByTestId("crystal-tracking-modal")).toBeVisible({ timeout: 15_000 });
-    await page.keyboard.press("Escape");
-
-    // The charged amount must match what the drawer promised, not a recomputed surprise.
-    await expect(page.getByTestId("order-history-entry").first()).toContainText(
-      total.replace(/\s/g, "")
-    );
-  });
-
-  test("cancels only while the order is still confirmed", async ({ page }) => {
-    await resetBrowser(page);
-    await addFirstDishToCart(page);
-    await placeDemoOrder(page);
-
-    // The safe choice has focus, and Escape backs out without cancelling.
-    await page.getByTestId("cancel-order").click();
-    const confirmation = page.getByRole("alertdialog", { name: "Cancel this order?" });
-    await expect(confirmation.getByRole("button", { name: "Keep order" })).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(confirmation).toBeHidden();
-    await expect(page.getByTestId("order-history-entry")).toHaveCount(1);
-
-    await page.getByTestId("cancel-order").click();
-    await confirmation.getByRole("button", { name: "Cancel order" }).click();
-    await expect(page.getByTestId("order-history-entry")).toHaveCount(0);
+  test("no longer serves the retired sample restaurants", async ({ request }) => {
+    for (const path of ["/restaurant/19677790", "/restaurant/18238278"]) {
+      expect((await request.get(path)).status(), path).toBe(404);
+    }
   });
 
   test("opens offers and the inbox, and closes both with Escape", async ({ page }) => {
@@ -95,6 +54,7 @@ test.describe("Storefront", () => {
     await page.getByTestId("navbar-offers").click();
     const offers = page.getByRole("dialog", { name: "Coupons and partner offers" });
     await expect(offers).toBeVisible();
+    await expect(offers.getByTestId("offers-empty")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(offers).toBeHidden();
 
@@ -104,68 +64,9 @@ test.describe("Storefront", () => {
     await page.keyboard.press("Escape");
     await expect(inbox).toBeHidden();
   });
-
-  test("records a notification when an order is placed", async ({ page }) => {
-    await resetBrowser(page);
-    await addFirstDishToCart(page);
-    await placeDemoOrder(page);
-
-    await expect(page.getByTestId("inbox-unread-badge")).toHaveText("1");
-    await page.getByTestId("navbar-inbox").click();
-    await expect(page.getByTestId("notification-entry").first()).toContainText("Demo order confirmed");
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("inbox-unread-badge")).toHaveCount(0);
-  });
-
-  test("keeps the cart and order history in step across open tabs", async ({ page, context }) => {
-    await resetBrowser(page);
-    const other = await context.newPage();
-    await other.goto("/", { waitUntil: "networkidle" });
-    await expect(other.getByTestId("floating-cart-bar")).toHaveCount(0);
-
-    // No reload: the second tab hears about each change from the storage event.
-    await addFirstDishToCart(page);
-    await expect(other.getByTestId("floating-cart-bar")).toBeVisible();
-
-    await placeDemoOrder(page);
-    await expect(other.getByTestId("floating-cart-bar")).toHaveCount(0);
-    await expect(other.getByTestId("order-history-entry")).toHaveCount(1);
-    await expect(other.getByTestId("inbox-unread-badge")).toHaveText("1");
-    await other.close();
-  });
-
-  test("serves a shareable restaurant page and 404s an unknown one", async ({ page }) => {
-    await resetBrowser(page);
-
-    await page.goto("/restaurant/19677790", { waitUntil: "networkidle" });
-    await expect(page).toHaveTitle(/Mithaas/);
-    await expect(page.getByRole("dialog").first()).toBeVisible();
-
-    const missing = await page.goto("/restaurant/999999");
-    expect(missing?.status()).toBe(404);
-  });
 });
 
 test.describe("Accounts", () => {
-  test("keeps an order after local storage is wiped", async ({ page }) => {
-    const email = uniqueEmail("durable");
-    await resetBrowser(page);
-    await registerAccount(page, email, PASSWORD);
-    await page.reload({ waitUntil: "networkidle" });
-
-    await addFirstDishToCart(page);
-    await placeDemoOrder(page);
-    await expect(page.getByTestId("order-history-entry")).toHaveCount(1);
-
-    // Only a server-backed history can survive this.
-    await page.evaluate(() => localStorage.clear());
-    await page.reload({ waitUntil: "networkidle" });
-
-    await expect(page.getByTestId("order-history-entry")).toHaveCount(1);
-    const localCopy = await page.evaluate(() => localStorage.getItem("krave.demo-orders.v1"));
-    expect(localCopy).toBeNull();
-  });
-
   test("refuses a refund claim from a browser that is not signed in", async ({ page }) => {
     await resetBrowser(page);
     const response = await page.request.post("/api/webroutes/account/dispute", {

@@ -12,6 +12,14 @@ body {
 }
 
 /*
+ * Owner workspace inputs. 16px text stops iOS Safari zooming on focus; min-h-11 keeps a
+ * 44px touch target. Focus uses the global :focus-visible outline.
+ */
+@utility field {
+  @apply mt-1 block min-h-11 w-full rounded-xl border border-white/20 bg-[#0a0d12] px-3 py-2 text-base font-normal text-slate-100 placeholder:text-slate-500 disabled:opacity-60;
+}
+
+/*
  * The 300/400 accent tints are chosen for dark surfaces and fall to 1.5–2.8:1 on white.
  * Light surfaces swap them for the 800 shade of the same hue, so every text-*-300/400
  * stays readable without a light-mode variant on each class. A dark patch inside a light

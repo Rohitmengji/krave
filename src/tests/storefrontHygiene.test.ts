@@ -161,3 +161,40 @@ describe("ST-14 · DiningPay reads the bill as typed", () => {
     expect(readDiningPayBill("9".repeat(400)).amount).toBeNull();
   });
 });
+
+describe("ST-18 · a dialog whose opener is gone hands focus to a fallback", () => {
+  const body = { tagName: "BODY" } as unknown as HTMLElement;
+  const target = () => ({ isConnected: true, focus: vi.fn() });
+
+  it("moves focus when the browser dropped it on <body>", async () => {
+    const { refocusIfDropped } = await import("@/lib/focusFallback");
+    const pill = target();
+    expect(refocusIfDropped({ activeElement: body, body }, pill)).toBe(true);
+    expect(pill.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("leaves focus the browser restored itself", async () => {
+    const { refocusIfDropped } = await import("@/lib/focusFallback");
+    const pill = target();
+    const opener = { tagName: "BUTTON" } as unknown as Element;
+    expect(refocusIfDropped({ activeElement: opener, body }, pill)).toBe(false);
+    expect(pill.focus).not.toHaveBeenCalled();
+  });
+
+  it("moves focus still stranded inside the closing dialog", async () => {
+    const { refocusIfDropped } = await import("@/lib/focusFallback");
+    const pill = target();
+    const insideButton = { tagName: "BUTTON" } as unknown as Element;
+    const dialog = { contains: (node: Node | null) => node === (insideButton as unknown as Node) };
+    expect(refocusIfDropped({ activeElement: insideButton, body }, pill, dialog)).toBe(true);
+    expect(pill.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when the fallback is missing or detached", async () => {
+    const { refocusIfDropped } = await import("@/lib/focusFallback");
+    expect(refocusIfDropped({ activeElement: body, body }, null)).toBe(false);
+    const detached = { isConnected: false, focus: vi.fn() };
+    expect(refocusIfDropped({ activeElement: null, body }, detached)).toBe(false);
+    expect(detached.focus).not.toHaveBeenCalled();
+  });
+});

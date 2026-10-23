@@ -48,6 +48,7 @@ interface NavbarProps {
   onOpenBrandStudio: () => void;
   hasActiveOrder: boolean;
   onOpenActiveOrder: () => void;
+  activeOrderPillRef?: React.Ref<HTMLButtonElement>;
   onOpenOffers: () => void;
   onOpenInbox: () => void;
   unreadCount: number;
@@ -75,6 +76,7 @@ export function Navbar({
   onOpenBrandStudio,
   hasActiveOrder,
   onOpenActiveOrder,
+  activeOrderPillRef,
   onOpenOffers,
   onOpenInbox,
   unreadCount,
@@ -423,6 +425,7 @@ export function Navbar({
           {/* Active Order Tracker Pill */}
           {hasActiveOrder && (
             <button
+              ref={activeOrderPillRef}
               type="button"
               onClick={onOpenActiveOrder}
               data-testid="live-crystal-order-pill"

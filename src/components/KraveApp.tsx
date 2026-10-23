@@ -259,6 +259,8 @@ export function KraveApp({
   const [accountOpen, setAccountOpen] = useState(false);
   const [disputePending, setDisputePending] = useState(false);
   const disputeLock = useRef(false);
+  // Tracking opens straight from checkout, whose drawer is gone by the time it closes.
+  const activeOrderPillRef = useRef<HTMLButtonElement>(null);
 
   // Modals & Post-Order State
   const [selectedRestaurant, setSelectedRestaurant] = useState<{
@@ -912,6 +914,7 @@ export function KraveApp({
         onOpenBrandStudio={() => setBrandStudioOpen(true)}
         hasActiveOrder={Boolean(activeCrystalOrder)}
         onOpenActiveOrder={() => setCrystalModalOpen(true)}
+        activeOrderPillRef={activeOrderPillRef}
         onOpenOffers={() => setOffersOpen(true)}
         onOpenInbox={() => {
           setInboxOpen(true);
@@ -1808,6 +1811,7 @@ export function KraveApp({
           isDark={isDark}
           onClose={() => setCrystalModalOpen(false)}
           onAdvanceStage={handleAdvanceCrystalStage}
+          returnFocusTo={() => activeOrderPillRef.current}
         />
       )}
 

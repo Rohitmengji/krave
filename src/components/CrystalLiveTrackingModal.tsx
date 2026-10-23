@@ -25,6 +25,7 @@ interface CrystalLiveTrackingModalProps {
   isDark: boolean;
   onClose: () => void;
   onAdvanceStage: () => void;
+  returnFocusTo?: () => HTMLElement | null;
 }
 
 const STAGE_SEQUENCE: {
@@ -77,6 +78,7 @@ export function CrystalLiveTrackingModal({
   isDark,
   onClose,
   onAdvanceStage,
+  returnFocusTo,
 }: CrystalLiveTrackingModalProps) {
   if (!order) return null;
 
@@ -94,6 +96,7 @@ export function CrystalLiveTrackingModal({
       label="Demo order tracking"
       testId="crystal-tracking-modal"
       closeOnBackdrop={false}
+      returnFocusTo={returnFocusTo}
       className={`${FULL_SCREEN_DIALOG} open:flex items-center justify-center bg-black/80 backdrop-blur-md p-4`}
     >
       <div

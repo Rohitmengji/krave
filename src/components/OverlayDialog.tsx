@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffectEvent, useLayoutEffect, useRef } from "react";
+import { refocusIfDropped } from "@/lib/focusFallback";
 
 const CENTRED_PANEL = "m-auto w-full max-w-lg bg-transparent p-4 backdrop:bg-black/80";
 
@@ -33,6 +34,8 @@ type OverlayDialogProps = {
   className?: string;
   testId?: string;
   closeOnBackdrop?: boolean;
+  /** Where focus goes on close if the element that opened the dialog no longer exists. */
+  returnFocusTo?: () => HTMLElement | null;
   children: React.ReactNode;
 };
 
@@ -51,11 +54,13 @@ function OpenDialog({
   className = CENTRED_PANEL,
   testId,
   closeOnBackdrop = true,
+  returnFocusTo,
   children,
 }: Omit<OverlayDialogProps, "isOpen">) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const pressStartedOnBackdrop = useRef(false);
   const dismiss = useEffectEvent(() => onDismiss());
+  const focusFallback = useEffectEvent(() => returnFocusTo?.() ?? null);
 
   // A layout effect, so the dialog is in the top layer before first paint and is closed
   // while still in the document, which lets the browser return focus to its opener.
@@ -84,7 +89,10 @@ function OpenDialog({
       cancelAnimationFrame(reopenFrame);
       dialog.removeEventListener("cancel", handleCancel);
       dialog.removeEventListener("close", handleClose);
-      if (dialog.open) dialog.close();
+      if (dialog.open) {
+        dialog.close();
+        refocusIfDropped(document, focusFallback(), dialog);
+      }
     };
   }, []);
 

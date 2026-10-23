@@ -101,15 +101,19 @@ import {
 } from "@/types/krave";
 import { Navbar } from "./Navbar";
 import { RestaurantCardV2 } from "./RestaurantCardV2";
-import { RestaurantDetailModal } from "./RestaurantDetailModal";
-import { CartCheckoutDrawer } from "./CartCheckoutDrawer";
-import { CrystalLiveTrackingModal } from "./CrystalLiveTrackingModal";
-import { ReaInspectorModal } from "./ReaInspectorModal";
-import { BrandThemeModal } from "./BrandThemeModal";
+import {
+  AccountDialog,
+  BrandThemeModal,
+  CartCheckoutDrawer,
+  CrystalLiveTrackingModal,
+  ReaInspectorModal,
+  RestaurantDetailModal,
+  scheduleDialogPreload,
+} from "./lazyDialogs";
 import { OverlayDialog } from "./OverlayDialog";
-import { AccountDialog } from "./AccountDialog";
 import { Toast } from "./Toast";
 import { primaryFill, primaryInk } from "@/lib/themeContrast";
+import { useLatch } from "@/lib/useLatch";
 
 const CRYSTAL_STAGE_ORDER: CrystalOrderStage[] = [
   "ORDER_CONFIRMED",
@@ -275,6 +279,12 @@ export function KraveApp({
   const [crystalModalOpen, setCrystalModalOpen] = useState(false);
   const [reaInspectorOpen, setReaInspectorOpen] = useState(false);
   const [brandStudioOpen, setBrandStudioOpen] = useState(false);
+  // Lazy dialogs mount on first open and then stay mounted, so their state outlives a close.
+  const cartMounted = useLatch(cartOpen);
+  const accountMounted = useLatch(accountOpen);
+  const reaMounted = useLatch(reaInspectorOpen);
+  const brandMounted = useLatch(brandStudioOpen);
+  useEffect(() => scheduleDialogPreload(), []);
   // Each toast has its own id, so a repeated message restarts the full display time.
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastSeq = useRef(0);
@@ -1784,36 +1794,38 @@ export function KraveApp({
         />
       )}
 
-      <CartCheckoutDrawer
-        isOpen={cartOpen}
-        onClose={() => setCartOpen(false)}
-        theme={theme}
-        isDark={isDark}
-        items={cartItems}
-        quote={cartQuote}
-        coupons={COUPON_OFFERS}
-        appliedCoupon={appliedCoupon}
-        couponBlockedReason={couponBlockedReason}
-        onApplyCoupon={(code) => updateSession("couponCode", code)}
-        riderTip={riderTip}
-        onSelectRiderTip={(tip) => updateSession("riderTip", tip)}
-        isGoldMember={isGoldMember}
-        onToggleGold={handleToggleGold}
-        currentAddress={currentAddress}
-        onUpdateQuantity={handleUpdateCartQuantity}
-        onClearCart={() => updateSession("cartItems", [])}
-        onPlaceOrder={() => handlePlaceOrder()}
-        paymentMethod={paymentMethod}
-        onSelectPaymentMethod={setPaymentMethod}
-        checkoutPending={checkoutPending}
-        checkoutError={checkoutError}
-        scheduledSlot={scheduledSlot}
-        onSelectScheduledSlot={(slot) => updateSession("scheduledSlot", slot)}
-        unavailableItemIds={unavailableItemIds}
-        handling={handling}
-        onChangeHandling={(next) => updateSession("handling", next)}
-        priceLockExpiresAt={priceLock?.expiresAt ?? null}
-      />
+      {cartMounted && (
+        <CartCheckoutDrawer
+          isOpen={cartOpen}
+          onClose={() => setCartOpen(false)}
+          theme={theme}
+          isDark={isDark}
+          items={cartItems}
+          quote={cartQuote}
+          coupons={COUPON_OFFERS}
+          appliedCoupon={appliedCoupon}
+          couponBlockedReason={couponBlockedReason}
+          onApplyCoupon={(code) => updateSession("couponCode", code)}
+          riderTip={riderTip}
+          onSelectRiderTip={(tip) => updateSession("riderTip", tip)}
+          isGoldMember={isGoldMember}
+          onToggleGold={handleToggleGold}
+          currentAddress={currentAddress}
+          onUpdateQuantity={handleUpdateCartQuantity}
+          onClearCart={() => updateSession("cartItems", [])}
+          onPlaceOrder={() => handlePlaceOrder()}
+          paymentMethod={paymentMethod}
+          onSelectPaymentMethod={setPaymentMethod}
+          checkoutPending={checkoutPending}
+          checkoutError={checkoutError}
+          scheduledSlot={scheduledSlot}
+          onSelectScheduledSlot={(slot) => updateSession("scheduledSlot", slot)}
+          unavailableItemIds={unavailableItemIds}
+          handling={handling}
+          onChangeHandling={(next) => updateSession("handling", next)}
+          priceLockExpiresAt={priceLock?.expiresAt ?? null}
+        />
+      )}
 
       {crystalModalOpen && (
         <CrystalLiveTrackingModal
@@ -1826,31 +1838,35 @@ export function KraveApp({
         />
       )}
 
-      <ReaInspectorModal
-        isOpen={reaInspectorOpen}
-        onClose={() => setReaInspectorOpen(false)}
-        theme={theme}
-        isDark={isDark}
-        onInvokeWebMcpTool={invokeWebMcpTool}
-      />
+      {reaMounted && (
+        <ReaInspectorModal
+          isOpen={reaInspectorOpen}
+          onClose={() => setReaInspectorOpen(false)}
+          theme={theme}
+          isDark={isDark}
+          onInvokeWebMcpTool={invokeWebMcpTool}
+        />
+      )}
 
-      <BrandThemeModal
-        isOpen={brandStudioOpen}
-        onClose={() => setBrandStudioOpen(false)}
-        currentTheme={theme}
-        onSelectPreset={(preset) => {
-          updateSession("themeId", preset.id);
-          setThemeEdits(null);
-          showToast(`Applied ${preset.name} theme`);
-        }}
-        onUpdateCustomBrand={(updates) =>
-          setThemeEdits((previous) => ({
-            themeId: theme.id,
-            updates: { ...(previous?.themeId === theme.id ? previous.updates : {}), ...updates },
-          }))
-        }
-        isDark={isDark}
-      />
+      {brandMounted && (
+        <BrandThemeModal
+          isOpen={brandStudioOpen}
+          onClose={() => setBrandStudioOpen(false)}
+          currentTheme={theme}
+          onSelectPreset={(preset) => {
+            updateSession("themeId", preset.id);
+            setThemeEdits(null);
+            showToast(`Applied ${preset.name} theme`);
+          }}
+          onUpdateCustomBrand={(updates) =>
+            setThemeEdits((previous) => ({
+              themeId: theme.id,
+              updates: { ...(previous?.themeId === theme.id ? previous.updates : {}), ...updates },
+            }))
+          }
+          isDark={isDark}
+        />
+      )}
 
       {offersOpen && (
         <OverlayDialog
@@ -2003,15 +2019,17 @@ export function KraveApp({
           </div>
         </OverlayDialog>
       )}
-      <AccountDialog
-        isOpen={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        theme={theme}
-        isDark={isDark}
-        user={account}
-        onAuthenticated={handleAuthenticated}
-        onSignOut={handleSignOut}
-      />
+      {accountMounted && (
+        <AccountDialog
+          isOpen={accountOpen}
+          onClose={() => setAccountOpen(false)}
+          theme={theme}
+          isDark={isDark}
+          user={account}
+          onAuthenticated={handleAuthenticated}
+          onSignOut={handleSignOut}
+        />
+      )}
     </div>
   );
 }

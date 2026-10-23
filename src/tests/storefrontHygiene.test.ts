@@ -315,3 +315,62 @@ describe("ST-20 · brand ink and accent tints on light surfaces", () => {
     }
   });
 });
+
+describe("ST-21 · dialogs load off the storefront's critical path", () => {
+  const DIALOGS = [
+    "RestaurantDetailModal",
+    "CartCheckoutDrawer",
+    "CrystalLiveTrackingModal",
+    "ReaInspectorModal",
+    "BrandThemeModal",
+    "AccountDialog",
+  ];
+
+  it("KraveApp imports every dialog through the lazy module, never directly", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("src/components/KraveApp.tsx", "utf8");
+    for (const name of DIALOGS) {
+      expect(source, name).not.toMatch(new RegExp(`from "\\./${name}"`));
+    }
+    expect(source).toMatch(/from "\.\/lazyDialogs"/);
+  });
+
+  it("warms the chunks on idle, cancels on unmount, and respects Save-Data", async () => {
+    const { scheduleDialogPreload } = await import("@/components/lazyDialogs");
+    const load = vi.fn();
+    const idle: Array<() => void> = [];
+    const cancelIdle = vi.fn();
+    const host = {
+      requestIdleCallback: (cb: () => void) => idle.push(cb),
+      cancelIdleCallback: cancelIdle,
+      setTimeout: vi.fn(),
+      clearTimeout: vi.fn(),
+    };
+
+    const cancel = scheduleDialogPreload(host, load);
+    expect(load).not.toHaveBeenCalled();
+    idle[0]();
+    expect(load).toHaveBeenCalledTimes(1);
+    cancel();
+    expect(cancelIdle).toHaveBeenCalledWith(1);
+
+    const timers = { setTimeout: vi.fn(() => 7), clearTimeout: vi.fn() };
+    scheduleDialogPreload(timers, load)();
+    expect(timers.setTimeout).toHaveBeenCalledWith(load, 2000);
+    expect(timers.clearTimeout).toHaveBeenCalledWith(7);
+
+    const saver = { ...host, navigator: { connection: { saveData: true } } };
+    idle.length = 0;
+    scheduleDialogPreload(saver, load)();
+    expect(idle).toHaveLength(0);
+  });
+
+  it("useLatch mounts on the render that opens, not one render later", async () => {
+    const { createElement } = await import("react");
+    const { renderToString } = await import("react-dom/server");
+    const { useLatch } = await import("@/lib/useLatch");
+    const Probe = ({ open }: { open: boolean }) => createElement("i", null, String(useLatch(open)));
+    expect(renderToString(createElement(Probe, { open: true }))).toBe("<i>true</i>");
+    expect(renderToString(createElement(Probe, { open: false }))).toBe("<i>false</i>");
+  });
+});

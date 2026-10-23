@@ -1,6 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DatabaseSync } from "node:sqlite";
-import { useTestDb } from "@/lib/server/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  hasTestDatabase,
+  resetTestDatabase,
+  startTestDatabase,
+  stopTestDatabase,
+} from "./support/testDb";
+import { run } from "@/lib/server/pg";
 import { registerUser } from "@/lib/server/auth";
 import { listNotifications, saveOrder, sweepScheduledOrders } from "@/lib/server/accountStore";
 import { loadPosState, syncPosState } from "@/lib/server/posStore";
@@ -23,15 +28,18 @@ const CHECKOUT = {
   riderTip: 20,
 };
 
-let db: DatabaseSync;
+describe.skipIf(!hasTestDatabase)("foundations", () => {
 
-beforeEach(() => {
-  db = new DatabaseSync(":memory:");
-  useTestDb(db);
+beforeAll(async () => {
+  await startTestDatabase();
 });
 
-afterEach(() => {
-  db.close();
+afterAll(async () => {
+  await stopTestDatabase();
+});
+
+beforeEach(async () => {
+  await resetTestDatabase();
 });
 
 describe("Terminal sync is all-or-nothing per table", () => {
@@ -47,25 +55,33 @@ describe("Terminal sync is all-or-nothing per table", () => {
         2
       )
     ).session;
-    const [stored] = syncPosState(user.id, { sessions: [session], shift: null }).sessions;
+    const [stored] = (await syncPosState(user.id, { sessions: [session], shift: null })).sessions;
     expect(stored.revision).toBe(1);
 
     // Simulate a storage failure that strikes after the old rows were already replaced:
     // the second line of the update cannot be written.
-    db.exec(`
+    await run(`
+      CREATE OR REPLACE FUNCTION fail_second_line() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.item_id = '${MENU[1].itemId}' THEN RAISE EXCEPTION 'disk I/O error'; END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql;
       CREATE TRIGGER fail_second_line BEFORE INSERT ON pos_lines
-      WHEN NEW.item_id = '${MENU[1].itemId}'
-      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END;
+      FOR EACH ROW EXECUTE FUNCTION fail_second_line();
     `);
-    const update = addItemToSession({ ...session, revision: 1 }, MENU[1], 1);
-    const result = syncPosState(user.id, { sessions: [update], shift: null });
+    try {
+      const update = addItemToSession({ ...session, revision: 1 }, MENU[1], 1);
+      const result = await syncPosState(user.id, { sessions: [update], shift: null });
 
-    expect(result.rejected.map((entry) => entry.sessionId)).toEqual([session.sessionId]);
-    const [after] = loadPosState(user.id).sessions;
-    // Without the per-table savepoint this commits revision 2 with one line and no ticket.
-    expect(after.revision).toBe(1);
-    expect(after.lines).toHaveLength(1);
-    expect(after.tickets).toHaveLength(1);
+      expect(result.rejected.map((entry) => entry.sessionId)).toEqual([session.sessionId]);
+      const [after] = (await loadPosState(user.id)).sessions;
+      // Without the per-table savepoint this commits revision 2 with one line and no ticket.
+      expect(after.revision).toBe(1);
+      expect(after.lines).toHaveLength(1);
+      expect(after.tickets).toHaveLength(1);
+    } finally {
+      await run("DROP TRIGGER IF EXISTS fail_second_line ON pos_lines");
+    }
   });
 });
 
@@ -74,41 +90,50 @@ describe("Scheduled-order sweep", () => {
     const user = await registerUser(CREDENTIALS);
     const first = createDemoOrder({ ...CHECKOUT, scheduledSlot: "Tomorrow, 12:30 PM" });
     const second = createDemoOrder({ ...CHECKOUT, scheduledSlot: "Tonight, 8:00 PM" });
-    saveOrder(user.id, first, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    saveOrder(user.id, second, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    const past = new Date(Date.now() - 1000).toISOString();
-    db.prepare("UPDATE orders SET due_at = ?").run(past);
+    await saveOrder(user.id, first, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(user.id, second, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await run("UPDATE orders SET due_at = $1", [new Date(Date.now() - 1000).toISOString()]);
 
     // Another process (or tab) starts the remaining order between this sweep's read and its
     // write. A trigger on the first announcement stands in for that interleaving; it works
     // whichever order the sweep reaches first.
-    db.exec(`
-      CREATE TRIGGER concurrent_sweep AFTER INSERT ON notifications
+    await run(`
+      CREATE OR REPLACE FUNCTION concurrent_sweep() RETURNS trigger AS $$
       BEGIN
         UPDATE orders SET stage = 'KITCHEN_PREPARING' WHERE stage = 'ORDER_CONFIRMED';
-      END;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER concurrent_sweep AFTER INSERT ON notifications
+      FOR EACH ROW EXECUTE FUNCTION concurrent_sweep();
     `);
-
-    const started = sweepScheduledOrders(user.id);
-    expect(started).toHaveLength(1);
-    expect([first.orderId, second.orderId]).toContain(started[0]);
-    expect(listNotifications(user.id)).toHaveLength(1);
+    try {
+      const started = await sweepScheduledOrders(user.id);
+      expect(started).toHaveLength(1);
+      expect([first.orderId, second.orderId]).toContain(started[0]);
+      expect(await listNotifications(user.id)).toHaveLength(1);
+    } finally {
+      await run("DROP TRIGGER IF EXISTS concurrent_sweep ON notifications");
+    }
   });
 
   it("rolls the stage back when its announcement cannot be written", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder({ ...CHECKOUT, scheduledSlot: "Tomorrow, 12:30 PM" });
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    db.prepare("UPDATE orders SET due_at = ?").run(new Date(Date.now() - 1000).toISOString());
-    db.exec(`
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await run("UPDATE orders SET due_at = $1", [new Date(Date.now() - 1000).toISOString()]);
+    await run(`
+      CREATE OR REPLACE FUNCTION notifications_down() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'disk I/O error'; END; $$ LANGUAGE plpgsql;
       CREATE TRIGGER notifications_down BEFORE INSERT ON notifications
-      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END;
+      FOR EACH ROW EXECUTE FUNCTION notifications_down();
     `);
 
-    expect(() => sweepScheduledOrders(user.id)).toThrow(/disk I\/O/);
+    await expect(sweepScheduledOrders(user.id)).rejects.toThrow(/disk I\/O/);
     // Still due, so the next read retries and announces it rather than starting it silently.
-    db.exec("DROP TRIGGER notifications_down");
-    expect(sweepScheduledOrders(user.id)).toEqual([order.orderId]);
-    expect(listNotifications(user.id)).toHaveLength(1);
+    await run("DROP TRIGGER notifications_down ON notifications");
+    expect(await sweepScheduledOrders(user.id)).toEqual([order.orderId]);
+    expect(await listNotifications(user.id)).toHaveLength(1);
   });
+});
+
 });

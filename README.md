@@ -46,6 +46,19 @@ and run `npm run build` followed by `npm start`. If port 3005 is occupied, use
 | --- | --- | --- |
 | `KRAVE_DB_PATH` | No | SQLite file location. Defaults to `.data/krave.db`. |
 | `KRAVE_QUOTE_SECRET` | In production | HMAC key for checkout price locks. Without it in production, locks are disabled and checkout falls back to live pricing. Development generates a per-process key. |
+| `KRAVE_STAFF_EMAILS` | No | Comma-separated emails treated as staff at every outlet. How the first operator is created. |
+| `KRAVE_OPEN_STAFF` | No | Set to `1` to treat **every** signed-in account as staff everywhere. Demo convenience only; never set it on anything real. |
+
+### Who may act as staff
+
+Seeing an outlet's tickets, taking a dish off sale, syncing its terminal and settling
+refund claims all require staff access to that outlet, held in `outlet_staff`. The
+checks live in the stores rather than the route handlers, so a new caller cannot reach
+them unauthorised. With neither environment variable set, nobody is staff until a row
+is granted — closed by default rather than open by default.
+
+This is outlet-level access, not a full role system: a staff member of an outlet can do
+all staff actions for it. There are no separate manager, chef or cashier permissions.
 
 A price lock holds the quoted total for 10 minutes. It is signed rather than
 stored so a signed-out guest can hold one, and it can only ever lower the amount

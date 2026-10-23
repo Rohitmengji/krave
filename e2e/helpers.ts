@@ -25,6 +25,28 @@ export async function registerAccount(page: Page, email: string, password: strin
   expect(response.status()).toBe(201);
 }
 
+/** Matches KRAVE_STAFF_EMAILS in playwright.config.ts. */
+export const STAFF_EMAIL = "e2e-staff@krave.test";
+export const STAFF_PASSWORD = "e2e-staff-password";
+
+/**
+ * Signs in as the one account the server treats as staff.
+ *
+ * The suite runs against a shared database, so this registers on first use and
+ * signs in afterwards rather than assuming either.
+ */
+export async function signInAsStaff(page: Page) {
+  const created = await page.request.post("/api/webroutes/auth/register", {
+    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD, displayName: "E2E Staff" },
+  });
+  if (created.status() === 201) return;
+
+  const signedIn = await page.request.post("/api/webroutes/auth/login", {
+    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD },
+  });
+  expect(signedIn.ok()).toBe(true);
+}
+
 /** Adds the first dish of the first restaurant, handling the customisation step. */
 export async function addFirstDishToCart(page: Page) {
   await page.getByRole("button", { name: "Order Menu" }).first().click();

@@ -61,12 +61,13 @@ import {
   prepTimeStats,
 } from "@/lib/server/kitchenStore";
 import { claimDineInBill, listDineInBills } from "@/lib/server/dineInStore";
-import { fileDispute, listDisputes } from "@/lib/server/disputeStore";
+import { fileDispute, listDisputeQueue, listDisputes, resolveDispute } from "@/lib/server/disputeStore";
+import { isAnyOutletStaff, isOutletStaff } from "@/lib/server/staff";
 
 /** Account endpoints touch per-request cookies, so this segment must never be prerendered. */
 export const dynamic = "force-dynamic";
 
-function currentUser(request: NextRequest): AccountUser | null {
+async function currentUser(request: NextRequest): Promise<AccountUser | null> {
   return getUserForToken(request.cookies.get(SESSION_COOKIE)?.value);
 }
 
@@ -79,19 +80,30 @@ function clientKey(request: NextRequest): string {
   );
 }
 
-function accountPayload(user: AccountUser) {
+async function accountPayload(user: AccountUser) {
   // Any read is a chance to start a window that has come due; there is no scheduler.
-  sweepScheduledOrders(user.id);
+  await sweepScheduledOrders(user.id);
+  // Independent reads, so they go out together rather than one round trip after another.
+  const [orders, reservations, bookmarks, notifications, unavailableItemIds, dineInBills, disputes] =
+    await Promise.all([
+      listOrders(user.id),
+      listReservations(user.id),
+      listBookmarks(user.id),
+      listNotifications(user.id),
+      listUnavailableItems(),
+      listDineInBills(user.id),
+      listDisputes(user.id),
+    ]);
   return {
     status: "success",
     user,
-    orders: listOrders(user.id),
-    reservations: listReservations(user.id),
-    bookmarks: listBookmarks(user.id),
-    notifications: listNotifications(user.id),
-    unavailableItemIds: listUnavailableItems(),
-    dineInBills: listDineInBills(user.id),
-    disputes: listDisputes(user.id),
+    orders,
+    reservations,
+    bookmarks,
+    notifications,
+    unavailableItemIds,
+    dineInBills,
+    disputes,
   };
 }
 
@@ -193,32 +205,49 @@ export async function GET(
   }
 
   if (routePath === "/webroutes/kitchen/tickets") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to open the counter.", 401);
     const rawOutletId = searchParams.get("outletId");
     const outletId = rawOutletId === null ? null : Number(rawOutletId);
     if (outletId === null || !Number.isSafeInteger(outletId)) {
       return failed(null, "Provide the outlet to show tickets for.");
     }
-    return NextResponse.json({
-      status: "success",
-      tickets: listDeliveryTickets(outletId),
-      prepTime: prepTimeStats(outletId),
-    });
+    if (!(await isOutletStaff(user.id, outletId))) {
+      return failed(null, "You do not have access to this outlet.", 403);
+    }
+    const [tickets, prepTime] = await Promise.all([
+      listDeliveryTickets(outletId),
+      prepTimeStats(outletId),
+    ]);
+    return NextResponse.json({ status: "success", tickets, prepTime });
   }
 
   if (routePath === "/webroutes/account/me") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) {
       // A signed-out browser still needs the live 86 list to render an honest menu.
       return NextResponse.json({
         status: "success",
         user: null,
         guest: true,
-        unavailableItemIds: listUnavailableItems(),
+        unavailableItemIds: await listUnavailableItems(),
       });
     }
-    return NextResponse.json(accountPayload(user));
+    return NextResponse.json(await accountPayload(user));
+  }
+
+  if (routePath === "/webroutes/ops/disputes") {
+    const user = await currentUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { status: "error", message: "Sign in to see the claims queue." },
+        { status: 401 }
+      );
+    }
+    if (!(await isAnyOutletStaff(user.id))) {
+      return failed(null, "You do not have access to this outlet.", 403);
+    }
+    return NextResponse.json({ status: "success", queue: await listDisputeQueue(user.id) });
   }
 
   if (routePath === "/webroutes/menu/availability") {
@@ -229,15 +258,15 @@ export async function GET(
       status: "success",
       unavailableItemIds:
         outletId !== null && Number.isSafeInteger(outletId)
-          ? listUnavailableItems(outletId)
-          : listUnavailableItems(),
+          ? await listUnavailableItems(outletId)
+          : await listUnavailableItems(),
     });
   }
 
   if (routePath === "/webroutes/pos/state") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to sync this terminal.", 401);
-    return NextResponse.json({ status: "success", ...loadPosState(user.id) });
+    return NextResponse.json({ status: "success", ...(await loadPosState(user.id)) });
   }
 
   return NextResponse.json({ status: "error", message: "Endpoint not implemented." }, { status: 404 });
@@ -252,16 +281,16 @@ export async function POST(
 
   // The sign-out routes carry no payload, so they run before a JSON body is required.
   if (routePath === "/webroutes/auth/logout") {
-    destroySession(request.cookies.get(SESSION_COOKIE)?.value);
+    await destroySession(request.cookies.get(SESSION_COOKIE)?.value);
     const response = NextResponse.json({ status: "success", user: null });
     response.cookies.delete(SESSION_COOKIE);
     return response;
   }
 
   if (routePath === "/webroutes/auth/logout-everywhere") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in first.", 401);
-    revokeAllSessions(user.id);
+    await revokeAllSessions(user.id);
     const response = NextResponse.json({ status: "success", user: null });
     response.cookies.delete(SESSION_COOKIE);
     return response;
@@ -280,9 +309,9 @@ export async function POST(
         routePath === "/webroutes/auth/register"
           ? await registerUser(body)
           : await verifyCredentials(body, clientKey(request));
-      const { token, expiresAt } = createSession(user.id);
+      const { token, expiresAt } = await createSession(user.id);
       return withSessionCookie(
-        NextResponse.json(accountPayload(user), { status: 201 }),
+        NextResponse.json(await accountPayload(user), { status: 201 }),
         token,
         expiresAt
       );
@@ -292,7 +321,7 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/auth/forgot") {
-    const reset = createPasswordReset(body);
+    const reset = await createPasswordReset(body);
     if (reset) {
       // No mail provider here. A real deployment emails this instead of logging it.
       console.info(
@@ -319,23 +348,23 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/account/membership") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to change membership.", 401);
     const isGoldMember = (body as Record<string, unknown>)?.isGoldMember;
     if (typeof isGoldMember !== "boolean") {
       return failed(null, "Membership value must be true or false.");
     }
-    setGoldMembership(user.id, isGoldMember);
-    return NextResponse.json(accountPayload({ ...user, isGoldMember }));
+    await setGoldMembership(user.id, isGoldMember);
+    return NextResponse.json(await accountPayload({ ...user, isGoldMember }));
   }
 
   if (routePath === "/webroutes/account/bookmarks") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to save bookmarks.", 401);
     try {
       return NextResponse.json({
         status: "success",
-        bookmarks: setBookmarks(user.id, (body as Record<string, unknown>)?.bookmarks),
+        bookmarks: await setBookmarks(user.id, (body as Record<string, unknown>)?.bookmarks),
       });
     } catch (error) {
       return failed(error, "Could not save bookmarks.");
@@ -343,49 +372,49 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/order/stage") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to update an order.", 401);
     const { orderId, stage } = (body ?? {}) as Record<string, unknown>;
     if (typeof orderId !== "string" || !ORDER_STAGES.some((candidate) => candidate === stage)) {
       return failed(null, "Provide an order and a known stage.");
     }
     try {
-      advanceOrderStage(user.id, orderId, stage as string);
-      return NextResponse.json({ status: "success", orders: listOrders(user.id) });
+      await advanceOrderStage(user.id, orderId, stage as string);
+      return NextResponse.json({ status: "success", orders: await listOrders(user.id) });
     } catch (error) {
       return failed(error, "Could not update that order.");
     }
   }
 
   if (routePath === "/webroutes/order/cancel") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to cancel an order.", 401);
     const orderId = (body as Record<string, unknown>)?.orderId;
     if (typeof orderId !== "string") return failed(null, "Provide an order to cancel.");
     try {
-      deleteOrder(user.id, orderId);
-      return NextResponse.json({ status: "success", orders: listOrders(user.id) });
+      await deleteOrder(user.id, orderId);
+      return NextResponse.json({ status: "success", orders: await listOrders(user.id) });
     } catch (error) {
       return failed(error, "Could not cancel that order.");
     }
   }
 
   if (routePath === "/webroutes/pos/sync") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to sync this terminal.", 401);
     try {
-      return NextResponse.json({ status: "success", ...syncPosState(user.id, body) });
+      return NextResponse.json({ status: "success", ...(await syncPosState(user.id, body)) });
     } catch (error) {
       return failed(error, "Could not sync this terminal.");
     }
   }
 
   if (routePath === "/webroutes/menu/availability") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     // Taking a dish off affects every customer of that outlet, so it needs an operator.
     if (!user) return failed(null, "Sign in to change what the kitchen is serving.", 401);
     try {
-      const result = setDishAvailability(user.id, body);
+      const result = await setDishAvailability(user.id, body);
       return NextResponse.json({ status: "success", ...result });
     } catch (error) {
       return failed(error, "Could not update that dish.");
@@ -393,35 +422,63 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/account/notifications/read") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to read notifications.", 401);
-    markNotificationsRead(user.id);
-    return NextResponse.json({ status: "success", notifications: listNotifications(user.id) });
+    await markNotificationsRead(user.id);
+    return NextResponse.json({
+      status: "success",
+      notifications: await listNotifications(user.id),
+    });
   }
 
   if (routePath === "/webroutes/account/notifications/clear") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to clear notifications.", 401);
-    clearNotifications(user.id);
+    await clearNotifications(user.id);
     return NextResponse.json({ status: "success", notifications: [] });
   }
 
   if (routePath === "/webroutes/kitchen/ticket") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to work the counter.", 401);
     const { orderId, status } = (body ?? {}) as Record<string, unknown>;
     try {
       return NextResponse.json({
         status: "success",
-        ticket: advanceDeliveryTicket(orderId, status),
+        ticket: await advanceDeliveryTicket(user.id, orderId, status),
       });
     } catch (error) {
       return failed(error, "Could not update that ticket.");
     }
   }
 
+  if (routePath === "/webroutes/ops/dispute/resolve") {
+    const user = await currentUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { status: "error", message: "Sign in to settle a claim." },
+        { status: 401 }
+      );
+    }
+    try {
+      const payload = body as Record<string, unknown>;
+      const dispute = await resolveDispute(user.id, {
+        disputeId: String(payload.disputeId),
+        approve: payload.approve === true,
+        note: typeof payload.note === "string" ? payload.note : undefined,
+      });
+      return NextResponse.json({
+        status: "success",
+        dispute,
+        queue: await listDisputeQueue(user.id),
+      });
+    } catch (error) {
+      return failed(error, "Could not settle that claim.");
+    }
+  }
+
   if (routePath === "/webroutes/account/dispute") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) {
       return NextResponse.json(
         { status: "error", message: "Sign in to raise a claim." },
@@ -430,7 +487,7 @@ export async function POST(
     }
     try {
       const claim = body as Record<string, unknown>;
-      const dispute = fileDispute(user.id, {
+      const dispute = await fileDispute(user.id, {
         orderId: String(claim.orderId),
         reason: String(claim.reason),
         lines: Array.isArray(claim.lines)
@@ -441,7 +498,7 @@ export async function POST(
           : [],
         note: typeof claim.note === "string" ? claim.note : undefined,
       });
-      addNotification(
+      await addNotification(
         user.id,
         "SYSTEM",
         dispute.status === "AUTO_REFUNDED"
@@ -449,24 +506,24 @@ export async function POST(
           : "Your claim is being reviewed",
         dispute.explanation
       );
-      return NextResponse.json({ ...accountPayload(user), dispute }, { status: 201 });
+      return NextResponse.json({ ...(await accountPayload(user)), dispute }, { status: 201 });
     } catch (error) {
       return failed(error, "Could not raise that claim.");
     }
   }
 
   if (routePath === "/webroutes/account/claim-bill") {
-    const user = currentUser(request);
+    const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to add a table bill to your history.", 401);
     try {
-      const bill = claimDineInBill(user.id, body);
-      addNotification(
+      const bill = await claimDineInBill(user.id, body);
+      await addNotification(
         user.id,
         "SYSTEM",
         `Table bill added from ${bill.outletName}`,
         `Table ${bill.tableId} · ₹${bill.grandTotal} · now in your history.`
       );
-      return NextResponse.json({ ...accountPayload(user), bill });
+      return NextResponse.json({ ...(await accountPayload(user)), bill });
     } catch (error) {
       return failed(error, "That code is not valid or has already been used.");
     }
@@ -475,7 +532,7 @@ export async function POST(
   if (routePath === "/webroutes/order/cart") {
     try {
       const validated = validateCheckout(body);
-      assertItemsAvailable(validated.items, listUnavailableItems());
+      assertItemsAvailable(validated.items, await listUnavailableItems());
       const lockToken = issueQuoteLock(validated.items, validated.quote.grandTotal);
       return NextResponse.json({
         status: "success",
@@ -491,11 +548,11 @@ export async function POST(
 
   if (routePath === "/webroutes/order/makeOrder" || routePath === "/webroutes/placeorder") {
     try {
-      const user = currentUser(request);
+      const user = await currentUser(request);
       const idempotencyKey = request.headers.get("idempotency-key");
       if (user) {
         // Replaying the same key returns the original order instead of charging the guest twice.
-        const existing = findOrderByIdempotencyKey(user.id, idempotencyKey);
+        const existing = await findOrderByIdempotencyKey(user.id, idempotencyKey);
         if (existing) {
           return NextResponse.json({ status: "success", order: existing, replayed: true });
         }
@@ -503,7 +560,7 @@ export async function POST(
 
       // Checked here rather than inside the validator, so replaying an old order from
       // history never fails because something sold out after it was delivered.
-      assertItemsAvailable(validateCheckout(body).items, listUnavailableItems());
+      assertItemsAvailable(validateCheckout(body).items, await listUnavailableItems());
 
       const order = createDemoOrder(body);
 
@@ -520,13 +577,13 @@ export async function POST(
       order.quote.totalSavings += order.quote.lockAdjustment;
 
       // The outlet's counter gets the ticket whether or not the customer has an account.
-      createDeliveryTicket(order);
+      await createDeliveryTicket(order);
       if (user) {
-        saveOrder(user.id, order, {
+        await saveOrder(user.id, order, {
           addressId: String((body as Record<string, unknown>).addressId),
           idempotencyKey,
         });
-        addNotification(
+        await addNotification(
           user.id,
           "ORDER",
           `Demo order confirmed at ${order.restaurantName}`,
@@ -547,10 +604,10 @@ export async function POST(
   if (routePath === "/webroutes/user/booking") {
     try {
       const reservation = createValidatedReservation(body);
-      const user = currentUser(request);
+      const user = await currentUser(request);
       if (user) {
-        saveReservation(user.id, reservation);
-        addNotification(
+        await saveReservation(user.id, reservation);
+        await addNotification(
           user.id,
           "RESERVATION",
           `Table confirmed at ${reservation.restaurantName}`,
@@ -575,9 +632,9 @@ export async function POST(
   if (routePath === "/webroutes/reviews/post") {
     try {
       // Verification is decided here from stored history, never taken from the request.
-      const reviewer = currentUser(request);
+      const reviewer = await currentUser(request);
       const resId = Number((body as Record<string, unknown>).resId);
-      const verifiedPurchase = reviewer ? hasVisited(reviewer.id, resId) : false;
+      const verifiedPurchase = reviewer ? await hasVisited(reviewer.id, resId) : false;
 
       const review = createValidatedReview(body, { verifiedPurchase });
       return NextResponse.json(

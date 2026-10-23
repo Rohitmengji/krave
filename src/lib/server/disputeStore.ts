@@ -1,5 +1,7 @@
-import { getDb } from "./db";
+import { one, rows, run, transaction } from "./pg";
 import { listOrders } from "./accountStore";
+import { recordAudit } from "./auditLog";
+import { assertAnyOutletStaff } from "./staff";
 import type { CrystalOrderState } from "@/types/krave";
 
 export const DISPUTE_STATUSES = ["AUTO_REFUNDED", "UNDER_REVIEW", "REFUNDED", "DECLINED"] as const;
@@ -89,22 +91,21 @@ function claimedValue(order: CrystalOrderState, lines: DisputeLine[]): number {
   );
 }
 
-function recentAutoRefunds(userId: string, now: Date): number {
+async function recentAutoRefunds(userId: string, now: Date): Promise<number> {
   const since = new Date(now.getTime() - RECENT_WINDOW_DAYS * 86_400_000).toISOString();
-  const row = getDb()
-    .prepare(
-      `SELECT COUNT(*) AS total FROM disputes
-       WHERE user_id = ? AND status = 'AUTO_REFUNDED' AND filed_at >= ?`
-    )
-    .get(userId, since) as Record<string, unknown>;
-  return Number(row.total);
+  const row = await one<Record<string, unknown>>(
+    `SELECT COUNT(*) AS total FROM disputes
+     WHERE user_id = $1 AND status = 'AUTO_REFUNDED' AND filed_at >= $2`,
+    [userId, since]
+  );
+  return Number(row?.total ?? 0);
 }
 
-export function fileDispute(
+export async function fileDispute(
   userId: string,
   input: { orderId: string; reason: string; lines: DisputeLine[]; note?: string },
   now = new Date()
-): Dispute {
+): Promise<Dispute> {
   const reason = DISPUTE_REASONS.find((candidate) => candidate === input.reason);
   if (!reason) throw new Error("Select a supported reason.");
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
@@ -112,7 +113,8 @@ export function fileDispute(
   }
 
   // Scoped to this user's own orders, so an order ID alone proves nothing.
-  const order = listOrders(userId).find((candidate) => candidate.orderId === input.orderId);
+  const orders = await listOrders(userId);
+  const order = orders.find((candidate) => candidate.orderId === input.orderId);
   if (!order) throw new Error("That order is not in your history.");
   if (order.stage !== "ARRIVED") {
     throw new Error("You can raise this once the order has been delivered.");
@@ -126,7 +128,7 @@ export function fileDispute(
   const refundAmount = claimedValue(order, input.lines);
 
   const tooLarge = refundAmount > AUTO_REFUND_CEILING;
-  const tooMany = recentAutoRefunds(userId, now) >= AUTO_REFUND_RECENT_LIMIT;
+  const tooMany = (await recentAutoRefunds(userId, now)) >= AUTO_REFUND_RECENT_LIMIT;
   const auto = !tooLarge && !tooMany && reason !== "QUALITY";
 
   const explanation = auto
@@ -153,13 +155,11 @@ export function fileDispute(
   };
 
   try {
-    getDb()
-      .prepare(
-        `INSERT INTO disputes (id, user_id, order_id, reason, status, refund_amount,
-           assessed_amount, explanation, filed_at, review_due_at, note, resolved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
+    await run(
+      `INSERT INTO disputes (id, user_id, order_id, reason, status, refund_amount,
+         assessed_amount, explanation, filed_at, review_due_at, note, resolved_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
         dispute.id,
         userId,
         dispute.orderId,
@@ -171,14 +171,15 @@ export function fileDispute(
         dispute.filedAt,
         dispute.reviewDueAt,
         typeof input.note === "string" ? input.note.slice(0, 600) : "",
-        dispute.resolvedAt
-      );
+        dispute.resolvedAt,
+      ]
+    );
   } catch {
     // One claim per order: the UNIQUE index turns a double submit into this path.
     throw new Error("You have already raised a claim for this order.");
   }
 
-  recordAudit(
+  await recordAudit(
     userId,
     auto ? "DISPUTE_AUTO_REFUNDED" : "DISPUTE_FILED",
     dispute.id,
@@ -189,12 +190,22 @@ export function fileDispute(
   return dispute;
 }
 
-/** Claims waiting on a human, oldest first so the SLA is worked in order. */
-export function listDisputeQueue(): Dispute[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM disputes WHERE status = 'UNDER_REVIEW' ORDER BY filed_at LIMIT 50")
-    .all() as Record<string, unknown>[];
-  return rows.map(toDispute);
+/**
+ * Claims waiting on a human, oldest first so the SLA is worked in order.
+ *
+ * A viewer never sees their own claim here. `resolveDispute` refuses self-approval
+ * anyway, but offering a button that is guaranteed to fail is its own kind of lie.
+ */
+export async function listDisputeQueue(viewerId: string): Promise<Dispute[]> {
+  await assertAnyOutletStaff(viewerId);
+
+  const found = await rows<Record<string, unknown>>(
+    `SELECT * FROM disputes
+     WHERE status = 'UNDER_REVIEW' AND user_id <> $1
+     ORDER BY filed_at LIMIT 50`,
+    [viewerId]
+  );
+  return found.map(toDispute);
 }
 
 /**
@@ -203,70 +214,77 @@ export function listDisputeQueue(): Dispute[] {
  * Deliberately refuses to let the claimant decide their own case, and refuses a
  * second decision, so an approval cannot be replayed into repeated refunds.
  */
-export function resolveDispute(
+export async function resolveDispute(
   resolverId: string,
   input: { disputeId: string; approve: boolean; note?: string },
   now = new Date()
-): Dispute {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM disputes WHERE id = ?")
-    .get(input.disputeId) as Record<string, unknown> | undefined;
+): Promise<Dispute> {
+  // Checked before any lookup, so a non-staff caller cannot probe which claim ids exist.
+  await assertAnyOutletStaff(resolverId);
 
-  if (!row) throw new Error("That claim no longer exists.");
-  if (String(row.user_id) === resolverId) {
-    throw new Error("You cannot decide your own claim.");
-  }
-  if (String(row.status) !== "UNDER_REVIEW") {
-    throw new Error("That claim has already been settled.");
-  }
+  const settled = await transaction(async (client) => {
+    // Locked for the rest of the transaction: the status is read here and written below,
+    // and two reviewers must not both see UNDER_REVIEW and both pay out.
+    const found = await client.query("SELECT * FROM disputes WHERE id = $1 FOR UPDATE", [
+      input.disputeId,
+    ]);
+    const row = found.rows[0] as Record<string, unknown> | undefined;
 
-  const assessed = Number(row.assessed_amount);
-  const status: DisputeStatus = input.approve ? "REFUNDED" : "DECLINED";
-  const refundAmount = input.approve ? assessed : 0;
-  const note = typeof input.note === "string" ? input.note.slice(0, 600) : "";
+    if (!row) throw new Error("That claim no longer exists.");
 
-  // Guarded on the status so two reviewers racing cannot both pay it out.
-  const result = db
-    .prepare(
+    if (String(row.user_id) === resolverId) {
+      throw new Error("You cannot decide your own claim.");
+    }
+    if (String(row.status) !== "UNDER_REVIEW") {
+      throw new Error("That claim has already been settled.");
+    }
+
+    const assessed = Number(row.assessed_amount);
+    const status: DisputeStatus = input.approve ? "REFUNDED" : "DECLINED";
+    const refundAmount = input.approve ? assessed : 0;
+    const note = typeof input.note === "string" ? input.note.slice(0, 600) : "";
+
+    const updated = await client.query(
       `UPDATE disputes
-         SET status = ?, refund_amount = ?, explanation = ?, resolved_at = ?,
-             resolved_by = ?, resolution_note = ?
-       WHERE id = ? AND status = 'UNDER_REVIEW'`
-    )
-    .run(
-      status,
-      refundAmount,
-      input.approve
-        ? `Reviewed and refunded ₹${assessed}.`
-        : "Reviewed and not refunded.",
-      now.toISOString(),
-      resolverId,
-      note,
-      input.disputeId
+         SET status = $1, refund_amount = $2, explanation = $3, resolved_at = $4,
+             resolved_by = $5, resolution_note = $6
+       WHERE id = $7 AND status = 'UNDER_REVIEW'
+       RETURNING *`,
+      [
+        status,
+        refundAmount,
+        input.approve ? `Reviewed and refunded ₹${assessed}.` : "Reviewed and not refunded.",
+        now.toISOString(),
+        resolverId,
+        note,
+        input.disputeId,
+      ]
     );
 
-  if (result.changes === 0) throw new Error("That claim has already been settled.");
+    if (updated.rowCount === 0) throw new Error("That claim has already been settled.");
 
-  recordAudit(
-    resolverId,
-    input.approve ? "DISPUTE_REFUNDED" : "DISPUTE_DECLINED",
-    input.disputeId,
-    `₹${refundAmount}${note ? ` · ${note}` : ""}`,
-    now
-  );
+    // Inside the transaction, so a settled claim can never lack its audit entry.
+    await client.query(
+      "INSERT INTO audit_log (actor_id, action, subject, detail, at) VALUES ($1, $2, $3, $4, $5)",
+      [
+        resolverId,
+        input.approve ? "DISPUTE_REFUNDED" : "DISPUTE_DECLINED",
+        input.disputeId,
+        `₹${refundAmount}${note ? ` · ${note}` : ""}`.slice(0, 600),
+        now.toISOString(),
+      ]
+    );
 
-  return toDispute(
-    db.prepare("SELECT * FROM disputes WHERE id = ?").get(input.disputeId) as Record<
-      string,
-      unknown
-    >
-  );
+    return updated.rows[0] as Record<string, unknown>;
+  });
+
+  return toDispute(settled);
 }
 
-export function listDisputes(userId: string): Dispute[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM disputes WHERE user_id = ? ORDER BY filed_at DESC LIMIT 30")
-    .all(userId) as Record<string, unknown>[];
-  return rows.map(toDispute);
+export async function listDisputes(userId: string): Promise<Dispute[]> {
+  const found = await rows<Record<string, unknown>>(
+    "SELECT * FROM disputes WHERE user_id = $1 ORDER BY filed_at DESC LIMIT 30",
+    [userId]
+  );
+  return found.map(toDispute);
 }

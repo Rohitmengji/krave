@@ -49,10 +49,24 @@ export default tseslint.config(
     },
   },
   {
+    // Every store call is async against Postgres. An unawaited one is a write that races
+    // the next statement, or an assertion that never runs; this rule makes both an error.
+    files: ["src/lib/server/**/*.ts", "src/app/api/**/*.ts", "src/tests/**/*.ts"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      // `if (!user)` on an unawaited lookup is always false: a Promise is truthy, so an
+      // auth guard written that way lets everyone through.
+      "@typescript-eslint/no-misused-promises": "error",
+    },
+  },
+  {
     // Developer scripts run under Node and are expected to print.
     files: ["scripts/**/*.mjs"],
     languageOptions: {
-      globals: { console: "readonly", process: "readonly" },
+      globals: { console: "readonly", process: "readonly", URL: "readonly" },
     },
     rules: {
       "no-console": "off",

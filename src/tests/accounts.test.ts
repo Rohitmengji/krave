@@ -1,6 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DatabaseSync } from "node:sqlite";
-import { useTestDb } from "@/lib/server/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  hasTestDatabase,
+  resetTestDatabase,
+  startTestDatabase,
+  stopTestDatabase,
+} from "./support/testDb";
+import { one, run } from "@/lib/server/pg";
 import {
   createPasswordReset,
   createSession,
@@ -57,8 +62,12 @@ import {
   AUTO_REFUND_RECENT_LIMIT,
   DISPUTE_WINDOW_HOURS,
   fileDispute,
+  listDisputeQueue,
   listDisputes,
+  resolveDispute,
 } from "@/lib/server/disputeStore";
+import { listAudit } from "@/lib/server/auditLog";
+import { grantOutletStaff, isOutletStaff } from "@/lib/server/staff";
 import {
   listUnavailableItems,
   pruneUnknownAvailability,
@@ -88,15 +97,20 @@ const CHECKOUT = {
   riderTip: 20,
 };
 
-let db: DatabaseSync;
+// Needs a real Postgres: the stores rely on advisory locks, FOR UPDATE and statement
+// triggers, none of which SQLite has. Skipped when TEST_DATABASE_URL is unset.
+describe.skipIf(!hasTestDatabase)("server", () => {
 
-beforeEach(() => {
-  db = new DatabaseSync(":memory:");
-  useTestDb(db);
+beforeAll(async () => {
+  await startTestDatabase();
 });
 
-afterEach(() => {
-  db.close();
+afterAll(async () => {
+  await stopTestDatabase();
+});
+
+beforeEach(async () => {
+  await resetTestDatabase();
 });
 
 describe("Accounts and durable orders", () => {
@@ -113,7 +127,9 @@ describe("Accounts and durable orders", () => {
 
   it("never stores the password and only accepts the correct one", async () => {
     const user = await registerUser(CREDENTIALS);
-    const row = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id) as Record<string, unknown>;
+    const row = (await one<Record<string, unknown>>("SELECT * FROM users WHERE id = $1", [
+      user.id,
+    ]))!;
 
     expect(String(row.password_hash)).not.toContain(CREDENTIALS.password);
     expect(String(row.password_salt).length).toBeGreaterThan(16);
@@ -134,35 +150,35 @@ describe("Accounts and durable orders", () => {
 
   it("stores session tokens hashed and stops honouring them once destroyed", async () => {
     const user = await registerUser(CREDENTIALS);
-    const { token } = createSession(user.id);
+    const { token } = await createSession(user.id);
 
-    const stored = db.prepare("SELECT token_hash FROM sessions").get() as Record<string, unknown>;
+    const stored = (await one<Record<string, unknown>>("SELECT token_hash FROM sessions"))!;
     expect(String(stored.token_hash)).not.toBe(token);
 
-    expect(getUserForToken(token)?.id).toBe(user.id);
-    expect(getUserForToken("not-a-token")).toBeNull();
-    expect(getUserForToken(undefined)).toBeNull();
+    expect((await getUserForToken(token))?.id).toBe(user.id);
+    expect(await getUserForToken("not-a-token")).toBeNull();
+    expect(await getUserForToken(undefined)).toBeNull();
 
-    destroySession(token);
-    expect(getUserForToken(token)).toBeNull();
+    await destroySession(token);
+    expect(await getUserForToken(token)).toBeNull();
   });
 
   it("rejects an expired session", async () => {
     const user = await registerUser(CREDENTIALS);
-    const { token } = createSession(user.id);
-    db.prepare("UPDATE sessions SET expires_at = ?").run("2000-01-01T00:00:00.000Z");
-    expect(getUserForToken(token)).toBeNull();
+    const { token } = await createSession(user.id);
+    await run("UPDATE sessions SET expires_at = $1", ["2000-01-01T00:00:00.000Z"]);
+    expect(await getUserForToken(token)).toBeNull();
   });
 
   it("rebuilds a stored order from the catalog rather than from stored totals", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: "key-1" });
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: "key-1" });
 
     // Tamper with the stored total the way a compromised row would.
-    db.prepare("UPDATE orders SET grand_total = 1 WHERE id = ?").run(order.orderId);
+    await run("UPDATE orders SET grand_total = 1 WHERE id = $1", [order.orderId]);
 
-    const [restored] = listOrders(user.id);
+    const [restored] = await listOrders(user.id);
     expect(restored.orderId).toBe(order.orderId);
     expect(restored.quote.grandTotal).toBe(order.quote.grandTotal);
     expect(restored.quote.grandTotal).not.toBe(1);
@@ -172,47 +188,45 @@ describe("Accounts and durable orders", () => {
   it("replays the same idempotency key instead of writing a second order", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: "key-1" });
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: "key-1" });
 
-    expect(findOrderByIdempotencyKey(user.id, "key-1")?.orderId).toBe(order.orderId);
-    expect(findOrderByIdempotencyKey(user.id, "key-2")).toBeNull();
-    expect(findOrderByIdempotencyKey(user.id, null)).toBeNull();
+    expect((await findOrderByIdempotencyKey(user.id, "key-1"))?.orderId).toBe(order.orderId);
+    expect(await findOrderByIdempotencyKey(user.id, "key-2")).toBeNull();
+    expect(await findOrderByIdempotencyKey(user.id, null)).toBeNull();
 
-    expect(() =>
-      saveOrder(user.id, createDemoOrder(CHECKOUT), {
+    await expect(saveOrder(user.id, createDemoOrder(CHECKOUT), {
         addressId: CHECKOUT.addressId,
         idempotencyKey: "key-1",
-      })
-    ).toThrow();
-    expect(listOrders(user.id)).toHaveLength(1);
+      })).rejects.toThrow();
+    expect(await listOrders(user.id)).toHaveLength(1);
   });
 
   it("keeps one account's orders out of another's", async () => {
     const owner = await registerUser(CREDENTIALS);
     const other = await registerUser({ email: "other@krave.test", password: CREDENTIALS.password });
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(owner.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(owner.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
 
-    expect(listOrders(other.id)).toHaveLength(0);
-    expect(() => deleteOrder(other.id, order.orderId)).toThrow();
-    expect(() => advanceOrderStage(other.id, order.orderId, "KITCHEN_PREPARING")).toThrow();
-    expect(listOrders(owner.id)).toHaveLength(1);
+    expect(await listOrders(other.id)).toHaveLength(0);
+    await expect(deleteOrder(other.id, order.orderId)).rejects.toThrow();
+    await expect(advanceOrderStage(other.id, order.orderId, "KITCHEN_PREPARING")).rejects.toThrow();
+    expect(await listOrders(owner.id)).toHaveLength(1);
   });
 
   it("cancels only before the kitchen stage, the same rule the browser uses", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
 
-    advanceOrderStage(user.id, order.orderId, "KITCHEN_PREPARING");
-    expect(listOrders(user.id)[0].stage).toBe("KITCHEN_PREPARING");
-    expect(() => deleteOrder(user.id, order.orderId)).toThrow();
+    await advanceOrderStage(user.id, order.orderId, "KITCHEN_PREPARING");
+    expect((await listOrders(user.id))[0].stage).toBe("KITCHEN_PREPARING");
+    await expect(deleteOrder(user.id, order.orderId)).rejects.toThrow();
 
-    advanceOrderStage(user.id, order.orderId, "ORDER_CONFIRMED");
-    deleteOrder(user.id, order.orderId);
-    expect(listOrders(user.id)).toHaveLength(0);
+    await advanceOrderStage(user.id, order.orderId, "ORDER_CONFIRMED");
+    await deleteOrder(user.id, order.orderId);
+    expect(await listOrders(user.id)).toHaveLength(0);
     // Lines are removed with the order rather than left behind.
-    expect(db.prepare("SELECT COUNT(*) AS n FROM order_lines").get()).toMatchObject({ n: 0 });
+    expect(await one("SELECT COUNT(*)::int AS n FROM order_lines")).toMatchObject({ n: 0 });
   });
 
   it("stores reservations and revalidates them against the catalog on read", async () => {
@@ -225,30 +239,33 @@ describe("Accounts and durable orders", () => {
       guestName: "Rohit Mengji",
       guestPhone: "+91 98765 43210",
     });
-    saveReservation(user.id, reservation);
+    await saveReservation(user.id, reservation);
 
-    const [restored] = listReservations(user.id);
+    const [restored] = await listReservations(user.id);
     expect(restored.bookingId).toBe(reservation.bookingId);
     expect(restored.guests).toBe(2);
 
-    db.prepare("UPDATE reservations SET time_slot = ? WHERE id = ?").run("03:00 AM", reservation.bookingId);
-    expect(listReservations(user.id)).toHaveLength(0);
+    await run("UPDATE reservations SET time_slot = $1 WHERE id = $2", [
+      "03:00 AM",
+      reservation.bookingId,
+    ]);
+    expect(await listReservations(user.id)).toHaveLength(0);
   });
 
   it("keeps bookmarks to known restaurants and replaces the whole set", async () => {
     const user = await registerUser(CREDENTIALS);
     const known = RESTAURANTS_DATA[0].resId;
 
-    expect(setBookmarks(user.id, [known, known, 404404, "nope"])).toEqual([known]);
-    expect(listBookmarks(user.id)).toEqual([known]);
-    expect(setBookmarks(user.id, [])).toEqual([]);
-    expect(listBookmarks(user.id)).toEqual([]);
-    expect(() => setBookmarks(user.id, "all")).toThrow();
+    expect(await setBookmarks(user.id, [known, known, 404404, "nope"])).toEqual([known]);
+    expect(await listBookmarks(user.id)).toEqual([known]);
+    expect(await setBookmarks(user.id, [])).toEqual([]);
+    expect(await listBookmarks(user.id)).toEqual([]);
+    await expect(setBookmarks(user.id, "all")).rejects.toThrow();
   });
 
   it("persists a membership change", async () => {
     const user = await registerUser(CREDENTIALS);
-    setGoldMembership(user.id, true);
+    await setGoldMembership(user.id, true);
     await expect(verifyCredentials(CREDENTIALS)).resolves.toMatchObject({ isGoldMember: true });
   });
 
@@ -297,7 +314,8 @@ describe("Accounts and durable orders", () => {
     await expect(verifyCredentials(CREDENTIALS, "5.5.5.5")).resolves.toMatchObject({
       email: "chef@krave.test",
     });
-  });
+    // Reaching the client ceiling takes one real sign-in per attempt, each a few round trips.
+  }, 180_000);
 
   it("clears the failure streak after a correct sign-in", async () => {
     await registerUser(CREDENTIALS);
@@ -317,18 +335,20 @@ describe("Accounts and durable orders", () => {
 
   it("resets a password with a single-use token and signs every device out", async () => {
     const user = await registerUser(CREDENTIALS);
-    const { token: sessionToken } = createSession(user.id);
-    expect(getUserForToken(sessionToken)?.id).toBe(user.id);
+    const { token: sessionToken } = await createSession(user.id);
+    expect((await getUserForToken(sessionToken))?.id).toBe(user.id);
 
-    const reset = createPasswordReset({ email: CREDENTIALS.email })!;
+    const reset = (await createPasswordReset({ email: CREDENTIALS.email }))!;
     expect(reset.token.length).toBeGreaterThan(20);
     // The raw token is never stored.
-    const stored = db.prepare("SELECT token_hash FROM password_resets").get() as Record<string, unknown>;
+    const stored = (await one<Record<string, unknown>>(
+      "SELECT token_hash FROM password_resets"
+    ))!;
     expect(String(stored.token_hash)).not.toBe(reset.token);
 
     await resetPassword(reset.token, "a-brand-new-password");
 
-    expect(getUserForToken(sessionToken)).toBeNull();
+    expect(await getUserForToken(sessionToken)).toBeNull();
     await expect(verifyCredentials(CREDENTIALS)).rejects.toThrow();
     await expect(
       verifyCredentials({ email: CREDENTIALS.email, password: "a-brand-new-password" })
@@ -339,18 +359,18 @@ describe("Accounts and durable orders", () => {
 
   it("refuses an expired, unknown or weak reset", async () => {
     await registerUser(CREDENTIALS);
-    const reset = createPasswordReset({ email: CREDENTIALS.email })!;
+    const reset = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
     await expect(resetPassword(reset.token, "short")).rejects.toThrow();
     await expect(resetPassword("not-a-real-token-value", "a-brand-new-password")).rejects.toThrow();
 
-    db.prepare("UPDATE password_resets SET expires_at = ?").run("2000-01-01T00:00:00.000Z");
+    await run("UPDATE password_resets SET expires_at = $1", ["2000-01-01T00:00:00.000Z"]);
     await expect(resetPassword(reset.token, "a-brand-new-password")).rejects.toThrow(/expired/i);
   });
 
-  it("does not reveal whether an email has an account", () => {
-    expect(createPasswordReset({ email: "ghost@krave.test" })).toBeNull();
-    expect(createPasswordReset({ email: "not-an-email" })).toBeNull();
+  it("does not reveal whether an email has an account", async () => {
+    expect(await createPasswordReset({ email: "ghost@krave.test" })).toBeNull();
+    expect(await createPasswordReset({ email: "not-an-email" })).toBeNull();
   });
 
   it("lets a locked-out user back in after completing a reset", async () => {
@@ -362,7 +382,7 @@ describe("Accounts and durable orders", () => {
     }
     await expect(verifyCredentials(CREDENTIALS, "4.4.4.4")).rejects.toThrow(/too many/i);
 
-    const reset = createPasswordReset({ email: CREDENTIALS.email })!;
+    const reset = (await createPasswordReset({ email: CREDENTIALS.email }))!;
     await resetPassword(reset.token, "a-brand-new-password", "4.4.4.4");
 
     // Both the account lockout and the requesting client's lockout are lifted.
@@ -373,12 +393,12 @@ describe("Accounts and durable orders", () => {
 
   it("signs out every device at once", async () => {
     const user = await registerUser(CREDENTIALS);
-    const first = createSession(user.id);
-    const second = createSession(user.id);
+    const first = await createSession(user.id);
+    const second = await createSession(user.id);
 
-    revokeAllSessions(user.id);
-    expect(getUserForToken(first.token)).toBeNull();
-    expect(getUserForToken(second.token)).toBeNull();
+    await revokeAllSessions(user.id);
+    expect(await getUserForToken(first.token)).toBeNull();
+    expect(await getUserForToken(second.token)).toBeNull();
   });
 });
 
@@ -406,7 +426,7 @@ describe("Dine-in terminal sync", () => {
     const shift = openShift({ outletId: OUTLET_ID, openedBy: "Meera", openingCash: 2000 });
     const session = firedTable();
 
-    const result = syncPosState(user.id, { sessions: [session], shift });
+    const result = await syncPosState(user.id, { sessions: [session], shift });
     expect(result.rejected).toEqual([]);
     expect(result.sessions).toHaveLength(1);
     expect(result.shift?.shiftId).toBe(shift.shiftId);
@@ -418,7 +438,7 @@ describe("Dine-in terminal sync", () => {
     expect(stored.lines[0].kotNumber).toBe(1);
     expect(calculatePosBill(stored).grandTotal).toBe(calculatePosBill(session).grandTotal);
 
-    expect(loadPosState(user.id).sessions).toHaveLength(1);
+    expect((await loadPosState(user.id)).sessions).toHaveLength(1);
   });
 
   it("reprices catalog dishes from the catalog instead of trusting the terminal", async () => {
@@ -430,7 +450,7 @@ describe("Dine-in terminal sync", () => {
       lines: session.lines.map((line) => ({ ...line, unitPrice: 1 })),
     };
 
-    const [stored] = syncPosState(user.id, { sessions: [tampered], shift: null }).sessions;
+    const [stored] = (await syncPosState(user.id, { sessions: [tampered], shift: null })).sessions;
     expect(stored.lines[0].unitPrice).toBe(MENU[0].price);
     expect(calculatePosBill(stored).grandTotal).toBe(calculatePosBill(session).grandTotal);
   });
@@ -449,14 +469,14 @@ describe("Dine-in terminal sync", () => {
       )
     ).session;
 
-    const [stored] = syncPosState(user.id, { sessions: [custom], shift: null }).sessions;
+    const [stored] = (await syncPosState(user.id, { sessions: [custom], shift: null })).sessions;
     expect(stored.lines[0].unitPrice).toBe(180);
 
     const absurd = {
       ...custom,
       lines: custom.lines.map((line) => ({ ...line, unitPrice: 99999999 })),
     };
-    const result = syncPosState(user.id, { sessions: [absurd], shift: null });
+    const result = await syncPosState(user.id, { sessions: [absurd], shift: null });
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0].sessionId).toBe(custom.sessionId);
     // An unusable price is permanent, not something reloading would fix.
@@ -468,7 +488,7 @@ describe("Dine-in terminal sync", () => {
     const settled = settleSession(firedTable(), "CASH", 100000);
     const expected = calculatePosBill(settled).grandTotal;
 
-    const result = syncPosState(user.id, { sessions: [settled], shift: null });
+    const result = await syncPosState(user.id, { sessions: [settled], shift: null });
     expect(result.settledTotal).toBe(expected);
     expect(result.sessions[0].payment?.method).toBe("CASH");
   });
@@ -476,18 +496,18 @@ describe("Dine-in terminal sync", () => {
   it("keeps one account's floor out of another's", async () => {
     const owner = await registerUser(CREDENTIALS);
     const other = await registerUser({ email: "other@krave.test", password: CREDENTIALS.password });
-    syncPosState(owner.id, { sessions: [firedTable()], shift: null });
+    await syncPosState(owner.id, { sessions: [firedTable()], shift: null });
 
-    expect(loadPosState(other.id).sessions).toHaveLength(0);
-    expect(loadPosState(owner.id).sessions).toHaveLength(1);
+    expect((await loadPosState(other.id)).sessions).toHaveLength(0);
+    expect((await loadPosState(owner.id)).sessions).toHaveLength(1);
   });
 
   it("replaces the stored floor on each sync instead of duplicating it", async () => {
     const user = await registerUser(CREDENTIALS);
     const session = firedTable();
 
-    syncPosState(user.id, { sessions: [session], shift: null });
-    const second = syncPosState(user.id, { sessions: [session], shift: null });
+    await syncPosState(user.id, { sessions: [session], shift: null });
+    const second = await syncPosState(user.id, { sessions: [session], shift: null });
 
     expect(second.sessions).toHaveLength(1);
     expect(second.sessions[0].lines).toHaveLength(1);
@@ -497,7 +517,7 @@ describe("Dine-in terminal sync", () => {
   it("drops a malformed table rather than failing the whole sync", async () => {
     const user = await registerUser(CREDENTIALS);
     const good = firedTable();
-    const result = syncPosState(user.id, {
+    const result = await syncPosState(user.id, {
       sessions: [good, { sessionId: "not-a-session" }, null],
       shift: null,
     });
@@ -510,19 +530,19 @@ describe("Dine-in terminal sync", () => {
     const session = firedTable();
 
     // Terminal A syncs and learns the new revision.
-    const first = syncPosState(user.id, { sessions: [session], shift: null });
+    const first = await syncPosState(user.id, { sessions: [session], shift: null });
     const revisionA = first.sessions[0].revision;
     expect(revisionA).toBe(1);
 
     // Terminal A adds a dish and syncs again, which moves the revision on.
     const advanced = addItemToSession({ ...session, revision: revisionA }, MENU[1], 1);
-    const second = syncPosState(user.id, { sessions: [advanced], shift: null });
+    const second = await syncPosState(user.id, { sessions: [advanced], shift: null });
     expect(second.conflicts).toEqual([]);
     expect(second.sessions[0].revision).toBe(2);
 
     // Terminal B still believes it is on the old revision; its write must be refused.
     const stale = addItemToSession({ ...session, revision: revisionA }, MENU[2], 5);
-    const third = syncPosState(user.id, { sessions: [stale], shift: null });
+    const third = await syncPosState(user.id, { sessions: [stale], shift: null });
     expect(third.conflicts).toHaveLength(1);
     expect(third.conflicts[0].reason).toMatch(/another terminal/i);
     // A stale edit is recoverable by reloading, so it is not a hard rejection.
@@ -537,81 +557,108 @@ describe("Dine-in terminal sync", () => {
 
 describe("Outlet-wide availability", () => {
   const DISH_ID = "ctl_820099425";
+  const DISH_OUTLET = 19677790;
+
+  /** Registers an account and makes it staff at the outlet that owns DISH_ID. */
+  async function operator(email = CREDENTIALS.email) {
+    const user = await registerUser({ ...CREDENTIALS, email });
+    await grantOutletStaff(user.id, user.id, DISH_OUTLET);
+    return user;
+  }
+
+  it("refuses a signed-in customer who is not staff at that outlet", async () => {
+    const customer = await registerUser(CREDENTIALS);
+    await expect(setDishAvailability(customer.id, { itemId: DISH_ID, unavailable: true })).rejects.toThrow(/do not have access/i);
+    expect(await listUnavailableItems()).toEqual([]);
+
+    // Staff at a different outlet is still not staff here.
+    await grantOutletStaff(customer.id, customer.id, 18238278);
+    expect(await isOutletStaff(customer.id, DISH_OUTLET)).toBe(false);
+    await expect(setDishAvailability(customer.id, { itemId: DISH_ID, unavailable: true })).rejects.toThrow(/do not have access/i);
+  });
 
   it("takes a dish off for the whole outlet, not just the marking device", async () => {
-    const staff = await registerUser(CREDENTIALS);
-    expect(listUnavailableItems()).toEqual([]);
+    const staff = await operator();
+    expect(await listUnavailableItems()).toEqual([]);
 
-    const marked = setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
+    const marked = await setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
     expect(marked.unavailableItemIds).toContain(DISH_ID);
 
     // A second operator, and any anonymous reader, sees the same list.
-    const other = await registerUser({ email: "second@krave.test", password: CREDENTIALS.password });
-    expect(listUnavailableItems()).toContain(DISH_ID);
+    const other = await operator("second@krave.test");
+    expect(await listUnavailableItems()).toContain(DISH_ID);
 
-    setDishAvailability(other.id, { itemId: DISH_ID, unavailable: false });
-    expect(listUnavailableItems()).toEqual([]);
+    await setDishAvailability(other.id, { itemId: DISH_ID, unavailable: false });
+    expect(await listUnavailableItems()).toEqual([]);
   });
 
   it("derives the outlet from the catalog rather than the caller", async () => {
-    const staff = await registerUser(CREDENTIALS);
-    setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
+    const staff = await operator();
+    await setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
 
     const owningOutlet = RESTAURANTS_DATA.find((restaurant) =>
       restaurant.menus.some((menu) =>
         menu.categories.some((category) => category.items.some((item) => item.id === DISH_ID))
       )
     )!;
-    expect(listUnavailableItems(owningOutlet.resId)).toEqual([DISH_ID]);
+    expect(await listUnavailableItems(owningOutlet.resId)).toEqual([DISH_ID]);
 
     const otherOutlet = RESTAURANTS_DATA.find(
       (restaurant) => restaurant.resId !== owningOutlet.resId
     )!;
-    expect(listUnavailableItems(otherOutlet.resId)).toEqual([]);
+    expect(await listUnavailableItems(otherOutlet.resId)).toEqual([]);
   });
 
   it("refuses an unknown dish or a missing flag", async () => {
-    const staff = await registerUser(CREDENTIALS);
-    expect(() => setDishAvailability(staff.id, { itemId: "ghost", unavailable: true })).toThrow();
-    expect(() => setDishAvailability(staff.id, { itemId: DISH_ID })).toThrow();
-    expect(() =>
-      setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: "yes" })
-    ).toThrow();
+    const staff = await operator();
+    await expect(setDishAvailability(staff.id, { itemId: "ghost", unavailable: true })).rejects.toThrow();
+    await expect(setDishAvailability(staff.id, { itemId: DISH_ID })).rejects.toThrow();
+    await expect(setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: "yes" })).rejects.toThrow();
   });
 
   it("blocks checkout for a dish that is off, without breaking order replay", async () => {
-    const user = await registerUser(CREDENTIALS);
+    const user = await operator();
     const validated = createDemoOrder(CHECKOUT);
 
     // Nothing is off yet, so the cart passes.
     expect(() => assertItemsAvailable(validated.items, [])).not.toThrow();
 
-    setDishAvailability(user.id, { itemId: DISH_ID, unavailable: true });
-    expect(() => assertItemsAvailable(validated.items, listUnavailableItems())).toThrow(
+    await setDishAvailability(user.id, { itemId: DISH_ID, unavailable: true });
+    const nowUnavailable = await listUnavailableItems();
+    expect(() => assertItemsAvailable(validated.items, nowUnavailable)).toThrow(
       /sold out/i
     );
 
     // An order placed before it sold out must still read back from history.
-    saveOrder(user.id, validated, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    expect(listOrders(user.id)).toHaveLength(1);
+    await saveOrder(user.id, validated, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    expect(await listOrders(user.id)).toHaveLength(1);
   });
 
   it("drops a stale mark for a dish the catalog no longer has", async () => {
-    const staff = await registerUser(CREDENTIALS);
-    setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
-    db.prepare("INSERT INTO dish_availability VALUES (?, ?, ?, ?)").run(
+    const staff = await operator();
+    await setDishAvailability(staff.id, { itemId: DISH_ID, unavailable: true });
+    await run("INSERT INTO dish_availability VALUES ($1, $2, $3, $4)", [
       1,
       "ctl_removed_dish",
       new Date().toISOString(),
-      staff.id
-    );
+      staff.id,
+    ]);
 
-    expect(pruneUnknownAvailability()).toBe(1);
-    expect(listUnavailableItems()).toEqual([DISH_ID]);
+    expect(await pruneUnknownAvailability()).toBe(1);
+    expect(await listUnavailableItems()).toEqual([DISH_ID]);
   });
 });
 
 describe("Kitchen tickets and prep time", () => {
+  /** A counter operator for the outlet these orders belong to. */
+  let counterId: string;
+
+  beforeEach(async () => {
+    const operator = await registerUser({ ...CREDENTIALS, email: "counter@krave.test" });
+    counterId = operator.id;
+    await grantOutletStaff(operator.id, operator.id, createDemoOrder(CHECKOUT).resId);
+  });
+
   function placeOrder(handling?: unknown) {
     return createDemoOrder(handling === undefined ? CHECKOUT : { ...CHECKOUT, handling });
   }
@@ -635,11 +682,11 @@ describe("Kitchen tickets and prep time", () => {
     ).toBe("");
   });
 
-  it("puts a placed order on the outlet's counter without any customer identity", () => {
+  it("puts a placed order on the outlet's counter without any customer identity", async () => {
     const order = placeOrder({ flags: ["ALLERGY"], allergyNote: "severe peanut allergy" });
-    createDeliveryTicket(order);
+    await createDeliveryTicket(order);
 
-    const [ticket] = listDeliveryTickets(order.resId);
+    const [ticket] = await listDeliveryTickets(order.resId);
     expect(ticket.orderId).toBe(order.orderId);
     expect(ticket.status).toBe("NEW");
     expect(ticket.critical).toBe(true);
@@ -652,21 +699,21 @@ describe("Kitchen tickets and prep time", () => {
     expect(serialized).not.toContain(order.customerAddress.pincode);
 
     // Another outlet's counter must not see it.
-    expect(listDeliveryTickets(18238278)).toHaveLength(0);
+    expect(await listDeliveryTickets(18238278)).toHaveLength(0);
   });
 
-  it("is idempotent, so a retried order never double-prints", () => {
+  it("is idempotent, so a retried order never double-prints", async () => {
     const order = placeOrder();
-    createDeliveryTicket(order);
-    createDeliveryTicket(order);
-    expect(listDeliveryTickets(order.resId)).toHaveLength(1);
+    await createDeliveryTicket(order);
+    await createDeliveryTicket(order);
+    expect(await listDeliveryTickets(order.resId)).toHaveLength(1);
   });
 
-  it("carries each dish's allergen declaration, keeping silence distinguishable", () => {
+  it("carries each dish's allergen declaration, keeping silence distinguishable", async () => {
     const order = placeOrder({ flags: ["ALLERGY"], allergyNote: "severe peanut allergy" });
-    createDeliveryTicket(order);
+    await createDeliveryTicket(order);
 
-    const [ticket] = listDeliveryTickets(order.resId);
+    const [ticket] = await listDeliveryTickets(order.resId);
     const declared = order.items[0].item.allergens ?? null;
 
     // null must survive the round trip: an undeclared dish must not arrive as "none".
@@ -676,36 +723,36 @@ describe("Kitchen tickets and prep time", () => {
     }
   });
 
-  it("marks only genuinely critical handling as critical", () => {
+  it("marks only genuinely critical handling as critical", async () => {
     const relaxed = placeOrder({ flags: ["NO_CUTLERY", "LESS_SPICY"] });
-    createDeliveryTicket(relaxed);
-    expect(listDeliveryTickets(relaxed.resId)[0].critical).toBe(false);
+    await createDeliveryTicket(relaxed);
+    expect((await listDeliveryTickets(relaxed.resId))[0].critical).toBe(false);
   });
 
-  it("moves a ticket forward one step at a time and never backwards", () => {
+  it("moves a ticket forward one step at a time and never backwards", async () => {
     const order = placeOrder();
-    createDeliveryTicket(order);
+    await createDeliveryTicket(order);
 
-    expect(() => advanceDeliveryTicket(order.orderId, "READY")).toThrow(/one step/i);
-    expect(() => advanceDeliveryTicket("KRV-unknown", "ACCEPTED")).toThrow(/not on this counter/i);
-    expect(() => advanceDeliveryTicket(order.orderId, "COOKED")).toThrow();
+    await expect(advanceDeliveryTicket(counterId, order.orderId, "READY")).rejects.toThrow(/one step/i);
+    await expect(advanceDeliveryTicket(counterId, "KRV-unknown", "ACCEPTED")).rejects.toThrow(/not on this counter/i);
+    await expect(advanceDeliveryTicket(counterId, order.orderId, "COOKED")).rejects.toThrow();
 
-    const accepted = advanceDeliveryTicket(order.orderId, "ACCEPTED");
+    const accepted = await advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED");
     expect(accepted.status).toBe("ACCEPTED");
     expect(accepted.acceptedAt).not.toBeNull();
 
-    const ready = advanceDeliveryTicket(order.orderId, "READY");
+    const ready = await advanceDeliveryTicket(counterId, order.orderId, "READY");
     expect(ready.status).toBe("READY");
     expect(ready.prepMinutes).not.toBeNull();
 
     // Already finished; it cannot be reopened or re-advanced.
-    expect(() => advanceDeliveryTicket(order.orderId, "READY")).toThrow();
-    expect(() => advanceDeliveryTicket(order.orderId, "ACCEPTED")).toThrow();
+    await expect(advanceDeliveryTicket(counterId, order.orderId, "READY")).rejects.toThrow();
+    await expect(advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED")).rejects.toThrow();
   });
 
-  it("reports prep time only once there are enough samples to mean anything", () => {
+  it("reports prep time only once there are enough samples to mean anything", async () => {
     const outletId = RESTAURANTS_DATA[0].resId;
-    expect(prepTimeStats(outletId)).toEqual({
+    expect(await prepTimeStats(outletId)).toEqual({
       sampleSize: 0,
       medianMinutes: null,
       p90Minutes: null,
@@ -714,30 +761,30 @@ describe("Kitchen tickets and prep time", () => {
     // Three finished tickets is not a distribution.
     for (let i = 0; i < 3; i += 1) {
       const order = { ...placeOrder(), orderId: `KRV-sample-${i}` };
-      createDeliveryTicket(order);
-      advanceDeliveryTicket(order.orderId, "ACCEPTED");
-      advanceDeliveryTicket(order.orderId, "READY");
+      await createDeliveryTicket(order);
+      await advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED");
+      await advanceDeliveryTicket(counterId, order.orderId, "READY");
     }
-    expect(prepTimeStats(outletId).medianMinutes).toBeNull();
-    expect(prepTimeStats(outletId).sampleSize).toBe(3);
+    expect((await prepTimeStats(outletId)).medianMinutes).toBeNull();
+    expect((await prepTimeStats(outletId)).sampleSize).toBe(3);
 
     // With a real sample it reports a measured spread, not one padded figure.
     for (let i = 3; i < 9; i += 1) {
       const order = { ...placeOrder(), orderId: `KRV-sample-${i}` };
-      createDeliveryTicket(order);
-      advanceDeliveryTicket(order.orderId, "ACCEPTED");
-      advanceDeliveryTicket(order.orderId, "READY");
-      db.prepare("UPDATE delivery_tickets SET ready_at = ? WHERE order_id = ?").run(
+      await createDeliveryTicket(order);
+      await advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED");
+      await advanceDeliveryTicket(counterId, order.orderId, "READY");
+      await run("UPDATE delivery_tickets SET ready_at = $1 WHERE order_id = $2", [
         new Date(Date.parse(order.placedAt) + i * 60_000).toISOString(),
-        order.orderId
-      );
-      db.prepare("UPDATE delivery_tickets SET accepted_at = ? WHERE order_id = ?").run(
+        order.orderId,
+      ]);
+      await run("UPDATE delivery_tickets SET accepted_at = $1 WHERE order_id = $2", [
         order.placedAt,
-        order.orderId
-      );
+        order.orderId,
+      ]);
     }
 
-    const stats = prepTimeStats(outletId);
+    const stats = await prepTimeStats(outletId);
     expect(stats.sampleSize).toBe(9);
     expect(stats.medianMinutes).not.toBeNull();
     expect(stats.p90Minutes).toBeGreaterThanOrEqual(stats.medianMinutes!);
@@ -760,8 +807,8 @@ describe("Refund disputes", () => {
   ) {
     const user = await registerUser({ ...CREDENTIALS, email });
     const order = createDemoOrder(checkout);
-    saveOrder(user.id, order, { addressId: checkout.addressId, idempotencyKey: null });
-    advanceOrderStage(user.id, order.orderId, "ARRIVED");
+    await saveOrder(user.id, order, { addressId: checkout.addressId, idempotencyKey: null });
+    await advanceOrderStage(user.id, order.orderId, "ARRIVED");
     return { user, order };
   }
 
@@ -771,7 +818,7 @@ describe("Refund disputes", () => {
 
   it("refunds what was paid, not the menu price", async () => {
     const { user, order } = await delivered(CHECKOUT);
-    const dispute = fileDispute(user.id, {
+    const dispute = await fileDispute(user.id, {
       orderId: order.orderId,
       reason: "MISSING_ITEM",
       lines: line(order),
@@ -781,7 +828,7 @@ describe("Refund disputes", () => {
     expect(dispute.status).toBe("UNDER_REVIEW");
 
     const cheap = await delivered(CHEAP_CHECKOUT, "cheap@krave.test");
-    const paid = fileDispute(cheap.user.id, {
+    const paid = await fileDispute(cheap.user.id, {
       orderId: cheap.order.orderId,
       reason: "MISSING_ITEM",
       lines: line(cheap.order),
@@ -798,7 +845,7 @@ describe("Refund disputes", () => {
 
   it("sends a large claim to review instead of paying it out", async () => {
     const { user, order } = await delivered(CHECKOUT);
-    const dispute = fileDispute(user.id, {
+    const dispute = await fileDispute(user.id, {
       orderId: order.orderId,
       reason: "MISSING_ITEM",
       lines: line(order),
@@ -811,54 +858,44 @@ describe("Refund disputes", () => {
 
   it("refuses a second claim on the same order", async () => {
     const { user, order } = await delivered();
-    fileDispute(user.id, { orderId: order.orderId, reason: "MISSING_ITEM", lines: line(order) });
-    expect(() =>
-      fileDispute(user.id, { orderId: order.orderId, reason: "MISSING_ITEM", lines: line(order) })
-    ).toThrow(/already raised/i);
-    expect(listDisputes(user.id)).toHaveLength(1);
+    await fileDispute(user.id, { orderId: order.orderId, reason: "MISSING_ITEM", lines: line(order) });
+    await expect(fileDispute(user.id, { orderId: order.orderId, reason: "MISSING_ITEM", lines: line(order) })).rejects.toThrow(/already raised/i);
+    expect(await listDisputes(user.id)).toHaveLength(1);
   });
 
   it("refuses claims for items or quantities that were never ordered", async () => {
     const { user, order } = await delivered();
 
-    expect(() =>
-      fileDispute(user.id, {
+    await expect(fileDispute(user.id, {
         orderId: order.orderId,
         reason: "MISSING_ITEM",
         lines: [{ itemId: "ctl_820099426", quantity: 1 }],
-      })
-    ).toThrow(/not on this order/i);
+      })).rejects.toThrow(/not on this order/i);
 
-    expect(() =>
-      fileDispute(user.id, {
+    await expect(fileDispute(user.id, {
         orderId: order.orderId,
         reason: "MISSING_ITEM",
         lines: line(order, order.items[0].quantity + 1),
-      })
-    ).toThrow(/more of an item than you ordered/i);
+      })).rejects.toThrow(/more of an item than you ordered/i);
   });
 
   it("refuses another account's order and an undelivered one", async () => {
     const { order } = await delivered();
     const stranger = await registerUser({ ...CREDENTIALS, email: "stranger@krave.test" });
-    expect(() =>
-      fileDispute(stranger.id, {
+    await expect(fileDispute(stranger.id, {
         orderId: order.orderId,
         reason: "MISSING_ITEM",
         lines: line(order),
-      })
-    ).toThrow(/not in your history/i);
+      })).rejects.toThrow(/not in your history/i);
 
     const user = await registerUser({ ...CREDENTIALS, email: "pending@krave.test" });
     const pending = createDemoOrder(CHEAP_CHECKOUT);
-    saveOrder(user.id, pending, { addressId: CHEAP_CHECKOUT.addressId, idempotencyKey: null });
-    expect(() =>
-      fileDispute(user.id, {
+    await saveOrder(user.id, pending, { addressId: CHEAP_CHECKOUT.addressId, idempotencyKey: null });
+    await expect(fileDispute(user.id, {
         orderId: pending.orderId,
         reason: "MISSING_ITEM",
         lines: line(pending),
-      })
-    ).toThrow(/been delivered/i);
+      })).rejects.toThrow(/been delivered/i);
   });
 
   it("closes the window after the stated deadline", async () => {
@@ -866,13 +903,11 @@ describe("Refund disputes", () => {
     const tooLate = new Date(
       Date.parse(order.placedAt) + (DISPUTE_WINDOW_HOURS + 1) * 3_600_000
     );
-    expect(() =>
-      fileDispute(
+    await expect(fileDispute(
         user.id,
         { orderId: order.orderId, reason: "MISSING_ITEM", lines: line(order) },
         tooLate
-      )
-    ).toThrow(/Claims close/i);
+      )).rejects.toThrow(/Claims close/i);
   });
 
   it("stops refunding automatically once an account keeps claiming", async () => {
@@ -881,14 +916,14 @@ describe("Refund disputes", () => {
     const statuses: string[] = [];
     for (let attempt = 0; attempt < AUTO_REFUND_RECENT_LIMIT + 1; attempt += 1) {
       const order = createDemoOrder(CHEAP_CHECKOUT);
-      saveOrder(user.id, order, { addressId: CHEAP_CHECKOUT.addressId, idempotencyKey: null });
-      advanceOrderStage(user.id, order.orderId, "ARRIVED");
+      await saveOrder(user.id, order, { addressId: CHEAP_CHECKOUT.addressId, idempotencyKey: null });
+      await advanceOrderStage(user.id, order.orderId, "ARRIVED");
       statuses.push(
-        fileDispute(user.id, {
+        (await fileDispute(user.id, {
           orderId: order.orderId,
           reason: "MISSING_ITEM",
           lines: line(order),
-        }).status
+        })).status
       );
     }
 
@@ -900,7 +935,7 @@ describe("Refund disputes", () => {
 
   it("sends quality reports to a person, with a stated deadline", async () => {
     const { user, order } = await delivered();
-    const dispute = fileDispute(user.id, {
+    const dispute = await fileDispute(user.id, {
       orderId: order.orderId,
       reason: "QUALITY",
       lines: line(order),
@@ -912,30 +947,124 @@ describe("Refund disputes", () => {
   });
 });
 
+describe("Settling a reviewed claim", () => {
+  async function queued() {
+    const claimant = await registerUser(CREDENTIALS);
+    const reviewer = await registerUser({ ...CREDENTIALS, email: "ops@krave.test" });
+    const order = createDemoOrder(CHECKOUT);
+    await grantOutletStaff(reviewer.id, reviewer.id, order.resId);
+    await saveOrder(claimant.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await advanceOrderStage(claimant.id, order.orderId, "ARRIVED");
+
+    // The standard order is above the ceiling, so it lands in the queue.
+    const dispute = await fileDispute(claimant.id, {
+      orderId: order.orderId,
+      reason: "MISSING_ITEM",
+      lines: [{ itemId: order.items[0].item.id, quantity: 1 }],
+    });
+    expect(dispute.status).toBe("UNDER_REVIEW");
+    return { claimant, reviewer, dispute };
+  }
+
+  it("pays the amount assessed when the claim was filed", async () => {
+    const { reviewer, dispute } = await queued();
+    expect(dispute.refundAmount).toBe(0);
+    expect(dispute.assessedAmount).toBeGreaterThan(0);
+
+    const settled = await resolveDispute(reviewer.id, { disputeId: dispute.id, approve: true });
+    expect(settled.status).toBe("REFUNDED");
+    expect(settled.refundAmount).toBe(dispute.assessedAmount);
+    expect(settled.resolvedAt).not.toBeNull();
+  });
+
+  it("refuses a signed-in customer who is not staff anywhere", async () => {
+    const { dispute } = await queued();
+    const bystander = await registerUser({ ...CREDENTIALS, email: "nosy@krave.test" });
+
+    await expect(resolveDispute(bystander.id, { disputeId: dispute.id, approve: true })).rejects.toThrow(/do not have access/i);
+
+    // Nor can they even read the queue of other people's claims.
+    await expect(listDisputeQueue(bystander.id)).rejects.toThrow(/do not have access/i);
+  });
+
+  it("refuses to let the claimant decide their own claim", async () => {
+    const { claimant, reviewer, dispute } = await queued();
+
+    // The case this rule exists for: a staff member who is also the customer.
+    await grantOutletStaff(reviewer.id, claimant.id, 19677790);
+    await expect(resolveDispute(claimant.id, { disputeId: dispute.id, approve: true })).rejects.toThrow(/your own claim/i);
+
+    // And it is still waiting, not quietly consumed by the failed attempt.
+    expect(await listDisputeQueue(reviewer.id)).toHaveLength(1);
+
+    // The claimant is never offered a button that is guaranteed to fail.
+    expect(await listDisputeQueue(claimant.id)).toHaveLength(0);
+  });
+
+  it("cannot be settled twice, so an approval cannot be replayed", async () => {
+    const { reviewer, dispute } = await queued();
+    await resolveDispute(reviewer.id, { disputeId: dispute.id, approve: true });
+
+    await expect(resolveDispute(reviewer.id, { disputeId: dispute.id, approve: true })).rejects.toThrow(/already been settled/i);
+    expect(await listDisputeQueue(reviewer.id)).toHaveLength(0);
+  });
+
+  it("records a decline without paying anything", async () => {
+    const { reviewer, dispute } = await queued();
+    const settled = await resolveDispute(reviewer.id, {
+      disputeId: dispute.id,
+      approve: false,
+      note: "Rider photo shows the item in the bag.",
+    });
+
+    expect(settled.status).toBe("DECLINED");
+    expect(settled.refundAmount).toBe(0);
+    expect(settled.assessedAmount).toBeGreaterThan(0);
+  });
+
+  it("writes an audit trail that cannot afterwards be altered", async () => {
+    const { reviewer, dispute } = await queued();
+    await resolveDispute(reviewer.id, { disputeId: dispute.id, approve: true });
+
+    const trail = await listAudit(dispute.id);
+    expect(trail.map((entry) => entry.action)).toEqual([
+      "DISPUTE_REFUNDED",
+      "DISPUTE_FILED",
+    ]);
+    expect(trail.some((entry) => entry.actorId === reviewer.id)).toBe(true);
+
+    // Immutability is enforced by the database, so it holds even for a direct query.
+    await expect(run("UPDATE audit_log SET detail = 'tampered'")).rejects.toThrow(/append-only/i);
+    await expect(run("DELETE FROM audit_log")).rejects.toThrow(/append-only/i);
+    await expect(run("TRUNCATE audit_log")).rejects.toThrow(/append-only/i);
+    expect(await listAudit(dispute.id)).toHaveLength(2);
+  });
+});
+
 describe("Verified reviews", () => {
   it("counts an order or a booking here, and nothing from elsewhere", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
     const resId = order.resId;
 
-    expect(hasVisited(user.id, resId)).toBe(false);
+    expect(await hasVisited(user.id, resId)).toBe(false);
 
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    expect(hasVisited(user.id, resId)).toBe(true);
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    expect(await hasVisited(user.id, resId)).toBe(true);
 
     // A visit to one restaurant must not verify a review of another.
-    expect(hasVisited(user.id, 18238278)).toBe(false);
+    expect(await hasVisited(user.id, 18238278)).toBe(false);
   });
 
   it("does not verify a different account, or a nonsense restaurant id", async () => {
     const author = await registerUser(CREDENTIALS);
     const stranger = await registerUser({ ...CREDENTIALS, email: "other@krave.test" });
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(author.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(author.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
 
-    expect(hasVisited(stranger.id, order.resId)).toBe(false);
-    expect(hasVisited(author.id, Number.NaN)).toBe(false);
-    expect(hasVisited(author.id, 1.5)).toBe(false);
+    expect(await hasVisited(stranger.id, order.resId)).toBe(false);
+    expect(await hasVisited(author.id, Number.NaN)).toBe(false);
+    expect(await hasVisited(author.id, 1.5)).toBe(false);
   });
 
   it("verifies from a booking even with no delivery order", async () => {
@@ -948,9 +1077,9 @@ describe("Verified reviews", () => {
       guestName: "Rohit",
       guestPhone: "+91 98765 43210",
     });
-    saveReservation(user.id, reservation);
+    await saveReservation(user.id, reservation);
 
-    expect(hasVisited(user.id, 19677790)).toBe(true);
+    expect(await hasVisited(user.id, 19677790)).toBe(true);
   });
 });
 
@@ -1064,20 +1193,20 @@ describe("Claiming a dine-in bill", () => {
       lines: settled.lines.map((line) => ({ ...line, unitPrice: MENU[0].price })),
     }).grandTotal;
 
-    const result = syncPosState(staff.id, { sessions: [settled], shift: null });
+    const result = await syncPosState(staff.id, { sessions: [settled], shift: null });
     const code = result.claimCodes[settled.sessionId];
     expect(code).toMatch(/^[2345679BCDFGHJKLMNPQRSTVWXYZ]{10}$/);
 
     // Syncing again must not mint a second bill or a second code.
-    const again = syncPosState(staff.id, {
+    const again = await syncPosState(staff.id, {
       sessions: [{ ...settled, revision: result.sessions[0].revision }],
       shift: null,
     });
     expect(again.claimCodes[settled.sessionId]).toBe(code);
-    expect(db.prepare("SELECT COUNT(*) AS n FROM dine_in_bills").get()).toMatchObject({ n: 1 });
+    expect(await one("SELECT COUNT(*)::int AS n FROM dine_in_bills")).toMatchObject({ n: 1 });
 
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
-    const bill = claimDineInBill(guest.id, { code });
+    const bill = await claimDineInBill(guest.id, { code });
     expect(bill.tableId).toBe("T1");
     // The guest is billed the catalog price, not whatever the terminal sent.
     expect(bill.grandTotal).toBe(catalogTotal);
@@ -1087,65 +1216,65 @@ describe("Claiming a dine-in bill", () => {
   it("never hands the claim code back to a claimer", async () => {
     const staff = await registerUser(CREDENTIALS);
     const settled = settledTable();
-    const code = syncPosState(staff.id, { sessions: [settled], shift: null }).claimCodes[
+    const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
     ];
 
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
-    const claimed = claimDineInBill(guest.id, { code });
+    const claimed = await claimDineInBill(guest.id, { code });
 
     // Returning it would let a claimed bill be passed on to someone else.
     expect(claimed.claimCode).toBeUndefined();
-    expect(JSON.stringify(listDineInBills(guest.id))).not.toContain(code);
+    expect(JSON.stringify(await listDineInBills(guest.id))).not.toContain(code);
   });
 
   it("lets only the first holder claim a bill", async () => {
     const staff = await registerUser(CREDENTIALS);
     const settled = settledTable();
-    const code = syncPosState(staff.id, { sessions: [settled], shift: null }).claimCodes[
+    const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
     ];
 
     const first = await registerUser({ email: "first@krave.test", password: CREDENTIALS.password });
     const second = await registerUser({ email: "two@krave.test", password: CREDENTIALS.password });
 
-    claimDineInBill(first.id, { code });
-    expect(() => claimDineInBill(second.id, { code })).toThrow(/not valid or has already/i);
+    await claimDineInBill(first.id, { code });
+    await expect(claimDineInBill(second.id, { code })).rejects.toThrow(/not valid or has already/i);
 
-    expect(listDineInBills(first.id)).toHaveLength(1);
-    expect(listDineInBills(second.id)).toHaveLength(0);
+    expect(await listDineInBills(first.id)).toHaveLength(1);
+    expect(await listDineInBills(second.id)).toHaveLength(0);
   });
 
   it("answers identically for unknown, malformed and expired codes", async () => {
     const staff = await registerUser(CREDENTIALS);
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
     const settled = settledTable();
-    const code = syncPosState(staff.id, { sessions: [settled], shift: null }).claimCodes[
+    const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
     ];
 
     const message = /not valid or has already been used/i;
-    expect(() => claimDineInBill(guest.id, { code: "ZZZZZZZZZZ" })).toThrow(message);
-    expect(() => claimDineInBill(guest.id, { code: "short" })).toThrow(message);
-    expect(() => claimDineInBill(guest.id, {})).toThrow(message);
+    await expect(claimDineInBill(guest.id, { code: "ZZZZZZZZZZ" })).rejects.toThrow(message);
+    await expect(claimDineInBill(guest.id, { code: "short" })).rejects.toThrow(message);
+    await expect(claimDineInBill(guest.id, {})).rejects.toThrow(message);
 
     // A bill older than the claim window is refused, and says no more than the rest.
-    db.prepare("UPDATE dine_in_bills SET settled_at = ? WHERE claim_code = ?").run(
+    await run("UPDATE dine_in_bills SET settled_at = $1 WHERE claim_code = $2", [
       new Date(Date.now() - 31 * 86_400_000).toISOString(),
-      code
-    );
-    expect(() => claimDineInBill(guest.id, { code })).toThrow(message);
+      code,
+    ]);
+    await expect(claimDineInBill(guest.id, { code })).rejects.toThrow(message);
   });
 
   it("accepts a code typed in lower case or with stray spacing", async () => {
     const staff = await registerUser(CREDENTIALS);
     const guest = await registerUser({ email: "guest@krave.test", password: CREDENTIALS.password });
     const settled = settledTable();
-    const code = syncPosState(staff.id, { sessions: [settled], shift: null }).claimCodes[
+    const code = (await syncPosState(staff.id, { sessions: [settled], shift: null })).claimCodes[
       settled.sessionId
     ];
 
-    expect(claimDineInBill(guest.id, { code: `  ${code.toLowerCase()} ` }).tableId).toBe("T1");
+    expect((await claimDineInBill(guest.id, { code: `  ${code.toLowerCase()} ` })).tableId).toBe("T1");
   });
 
   it("does not make an unsettled table claimable", async () => {
@@ -1163,9 +1292,9 @@ describe("Claiming a dine-in bill", () => {
       )
     ).session;
 
-    const result = syncPosState(staff.id, { sessions: [open], shift: null });
+    const result = await syncPosState(staff.id, { sessions: [open], shift: null });
     expect(result.claimCodes).toEqual({});
-    expect(db.prepare("SELECT COUNT(*) AS n FROM dine_in_bills").get()).toMatchObject({ n: 0 });
+    expect(await one("SELECT COUNT(*)::int AS n FROM dine_in_bills")).toMatchObject({ n: 0 });
   });
 });
 
@@ -1194,53 +1323,55 @@ describe("Scheduled windows and notifications", () => {
   it("starts a scheduled order only once its window arrives", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder({ ...CHECKOUT, scheduledSlot: "Tomorrow, 12:30 PM" });
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
 
-    expect(sweepScheduledOrders(user.id)).toEqual([]);
-    expect(listOrders(user.id)[0].stage).toBe("ORDER_CONFIRMED");
+    expect(await sweepScheduledOrders(user.id)).toEqual([]);
+    expect((await listOrders(user.id))[0].stage).toBe("ORDER_CONFIRMED");
 
     // Bring the window forward rather than waiting for tomorrow.
-    db.prepare("UPDATE orders SET due_at = ? WHERE id = ?").run(
+    await run("UPDATE orders SET due_at = $1 WHERE id = $2", [
       new Date(Date.now() - 1000).toISOString(),
-      order.orderId
-    );
+      order.orderId,
+    ]);
 
-    expect(sweepScheduledOrders(user.id)).toEqual([order.orderId]);
-    expect(listOrders(user.id)[0].stage).toBe("KITCHEN_PREPARING");
-    expect(listNotifications(user.id)[0].title).toMatch(/scheduled order has started/i);
+    expect(await sweepScheduledOrders(user.id)).toEqual([order.orderId]);
+    expect((await listOrders(user.id))[0].stage).toBe("KITCHEN_PREPARING");
+    expect((await listNotifications(user.id))[0].title).toMatch(/scheduled order has started/i);
 
     // A second sweep must not re-announce or re-advance it.
-    expect(sweepScheduledOrders(user.id)).toEqual([]);
-    expect(listNotifications(user.id)).toHaveLength(1);
+    expect(await sweepScheduledOrders(user.id)).toEqual([]);
+    expect(await listNotifications(user.id)).toHaveLength(1);
   });
 
   it("does not announce an ASAP order as scheduled", async () => {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
 
-    expect(sweepScheduledOrders(user.id)).toEqual([order.orderId]);
-    expect(listNotifications(user.id)).toHaveLength(0);
+    expect(await sweepScheduledOrders(user.id)).toEqual([order.orderId]);
+    expect(await listNotifications(user.id)).toHaveLength(0);
   });
 
   it("keeps each account's notifications to itself and tracks read state", async () => {
     const owner = await registerUser(CREDENTIALS);
     const other = await registerUser({ email: "other@krave.test", password: CREDENTIALS.password });
 
-    addNotification(owner.id, "ORDER", "Order confirmed", "No payment was collected.");
-    addNotification(owner.id, "RESERVATION", "Table confirmed", "Tonight at 7:30 PM.");
+    await addNotification(owner.id, "ORDER", "Order confirmed", "No payment was collected.");
+    await addNotification(owner.id, "RESERVATION", "Table confirmed", "Tonight at 7:30 PM.");
 
-    expect(listNotifications(owner.id)).toHaveLength(2);
-    expect(listNotifications(other.id)).toHaveLength(0);
-    expect(listNotifications(owner.id).every((entry) => !entry.read)).toBe(true);
+    expect(await listNotifications(owner.id)).toHaveLength(2);
+    expect(await listNotifications(other.id)).toHaveLength(0);
+    expect((await listNotifications(owner.id)).every((entry) => !entry.read)).toBe(true);
 
-    markNotificationsRead(owner.id);
-    expect(listNotifications(owner.id).every((entry) => entry.read)).toBe(true);
+    await markNotificationsRead(owner.id);
+    expect((await listNotifications(owner.id)).every((entry) => entry.read)).toBe(true);
 
-    clearNotifications(other.id);
-    expect(listNotifications(owner.id)).toHaveLength(2);
+    await clearNotifications(other.id);
+    expect(await listNotifications(owner.id)).toHaveLength(2);
 
-    clearNotifications(owner.id);
-    expect(listNotifications(owner.id)).toHaveLength(0);
+    await clearNotifications(owner.id);
+    expect(await listNotifications(owner.id)).toHaveLength(0);
   });
+});
+
 });

@@ -110,9 +110,33 @@ async function main() {
     );
   }
 
-  // Counter view.
+  // Counter view. A reviewer never sees their own claims, so this needs a second account.
+  await page.request.post(`${BASE}/api/webroutes/auth/logout`);
+  await page.request.post(`${BASE}/api/webroutes/auth/register`, {
+    data: {
+      email: `reviewer-${Date.now()}@krave.test`,
+      password: "screenshot-password",
+      displayName: "Counter Staff",
+    },
+  });
+
   await page.goto(`${BASE}/pos`, { waitUntil: "networkidle" });
   await shot(page, "07-pos-terminal", "Dine-in terminal with the delivery ticket rail");
+
+  const queue = page.getByTestId("pos-claims-queue");
+  await queue.waitFor({ timeout: 10000 }).catch(() => {});
+  if (await queue.count()) {
+    await queue.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(400);
+    await shot(
+      page,
+      "08-claims-queue",
+      "A reviewer's queue: another customer's claim, assessed amount and SLA deadline",
+      queue
+    );
+  } else {
+    console.warn("  skipped 08-claims-queue — no claim was waiting");
+  }
 
   await browser.close();
 

@@ -2,12 +2,19 @@ node_modules/
 .next/
 tsconfig.tsbuildinfo
 
+# Database credentials. The Neon connection string contains a password; never commit it.
+.env
+.env.*
+!.env.example
+
 # Local SQLite database. Contains demo accounts and password hashes; never commit it.
 .data/
 
 # Throwaway database and artifacts from the browser suite.
 .data-e2e/
 .data-sec/
+.data-shots/
 playwright-report/
 test-results/
 blob-report/
+.neon

@@ -58,6 +58,7 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { allergenLabels, AVAILABILITY_KEY, KITCHEN_FLAGS, restoreAvailability } from "@/lib/checkout";
 import type { DeliveryTicket, PrepTimeStats } from "@/lib/server/kitchenStore";
+import type { Dispute } from "@/lib/server/disputeStore";
 
 const FLAG_LABELS = new Map(KITCHEN_FLAGS.map((flag) => [flag.id as string, flag.label]));
 
@@ -179,6 +180,10 @@ export function PosTerminal() {
   const [ticketError, setTicketError] = useState<string | null>(null);
   const [claimCodes, setClaimCodes] = useState<Record<string, string>>({});
 
+  // Refund claims waiting on a person.
+  const [claimQueue, setClaimQueue] = useState<Dispute[]>([]);
+  const [claimError, setClaimError] = useState<string | null>(null);
+
   // Custom off-menu dish form state
   const [customDishOpen, setCustomDishOpen] = useState(false);
   const [customDishName, setCustomDishName] = useState("");
@@ -284,6 +289,48 @@ export function PosTerminal() {
       })
       .catch((error) =>
         setTicketError(error instanceof Error ? error.message : "Could not update that ticket.")
+      );
+  }
+
+  // Claims are raised by customers elsewhere, so this view polls alongside the tickets.
+  useEffect(() => {
+    if (!syncAccount) return;
+    let cancelled = false;
+
+    const load = () =>
+      fetch("/api/webroutes/ops/disputes", { signal: AbortSignal.timeout(8000) })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((result) => {
+          if (cancelled || !result) return;
+          setClaimQueue(result.queue ?? []);
+        })
+        .catch(() => {
+          // Offline: the queue reappears with the network.
+        });
+
+    load();
+    const timer = setInterval(load, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [syncAccount]);
+
+  function settleClaim(disputeId: string, approve: boolean) {
+    setClaimError(null);
+    fetch("/api/webroutes/ops/dispute/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(8000),
+      body: JSON.stringify({ disputeId, approve }),
+    })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result?.message ?? "Could not settle that claim.");
+        setClaimQueue(result.queue ?? []);
+      })
+      .catch((error) =>
+        setClaimError(error instanceof Error ? error.message : "Could not settle that claim.")
       );
   }
 
@@ -850,6 +897,56 @@ export function PosTerminal() {
                 ))}
             </div>
           )}
+
+          {syncAccount && claimQueue.length > 0 && (
+            <div data-testid="pos-claims-queue" className="space-y-2">
+              <h3 className="text-[11px] font-bold opacity-50">
+                Refund Claims ({claimQueue.length})
+              </h3>
+              {claimError && (
+                <p role="alert" className="text-[11px] text-rose-400">
+                  {claimError}
+                </p>
+              )}
+              {claimQueue.map((claim) => (
+                <article
+                  key={claim.id}
+                  data-testid={`pos-claim-${claim.id}`}
+                  className="rounded-xl border border-amber-400/40 bg-amber-500/5 p-2.5"
+                >
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-black">{claim.reason.replace("_", " ")}</span>
+                    <span className="font-black text-amber-300">₹{claim.assessedAmount}</span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] opacity-60">
+                    Order {claim.orderId.slice(0, 12)} · due{" "}
+                    {claim.reviewDueAt
+                      ? new Date(claim.reviewDueAt).toLocaleString()
+                      : "unset"}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      data-testid={`pos-claim-approve-${claim.id}`}
+                      onClick={() => settleClaim(claim.id, true)}
+                      className="flex-1 rounded-lg bg-emerald-500 py-1.5 text-[11px] font-black text-black"
+                    >
+                      Refund ₹{claim.assessedAmount}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`pos-claim-decline-${claim.id}`}
+                      onClick={() => settleClaim(claim.id, false)}
+                      className="flex-1 rounded-lg border border-white/15 py-1.5 text-[11px] font-black"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
           {ZONES.map((zone) => (
             <div key={zone} className="space-y-2">
               <h3 className="text-[11px] font-bold opacity-50">{zone}</h3>

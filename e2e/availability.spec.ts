@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
+import { registerAccount, resetBrowser, signInAsStaff, uniqueEmail } from "./helpers";
 
 const PASSWORD = "e2e-demo-password";
 const DISH_ID = "ctl_raj_kachori";
@@ -12,7 +12,7 @@ const OUTLET_PATH = "/restaurant/19677790";
  */
 async function restoreMenu(page: import("@playwright/test").Page) {
   await page.request.post("/api/webroutes/auth/logout");
-  await registerAccount(page, uniqueEmail("cleanup"), PASSWORD);
+  await signInAsStaff(page);
 
   const current = await (await page.request.get("/api/webroutes/menu/availability")).json();
   for (const itemId of current.unavailableItemIds as string[]) {
@@ -38,7 +38,7 @@ test.describe("Outlet-wide availability", () => {
 
   test("returns the whole list when no outlet is given", async ({ page }) => {
     await resetBrowser(page);
-    await registerAccount(page, uniqueEmail("list"), PASSWORD);
+    await signInAsStaff(page);
     await page.request.post("/api/webroutes/menu/availability", {
       data: { itemId: DISH_ID, unavailable: true },
     });
@@ -70,12 +70,27 @@ test.describe("Outlet-wide availability", () => {
     expect(read.status()).toBe(200);
   });
 
+  test("refuses a signed-in customer who is not staff at that outlet", async ({ page }) => {
+    await resetBrowser(page);
+    await registerAccount(page, uniqueEmail("customer"), PASSWORD);
+
+    const denied = await page.request.post("/api/webroutes/menu/availability", {
+      data: { itemId: DISH_ID, unavailable: true },
+    });
+    expect(denied.status()).toBe(400);
+    expect((await denied.json()).message).toMatch(/do not have access/i);
+
+    // The menu is unchanged, so a customer cannot take a rival's dish off sale.
+    const read = await (await page.request.get("/api/webroutes/menu/availability")).json();
+    expect(read.unavailableItemIds).not.toContain(DISH_ID);
+  });
+
   test("hides a dish from a different browser once the kitchen marks it off", async ({
     page,
     browser,
   }) => {
     await resetBrowser(page, OUTLET_PATH);
-    await registerAccount(page, uniqueEmail("kitchen"), PASSWORD);
+    await signInAsStaff(page);
     await page.reload({ waitUntil: "networkidle" });
 
     await page.getByTestId(`toggle-availability-${DISH_ID}`).click();
@@ -106,7 +121,7 @@ test.describe("Outlet-wide availability", () => {
     const staffContext = await browser.newContext();
     const staff = await staffContext.newPage();
     await staff.goto("/");
-    await registerAccount(staff, uniqueEmail("counter"), PASSWORD);
+    await signInAsStaff(staff);
     const marked = await staff.request.post("/api/webroutes/menu/availability", {
       data: { itemId: DISH_ID, unavailable: true },
     });
@@ -135,7 +150,7 @@ test.describe("Outlet-wide availability", () => {
 
   test("removes a dish from the terminal menu too", async ({ page }) => {
     await resetBrowser(page, "/pos");
-    await registerAccount(page, uniqueEmail("terminal-86"), PASSWORD);
+    await signInAsStaff(page);
 
     const marked = await page.request.post("/api/webroutes/menu/availability", {
       data: { itemId: DISH_ID, unavailable: true },

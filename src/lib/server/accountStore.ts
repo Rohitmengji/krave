@@ -1,5 +1,4 @@
-import { getDb } from "./db";
-import { withdrawUnstartedTicket } from "./kitchenStore";
+import { one, rows, run, transaction } from "./pg";
 import {
   createDemoOrder,
   createNotification,
@@ -16,77 +15,87 @@ import type { CrystalOrderState, DiningReservation } from "@/types/krave";
  * Orders are stored as the inputs that produced them, never as client totals. Reading an
  * order replays it through the same validator the API uses, so a row cannot inflate a price.
  */
-export function saveOrder(
+export async function saveOrder(
   userId: string,
   order: CrystalOrderState,
   input: { addressId: string; idempotencyKey: string | null }
-): void {
-  const db = getDb();
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.prepare(
+): Promise<void> {
+  await transaction(async (client) => {
+    await client.query(
       `INSERT INTO orders (id, user_id, res_id, address_id, payment_method, coupon_code,
          is_gold_member, rider_tip, scheduled_slot, due_at, stage, grand_total, placed_at,
          idempotency_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      order.orderId,
-      userId,
-      order.resId,
-      input.addressId,
-      order.paymentMethod,
-      order.quote.couponCode,
-      order.quote.deliveryFee === 0 ? 1 : 0,
-      order.quote.riderTip,
-      order.scheduledSlot,
-      scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
-      order.stage,
-      order.quote.grandTotal,
-      order.placedAt,
-      input.idempotencyKey
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        order.orderId,
+        userId,
+        order.resId,
+        input.addressId,
+        order.paymentMethod,
+        order.quote.couponCode,
+        order.quote.deliveryFee === 0 ? 1 : 0,
+        order.quote.riderTip,
+        order.scheduledSlot,
+        scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
+        order.stage,
+        order.quote.grandTotal,
+        order.placedAt,
+        input.idempotencyKey,
+      ]
     );
 
-    const line = db.prepare(
-      `INSERT INTO order_lines (order_id, item_id, quantity, option_ids, cooking_instruction)
-       VALUES (?, ?, ?, ?, ?)`
-    );
     for (const item of order.items) {
-      line.run(
-        order.orderId,
-        item.item.id,
-        item.quantity,
-        JSON.stringify(item.selectedOptions.map((option) => option.id)),
-        item.cookingInstruction ?? null
+      await client.query(
+        `INSERT INTO order_lines (order_id, item_id, quantity, option_ids, cooking_instruction)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          order.orderId,
+          item.item.id,
+          item.quantity,
+          JSON.stringify(item.selectedOptions.map((option) => option.id)),
+          item.cookingInstruction ?? null,
+        ]
       );
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
-export function findOrderByIdempotencyKey(
+export async function findOrderByIdempotencyKey(
   userId: string,
   idempotencyKey: string | null
-): CrystalOrderState | null {
+): Promise<CrystalOrderState | null> {
   if (!idempotencyKey) return null;
-  const row = getDb()
-    .prepare("SELECT id FROM orders WHERE user_id = ? AND idempotency_key = ?")
-    .get(userId, idempotencyKey) as Record<string, unknown> | undefined;
+  const row = await one<Record<string, unknown>>(
+    "SELECT id FROM orders WHERE user_id = $1 AND idempotency_key = $2",
+    [userId, idempotencyKey]
+  );
   if (!row) return null;
-  return listOrders(userId).find((order) => order.orderId === String(row.id)) ?? null;
+  const orders = await listOrders(userId);
+  return orders.find((order) => order.orderId === String(row.id)) ?? null;
 }
 
-export function listOrders(userId: string): CrystalOrderState[] {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT * FROM orders WHERE user_id = ? ORDER BY placed_at DESC LIMIT 50")
-    .all(userId) as Record<string, unknown>[];
-  const lineStatement = db.prepare("SELECT * FROM order_lines WHERE order_id = ? ORDER BY id");
+export async function listOrders(userId: string): Promise<CrystalOrderState[]> {
+  const found = await rows<Record<string, unknown>>(
+    "SELECT * FROM orders WHERE user_id = $1 ORDER BY placed_at DESC LIMIT 50",
+    [userId]
+  );
+  if (found.length === 0) return [];
 
-  return rows.flatMap((row): CrystalOrderState[] => {
-    const lines = lineStatement.all(String(row.id)) as Record<string, unknown>[];
+  // One query for every line rather than one per order: each round trip costs network now.
+  const allLines = await rows<Record<string, unknown>>(
+    "SELECT * FROM order_lines WHERE order_id = ANY($1::text[]) ORDER BY id",
+    [found.map((row) => String(row.id))]
+  );
+  const linesByOrder = new Map<string, Record<string, unknown>[]>();
+  for (const line of allLines) {
+    const key = String(line.order_id);
+    const bucket = linesByOrder.get(key);
+    if (bucket) bucket.push(line);
+    else linesByOrder.set(key, [line]);
+  }
+
+  return found.flatMap((row): CrystalOrderState[] => {
+    const lines = linesByOrder.get(String(row.id)) ?? [];
     const stage = ORDER_STAGES.find((candidate) => candidate === row.stage);
     if (!stage) return [];
     try {
@@ -113,45 +122,61 @@ export function listOrders(userId: string): CrystalOrderState[] {
   });
 }
 
-export function advanceOrderStage(userId: string, orderId: string, stage: string): void {
-  const result = getDb()
-    .prepare("UPDATE orders SET stage = ? WHERE id = ? AND user_id = ?")
-    .run(stage, orderId, userId);
-  if (result.changes === 0) {
+export async function advanceOrderStage(
+  userId: string,
+  orderId: string,
+  stage: string
+): Promise<void> {
+  const changed = await run("UPDATE orders SET stage = $1 WHERE id = $2 AND user_id = $3", [
+    stage,
+    orderId,
+    userId,
+  ]);
+  if (changed === 0) {
     throw new Error("That order is not in your history.");
   }
 }
 
-export function deleteOrder(userId: string, orderId: string): void {
-  const db = getDb();
+export async function deleteOrder(userId: string, orderId: string): Promise<void> {
   // The order and its kitchen ticket go together, or neither does.
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const row = db
-      .prepare("SELECT stage FROM orders WHERE id = ? AND user_id = ?")
-      .get(orderId, userId) as Record<string, unknown> | undefined;
+  await transaction(async (client) => {
+    const found = await client.query(
+      "SELECT stage FROM orders WHERE id = $1 AND user_id = $2 FOR UPDATE",
+      [orderId, userId]
+    );
+    const row = found.rows[0];
     if (!row) {
       throw new Error("That order is no longer in your history.");
     }
-    if (String(row.stage) !== "ORDER_CONFIRMED" || !withdrawUnstartedTicket(orderId)) {
+    if (String(row.stage) !== "ORDER_CONFIRMED") {
       throw new Error("This order has already reached the kitchen and cannot be cancelled.");
     }
-    db.prepare("DELETE FROM orders WHERE id = ? AND user_id = ?").run(orderId, userId);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+
+    // Reads the ticket on this same connection, so the check and the delete cannot be
+    // separated by another request accepting the ticket in between.
+    const ticket = await client.query(
+      "SELECT status FROM delivery_tickets WHERE order_id = $1 FOR UPDATE",
+      [orderId]
+    );
+    if (ticket.rows[0] && String(ticket.rows[0].status) !== "NEW") {
+      throw new Error("This order has already reached the kitchen and cannot be cancelled.");
+    }
+    await client.query("DELETE FROM delivery_tickets WHERE order_id = $1 AND status = 'NEW'", [
+      orderId,
+    ]);
+    await client.query("DELETE FROM orders WHERE id = $1 AND user_id = $2", [orderId, userId]);
+  });
 }
 
-export function saveReservation(userId: string, reservation: DiningReservation): void {
-  getDb()
-    .prepare(
-      `INSERT INTO reservations (id, user_id, res_id, date, time_slot, guests, guest_name,
-         guest_phone, special_request, offer_applied, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+export async function saveReservation(
+  userId: string,
+  reservation: DiningReservation
+): Promise<void> {
+  await run(
+    `INSERT INTO reservations (id, user_id, res_id, date, time_slot, guests, guest_name,
+       guest_phone, special_request, offer_applied, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
       reservation.bookingId,
       userId,
       reservation.resId,
@@ -162,34 +187,35 @@ export function saveReservation(userId: string, reservation: DiningReservation):
       reservation.guestPhone,
       reservation.specialRequest,
       reservation.offerApplied,
-      reservation.createdAt
-    );
+      reservation.createdAt,
+    ]
+  );
 }
 
 /**
  * Whether this account has actually eaten here — an order placed, or a booking made.
  * Used to decide if a review may carry a "verified" badge, so the badge means something.
  */
-export function hasVisited(userId: string, resId: number): boolean {
+export async function hasVisited(userId: string, resId: number): Promise<boolean> {
   if (!Number.isSafeInteger(resId)) return false;
 
-  const row = getDb()
-    .prepare(
-      `SELECT
-         EXISTS(SELECT 1 FROM orders WHERE user_id = ? AND res_id = ?) AS ordered,
-         EXISTS(SELECT 1 FROM reservations WHERE user_id = ? AND res_id = ?) AS booked`
-    )
-    .get(userId, resId, userId, resId) as Record<string, unknown>;
+  const row = await one<Record<string, unknown>>(
+    `SELECT
+       EXISTS(SELECT 1 FROM orders WHERE user_id = $1 AND res_id = $2) AS ordered,
+       EXISTS(SELECT 1 FROM reservations WHERE user_id = $1 AND res_id = $2) AS booked`,
+    [userId, resId]
+  );
 
-  return Number(row.ordered) === 1 || Number(row.booked) === 1;
+  return row?.ordered === true || row?.booked === true;
 }
 
-export function listReservations(userId: string): DiningReservation[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM reservations WHERE user_id = ? ORDER BY created_at DESC LIMIT 30")
-    .all(userId) as Record<string, unknown>[];
+export async function listReservations(userId: string): Promise<DiningReservation[]> {
+  const found = await rows<Record<string, unknown>>(
+    "SELECT * FROM reservations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 30",
+    [userId]
+  );
 
-  return rows.flatMap((row): DiningReservation[] => {
+  return found.flatMap((row): DiningReservation[] => {
     try {
       const validated = createValidatedReservation({
         resId: Number(row.res_id),
@@ -214,81 +240,80 @@ export function listReservations(userId: string): DiningReservation[] {
   });
 }
 
-export function listBookmarks(userId: string): number[] {
-  return (
-    getDb()
-      .prepare("SELECT res_id FROM bookmarks WHERE user_id = ?")
-      .all(userId) as Record<string, unknown>[]
-  ).map((row) => Number(row.res_id));
+export async function listBookmarks(userId: string): Promise<number[]> {
+  const found = await rows<Record<string, unknown>>(
+    "SELECT res_id FROM bookmarks WHERE user_id = $1",
+    [userId]
+  );
+  return found.map((row) => Number(row.res_id));
 }
 
 /**
  * Start any scheduled order whose window has arrived. There is no background scheduler
  * here, so this runs on the next request after the due time rather than exactly at it.
  */
-export function sweepScheduledOrders(userId: string): string[] {
-  const db = getDb();
-  const due = db
-    .prepare(
-      `SELECT id, scheduled_slot FROM orders
-       WHERE user_id = ? AND stage = 'ORDER_CONFIRMED' AND due_at <= ?`
-    )
-    .all(userId, new Date().toISOString()) as Record<string, unknown>[];
+export async function sweepScheduledOrders(userId: string): Promise<string[]> {
+  const due = await rows<Record<string, unknown>>(
+    `SELECT id, scheduled_slot FROM orders
+     WHERE user_id = $1 AND stage = 'ORDER_CONFIRMED' AND due_at <= $2`,
+    [userId, new Date().toISOString()]
+  );
   if (due.length === 0) return [];
 
-  // Conditional on the stage so that when two requests sweep the same order (two tabs, or
-  // two server processes), only the one whose UPDATE changed the row announces it.
-  const advance = db.prepare(
-    "UPDATE orders SET stage = 'KITCHEN_PREPARING' WHERE id = ? AND stage = 'ORDER_CONFIRMED'"
-  );
   const started: string[] = [];
   // The stage change and its announcement commit together, so a failure cannot leave an
   // order started silently (it would never be announced, being no longer due).
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  await transaction(async (client) => {
     for (const row of due) {
       const orderId = String(row.id);
-      if (advance.run(orderId).changes === 0) continue;
+      // Conditional on the stage so that when two requests sweep the same order (two tabs,
+      // or two server processes), only the one whose UPDATE changed the row announces it.
+      const advanced = await client.query(
+        "UPDATE orders SET stage = 'KITCHEN_PREPARING' WHERE id = $1 AND stage = 'ORDER_CONFIRMED'",
+        [orderId]
+      );
+      if (advanced.rowCount === 0) continue;
+
       // An ASAP order is due the moment it is placed; announcing that adds nothing.
       if (String(row.scheduled_slot) !== "ASAP") {
-        addNotification(
-          userId,
+        const entry = createNotification(
           "ORDER",
           "Your scheduled order has started",
           `The kitchen began your ${String(row.scheduled_slot)} order.`
         );
+        await client.query(
+          `INSERT INTO notifications (id, user_id, kind, title, body, created_at, read_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
+          [entry.id, userId, entry.kind, entry.title, entry.body, entry.createdAt]
+        );
       }
       started.push(orderId);
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
   return started;
 }
 
-export function addNotification(
+export async function addNotification(
   userId: string,
   kind: KraveNotificationKind,
   title: string,
   body: string
-): KraveNotification {
+): Promise<KraveNotification> {
   const entry = createNotification(kind, title, body);
-  getDb()
-    .prepare(
-      "INSERT INTO notifications (id, user_id, kind, title, body, created_at, read_at) VALUES (?, ?, ?, ?, ?, ?, NULL)"
-    )
-    .run(entry.id, userId, entry.kind, entry.title, entry.body, entry.createdAt);
+  await run(
+    `INSERT INTO notifications (id, user_id, kind, title, body, created_at, read_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
+    [entry.id, userId, entry.kind, entry.title, entry.body, entry.createdAt]
+  );
   return entry;
 }
 
-export function listNotifications(userId: string): KraveNotification[] {
-  return (
-    getDb()
-      .prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 40")
-      .all(userId) as Record<string, unknown>[]
-  ).map((row) => ({
+export async function listNotifications(userId: string): Promise<KraveNotification[]> {
+  const found = await rows<Record<string, unknown>>(
+    "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 40",
+    [userId]
+  );
+  return found.map((row) => ({
     id: String(row.id),
     kind: String(row.kind) as KraveNotificationKind,
     title: String(row.title),
@@ -298,17 +323,18 @@ export function listNotifications(userId: string): KraveNotification[] {
   }));
 }
 
-export function markNotificationsRead(userId: string): void {
-  getDb()
-    .prepare("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL")
-    .run(new Date().toISOString(), userId);
+export async function markNotificationsRead(userId: string): Promise<void> {
+  await run("UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at IS NULL", [
+    new Date().toISOString(),
+    userId,
+  ]);
 }
 
-export function clearNotifications(userId: string): void {
-  getDb().prepare("DELETE FROM notifications WHERE user_id = ?").run(userId);
+export async function clearNotifications(userId: string): Promise<void> {
+  await run("DELETE FROM notifications WHERE user_id = $1", [userId]);
 }
 
-export function setBookmarks(userId: string, resIds: unknown): number[] {
+export async function setBookmarks(userId: string, resIds: unknown): Promise<number[]> {
   if (!Array.isArray(resIds)) {
     throw new Error("Bookmarks must be a list of restaurant IDs.");
   }
@@ -321,16 +347,14 @@ export function setBookmarks(userId: string, resIds: unknown): number[] {
     ),
   ].slice(0, 200);
 
-  const db = getDb();
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.prepare("DELETE FROM bookmarks WHERE user_id = ?").run(userId);
-    const insert = db.prepare("INSERT INTO bookmarks (user_id, res_id) VALUES (?, ?)");
-    for (const resId of known) insert.run(userId, resId);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  await transaction(async (client) => {
+    await client.query("DELETE FROM bookmarks WHERE user_id = $1", [userId]);
+    if (known.length > 0) {
+      await client.query(
+        "INSERT INTO bookmarks (user_id, res_id) SELECT $1, * FROM UNNEST($2::int[])",
+        [userId, known]
+      );
+    }
+  });
   return known;
 }

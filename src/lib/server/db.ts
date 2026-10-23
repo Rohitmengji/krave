@@ -261,6 +261,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS audit_log_subject_idx ON audit_log(subject, at DESC);
 
+CREATE TABLE IF NOT EXISTS outlet_staff (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  outlet_id INTEGER NOT NULL,
+  granted_at TEXT NOT NULL,
+  granted_by TEXT NOT NULL,
+  PRIMARY KEY (user_id, outlet_id)
+);
+
 -- Append-only is enforced here rather than by convention, so a later bug or a
 -- careless query cannot quietly rewrite the record of who did what.
 CREATE TRIGGER IF NOT EXISTS audit_log_no_update

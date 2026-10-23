@@ -1,4 +1,5 @@
-import { getDb } from "./db";
+import { one, rows, run } from "./pg";
+import { assertOutletStaff } from "./staff";
 import { isCriticalFlag, scheduledDueAt, type KitchenFlagId } from "@/lib/checkout";
 import type { CrystalOrderState } from "@/types/krave";
 
@@ -58,7 +59,7 @@ function toTicket(row: Record<string, unknown>): DeliveryTicket {
 }
 
 /** Project a placed order onto the outlet's counter. Idempotent per order. */
-export function createDeliveryTicket(order: CrystalOrderState): void {
+export async function createDeliveryTicket(order: CrystalOrderState): Promise<void> {
   const lines: DeliveryTicketLine[] = order.items.map((line) => ({
     name: line.item.name,
     quantity: line.quantity,
@@ -67,14 +68,12 @@ export function createDeliveryTicket(order: CrystalOrderState): void {
     allergens: line.item.allergens ?? null,
   }));
 
-  getDb()
-    .prepare(
-      `INSERT INTO delivery_tickets (order_id, outlet_id, placed_at, scheduled_slot, due_at,
-         flags, allergy_note, lines_json, status, accepted_at, ready_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NEW', NULL, NULL)
-       ON CONFLICT(order_id) DO NOTHING`
-    )
-    .run(
+  await run(
+    `INSERT INTO delivery_tickets (order_id, outlet_id, placed_at, scheduled_slot, due_at,
+       flags, allergy_note, lines_json, status, accepted_at, ready_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'NEW', NULL, NULL)
+     ON CONFLICT (order_id) DO NOTHING`,
+    [
       order.orderId,
       order.resId,
       order.placedAt,
@@ -82,37 +81,43 @@ export function createDeliveryTicket(order: CrystalOrderState): void {
       scheduledDueAt(order.scheduledSlot, order.placedAt).toISOString(),
       JSON.stringify(order.handling.flags),
       order.handling.allergyNote,
-      JSON.stringify(lines)
-    );
+      JSON.stringify(lines),
+    ]
+  );
 }
 
-export function listDeliveryTickets(outletId: number): DeliveryTicket[] {
-  return (
-    getDb()
-      .prepare(
-        `SELECT * FROM delivery_tickets WHERE outlet_id = ?
-         ORDER BY CASE status WHEN 'NEW' THEN 0 WHEN 'ACCEPTED' THEN 1 ELSE 2 END, due_at
-         LIMIT 100`
-      )
-      .all(outletId) as Record<string, unknown>[]
-  ).map(toTicket);
+export async function listDeliveryTickets(outletId: number): Promise<DeliveryTicket[]> {
+  const found = await rows<Record<string, unknown>>(
+    `SELECT * FROM delivery_tickets WHERE outlet_id = $1
+     ORDER BY CASE status WHEN 'NEW' THEN 0 WHEN 'ACCEPTED' THEN 1 ELSE 2 END, due_at
+     LIMIT 100`,
+    [outletId]
+  );
+  return found.map(toTicket);
 }
 
 /**
  * Move a ticket forward one step. Only forward: a ticket cannot un-ready itself, because
  * the timestamps it leaves behind are what prep-time measurement is built on.
  */
-export function advanceDeliveryTicket(orderId: unknown, next: unknown): DeliveryTicket {
+export async function advanceDeliveryTicket(
+  actorId: string,
+  orderId: unknown,
+  next: unknown
+): Promise<DeliveryTicket> {
   if (typeof orderId !== "string" || !TICKET_STATUSES.some((status) => status === next)) {
     throw new Error("Provide a ticket and a known status.");
   }
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM delivery_tickets WHERE order_id = ?")
-    .get(orderId) as Record<string, unknown> | undefined;
+  const row = await one<Record<string, unknown>>(
+    "SELECT * FROM delivery_tickets WHERE order_id = $1",
+    [orderId]
+  );
   if (!row) {
     throw new Error("That ticket is not on this counter.");
   }
+
+  // Checked here, not at the route, so no later caller can reach it unauthorised.
+  await assertOutletStaff(actorId, Number(row.outlet_id));
 
   const current = TICKET_STATUSES.indexOf(String(row.status) as TicketStatus);
   const target = TICKET_STATUSES.indexOf(next as TicketStatus);
@@ -121,22 +126,28 @@ export function advanceDeliveryTicket(orderId: unknown, next: unknown): Delivery
   }
 
   const now = new Date().toISOString();
-  db.prepare(
+  // Guarded on the status it was read at, so two counters racing cannot both advance it.
+  const changed = await run(
     `UPDATE delivery_tickets
-     SET status = ?, accepted_at = COALESCE(accepted_at, ?), ready_at = ?
-     WHERE order_id = ?`
-  ).run(
-    next as string,
-    next === "ACCEPTED" ? now : null,
-    next === "READY" ? now : (row.ready_at as string | null),
-    orderId
+     SET status = $1, accepted_at = COALESCE(accepted_at, $2), ready_at = $3
+     WHERE order_id = $4 AND status = $5`,
+    [
+      next as string,
+      next === "ACCEPTED" ? now : null,
+      next === "READY" ? now : (row.ready_at as string | null),
+      orderId,
+      String(row.status),
+    ]
   );
+  if (changed === 0) {
+    throw new Error("That ticket moved on before this change landed. Reload the counter.");
+  }
 
   return toTicket(
-    db.prepare("SELECT * FROM delivery_tickets WHERE order_id = ?").get(orderId) as Record<
-      string,
-      unknown
-    >
+    (await one<Record<string, unknown>>(
+      "SELECT * FROM delivery_tickets WHERE order_id = $1",
+      [orderId]
+    ))!
   );
 }
 
@@ -145,14 +156,14 @@ export function advanceDeliveryTicket(orderId: unknown, next: unknown): Delivery
  * the kitchen has accepted it, because cooking may already be under way. An order with no
  * ticket has nothing to withdraw.
  */
-export function withdrawUnstartedTicket(orderId: string): boolean {
-  const db = getDb();
-  const row = db.prepare("SELECT status FROM delivery_tickets WHERE order_id = ?").get(orderId) as
-    | Record<string, unknown>
-    | undefined;
+export async function withdrawUnstartedTicket(orderId: string): Promise<boolean> {
+  const row = await one<Record<string, unknown>>(
+    "SELECT status FROM delivery_tickets WHERE order_id = $1",
+    [orderId]
+  );
   if (!row) return true;
   if (String(row.status) !== "NEW") return false;
-  db.prepare("DELETE FROM delivery_tickets WHERE order_id = ? AND status = 'NEW'").run(orderId);
+  await run("DELETE FROM delivery_tickets WHERE order_id = $1 AND status = 'NEW'", [orderId]);
   return true;
 }
 
@@ -167,16 +178,18 @@ export interface PrepTimeStats {
  * percentile rather than one padded number, and only once there are enough samples for it
  * to mean anything.
  */
-export function prepTimeStats(outletId: number, minimumSample = 5): PrepTimeStats {
-  const durations = (
-    getDb()
-      .prepare(
-        `SELECT accepted_at, ready_at FROM delivery_tickets
-         WHERE outlet_id = ? AND status = 'READY' AND accepted_at IS NOT NULL
-         ORDER BY ready_at DESC LIMIT 100`
-      )
-      .all(outletId) as Record<string, unknown>[]
-  )
+export async function prepTimeStats(
+  outletId: number,
+  minimumSample = 5
+): Promise<PrepTimeStats> {
+  const found = await rows<Record<string, unknown>>(
+    `SELECT accepted_at, ready_at FROM delivery_tickets
+     WHERE outlet_id = $1 AND status = 'READY' AND accepted_at IS NOT NULL
+     ORDER BY ready_at DESC LIMIT 100`,
+    [outletId]
+  );
+
+  const durations = found
     .map((row) => (Date.parse(String(row.ready_at)) - Date.parse(String(row.accepted_at))) / 60000)
     .filter((minutes) => Number.isFinite(minutes) && minutes >= 0)
     .sort((a, b) => a - b);

@@ -1,4 +1,5 @@
-import { getDb } from "./db";
+import type { PoolClient } from "pg";
+import { one, rows, transaction } from "./pg";
 import { findDishAcrossRestaurants } from "@/lib/cartEngine";
 import {
   calculatePosBill,
@@ -40,11 +41,19 @@ function repriceSession(session: PosTableSession): PosTableSession {
 /** Thrown when a device edited a table that moved on underneath it; reloading resolves it. */
 class StaleRevisionError extends Error {}
 
-function writeSession(userId: string, session: PosTableSession): void {
-  const db = getDb();
-  const existing = db
-    .prepare("SELECT revision FROM pos_sessions WHERE id = ? AND user_id = ?")
-    .get(session.sessionId, userId) as Record<string, unknown> | undefined;
+async function writeSession(
+  client: PoolClient,
+  userId: string,
+  session: PosTableSession
+): Promise<void> {
+  // FOR UPDATE: the revision is read and then written against, so the row must stay put
+  // for the rest of this transaction.
+  const existing = (
+    await client.query("SELECT revision FROM pos_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE", [
+      session.sessionId,
+      userId,
+    ])
+  ).rows[0] as Record<string, unknown> | undefined;
 
   // Optimistic concurrency: the device must have based its edit on what the server holds.
   const storedRevision = existing ? Number(existing.revision) : 0;
@@ -55,73 +64,78 @@ function writeSession(userId: string, session: PosTableSession): void {
   }
   const revision = storedRevision + 1;
 
-  db.prepare("DELETE FROM pos_sessions WHERE id = ? AND user_id = ?").run(session.sessionId, userId);
-  db.prepare(
+  // Lines, tickets and voids cascade from the session row, so this clears them too.
+  await client.query("DELETE FROM pos_sessions WHERE id = $1 AND user_id = $2", [
+    session.sessionId,
+    userId,
+  ]);
+  await client.query(
     `INSERT INTO pos_sessions (id, user_id, shift_id, outlet_id, outlet_name, table_id, guest_count,
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
        merged_into_session_id, payment_method, payment_amount_tendered, payment_change_due,
        payment_settled_at, synced_at, revision)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    session.sessionId,
-    userId,
-    session.shiftId,
-    session.outletId,
-    session.outletName,
-    session.tableId,
-    session.guestCount,
-    session.serverName,
-    session.openedAt,
-    session.status,
-    session.discountPercent,
-    session.serviceChargePercent,
-    session.nextKotNumber,
-    session.mergedIntoSessionId,
-    session.payment?.method ?? null,
-    session.payment?.amountTendered ?? null,
-    session.payment?.changeDue ?? null,
-    session.payment?.settledAt ?? null,
-    new Date().toISOString(),
-    revision
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+    [
+      session.sessionId,
+      userId,
+      session.shiftId,
+      session.outletId,
+      session.outletName,
+      session.tableId,
+      session.guestCount,
+      session.serverName,
+      session.openedAt,
+      session.status,
+      session.discountPercent,
+      session.serviceChargePercent,
+      session.nextKotNumber,
+      session.mergedIntoSessionId,
+      session.payment?.method ?? null,
+      session.payment?.amountTendered ?? null,
+      session.payment?.changeDue ?? null,
+      session.payment?.settledAt ?? null,
+      new Date().toISOString(),
+      revision,
+    ]
   );
 
-  const line = db.prepare(
-    `INSERT INTO pos_lines (session_id, line_id, item_id, name, unit_price, quantity, dietary, note, kot_number)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
   for (const entry of session.lines) {
-    line.run(
-      session.sessionId,
-      entry.lineId,
-      entry.itemId,
-      entry.name,
-      entry.unitPrice,
-      entry.quantity,
-      entry.dietary,
-      entry.note,
-      entry.kotNumber
+    await client.query(
+      `INSERT INTO pos_lines (session_id, line_id, item_id, name, unit_price, quantity, dietary, note, kot_number)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        session.sessionId,
+        entry.lineId,
+        entry.itemId,
+        entry.name,
+        entry.unitPrice,
+        entry.quantity,
+        entry.dietary,
+        entry.note,
+        entry.kotNumber,
+      ]
     );
   }
 
-  const ticket = db.prepare(
-    `INSERT INTO pos_tickets (session_id, kot_number, fired_at, merged_from, lines_json)
-     VALUES (?, ?, ?, ?, ?)`
-  );
   for (const entry of session.tickets) {
-    ticket.run(
-      session.sessionId,
-      entry.kotNumber,
-      entry.firedAt,
-      entry.mergedFrom,
-      JSON.stringify(entry.lines)
+    await client.query(
+      `INSERT INTO pos_tickets (session_id, kot_number, fired_at, merged_from, lines_json)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        session.sessionId,
+        entry.kotNumber,
+        entry.firedAt,
+        entry.mergedFrom,
+        JSON.stringify(entry.lines),
+      ]
     );
   }
 
-  const voided = db.prepare(
-    "INSERT INTO pos_voids (session_id, name, quantity, reason, voided_at) VALUES (?, ?, ?, ?, ?)"
-  );
   for (const entry of session.voids) {
-    voided.run(session.sessionId, entry.name, entry.quantity, entry.reason, entry.voidedAt);
+    await client.query(
+      "INSERT INTO pos_voids (session_id, name, quantity, reason, voided_at) VALUES ($1, $2, $3, $4, $5)",
+      [session.sessionId, entry.name, entry.quantity, entry.reason, entry.voidedAt]
+    );
   }
 }
 
@@ -142,44 +156,42 @@ export interface PosSyncResult {
  * Push a terminal's offline queue. The device is the only writer, so this is a full replace of
  * the sessions it sent; sessions it no longer knows about are left alone rather than deleted.
  */
-export function syncPosState(userId: string, payload: unknown): PosSyncResult {
+export async function syncPosState(userId: string, payload: unknown): Promise<PosSyncResult> {
   const body = (payload ?? {}) as Record<string, unknown>;
   const incoming = restorePosSessions(JSON.stringify(body.sessions ?? []));
   const shift = restorePosShift(JSON.stringify(body.shift ?? null));
 
-  const db = getDb();
   const rejected: PosSyncResult["rejected"] = [];
   const conflicts: PosSyncResult["conflicts"] = [];
-  // IMMEDIATE: writeSession reads a revision and then writes based on it, which must not
-  // interleave with another connection's write.
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.prepare("DELETE FROM pos_shifts WHERE user_id = ?").run(userId);
+
+  await transaction(async (client) => {
+    await client.query("DELETE FROM pos_shifts WHERE user_id = $1", [userId]);
     if (shift) {
-      db.prepare(
+      await client.query(
         `INSERT INTO pos_shifts (id, user_id, outlet_id, outlet_name, opened_by, opened_at, opening_cash)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        shift.shiftId,
-        userId,
-        shift.outletId,
-        shift.outletName,
-        shift.openedBy,
-        shift.openedAt,
-        shift.openingCash
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          shift.shiftId,
+          userId,
+          shift.outletId,
+          shift.outletName,
+          shift.openedBy,
+          shift.openedAt,
+          shift.openingCash,
+        ]
       );
     }
 
     for (const session of incoming) {
       // Each table is all-or-nothing on its own: a failure after writeSession has deleted
       // the old rows must not commit a half-written table alongside the accepted ones.
-      db.exec("SAVEPOINT pos_table");
+      await client.query("SAVEPOINT pos_table");
       try {
-        writeSession(userId, repriceSession(session));
-        db.exec("RELEASE pos_table");
+        await writeSession(client, userId, repriceSession(session));
+        await client.query("RELEASE SAVEPOINT pos_table");
       } catch (error) {
-        db.exec("ROLLBACK TO pos_table");
-        db.exec("RELEASE pos_table");
+        await client.query("ROLLBACK TO SAVEPOINT pos_table");
+        await client.query("RELEASE SAVEPOINT pos_table");
         const entry = {
           sessionId: session.sessionId,
           reason: error instanceof Error ? error.message : "Could not store this table.",
@@ -188,38 +200,63 @@ export function syncPosState(userId: string, payload: unknown): PosSyncResult {
         else rejected.push(entry);
       }
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 
-  const state = loadPosState(userId, rejected, conflicts);
+  const state = await loadPosState(userId, rejected, conflicts);
   // Only tables the server actually accepted become claimable bills.
-  recordSettledBills(state.sessions);
+  await recordSettledBills(state.sessions);
   for (const session of state.sessions) {
     if (session.status !== "SETTLED") continue;
-    const code = getClaimCode(session.sessionId);
+    const code = await getClaimCode(session.sessionId);
     if (code) state.claimCodes[session.sessionId] = code;
   }
   return state;
 }
 
-export function loadPosState(
+export async function loadPosState(
   userId: string,
   rejected: PosSyncResult["rejected"] = [],
   conflicts: PosSyncResult["conflicts"] = []
-): PosSyncResult {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT * FROM pos_sessions WHERE user_id = ? ORDER BY opened_at LIMIT 200")
-    .all(userId) as Record<string, unknown>[];
+): Promise<PosSyncResult> {
+  const sessionRows = await rows<Record<string, unknown>>(
+    "SELECT * FROM pos_sessions WHERE user_id = $1 ORDER BY opened_at LIMIT 200",
+    [userId]
+  );
 
-  const lineStatement = db.prepare("SELECT * FROM pos_lines WHERE session_id = ? ORDER BY id");
-  const ticketStatement = db.prepare("SELECT * FROM pos_tickets WHERE session_id = ? ORDER BY kot_number");
-  const voidStatement = db.prepare("SELECT * FROM pos_voids WHERE session_id = ? ORDER BY id");
+  const ids = sessionRows.map((row) => String(row.id));
+  // Three queries for the whole floor rather than three per table.
+  const [allLines, allTickets, allVoids] = ids.length
+    ? await Promise.all([
+        rows<Record<string, unknown>>(
+          "SELECT * FROM pos_lines WHERE session_id = ANY($1::text[]) ORDER BY id",
+          [ids]
+        ),
+        rows<Record<string, unknown>>(
+          "SELECT * FROM pos_tickets WHERE session_id = ANY($1::text[]) ORDER BY kot_number",
+          [ids]
+        ),
+        rows<Record<string, unknown>>(
+          "SELECT * FROM pos_voids WHERE session_id = ANY($1::text[]) ORDER BY id",
+          [ids]
+        ),
+      ])
+    : [[], [], []];
 
-  const rebuilt = rows.map((row) => ({
+  const bucket = (source: Record<string, unknown>[]) => {
+    const map = new Map<string, Record<string, unknown>[]>();
+    for (const row of source) {
+      const key = String(row.session_id);
+      const found = map.get(key);
+      if (found) found.push(row);
+      else map.set(key, [row]);
+    }
+    return map;
+  };
+  const linesBy = bucket(allLines);
+  const ticketsBy = bucket(allTickets);
+  const voidsBy = bucket(allVoids);
+
+  const rebuilt = sessionRows.map((row) => ({
     sessionId: String(row.id),
     outletId: Number(row.outlet_id),
     outletName: String(row.outlet_name),
@@ -244,7 +281,7 @@ export function loadPosState(
             changeDue: Number(row.payment_change_due),
             settledAt: String(row.payment_settled_at),
           },
-    lines: (lineStatement.all(String(row.id)) as Record<string, unknown>[]).map((line) => ({
+    lines: (linesBy.get(String(row.id)) ?? []).map((line) => ({
       lineId: String(line.line_id),
       itemId: String(line.item_id),
       name: String(line.name),
@@ -254,7 +291,7 @@ export function loadPosState(
       note: String(line.note),
       kotNumber: line.kot_number === null ? null : Number(line.kot_number),
     })),
-    tickets: (ticketStatement.all(String(row.id)) as Record<string, unknown>[]).map((ticket) => ({
+    tickets: (ticketsBy.get(String(row.id)) ?? []).map((ticket) => ({
       kotNumber: Number(ticket.kot_number),
       tableId: String(row.table_id),
       serverName: String(row.server_name),
@@ -262,7 +299,7 @@ export function loadPosState(
       mergedFrom: ticket.merged_from === null ? null : String(ticket.merged_from),
       lines: JSON.parse(String(ticket.lines_json)),
     })),
-    voids: (voidStatement.all(String(row.id)) as Record<string, unknown>[]).map((entry) => ({
+    voids: (voidsBy.get(String(row.id)) ?? []).map((entry) => ({
       name: String(entry.name),
       quantity: Number(entry.quantity),
       reason: String(entry.reason),
@@ -272,9 +309,10 @@ export function loadPosState(
 
   // Re-validate on the way out so a hand-edited row cannot reach the terminal.
   const sessions = restorePosSessions(JSON.stringify(rebuilt));
-  const shiftRow = db
-    .prepare("SELECT * FROM pos_shifts WHERE user_id = ? LIMIT 1")
-    .get(userId) as Record<string, unknown> | undefined;
+  const shiftRow = await one<Record<string, unknown>>(
+    "SELECT * FROM pos_shifts WHERE user_id = $1 LIMIT 1",
+    [userId]
+  );
 
   return {
     sessions,

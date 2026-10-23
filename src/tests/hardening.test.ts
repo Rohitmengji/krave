@@ -1,6 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DatabaseSync } from "node:sqlite";
-import { useTestDb } from "@/lib/server/db";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  hasTestDatabase,
+  resetTestDatabase,
+  startTestDatabase,
+  stopTestDatabase,
+} from "./support/testDb";
 import {
   createPasswordReset,
   MAX_CLIENT_LOGIN_ATTEMPTS,
@@ -12,6 +16,7 @@ import {
 import { newId } from "@/lib/ids";
 import { createDemoOrder, DEMO_PAYMENT_METHODS } from "@/lib/checkout";
 import { deleteOrder, listOrders, saveOrder } from "@/lib/server/accountStore";
+import { grantOutletStaff } from "@/lib/server/staff";
 import {
   advanceDeliveryTicket,
   createDeliveryTicket,
@@ -146,16 +151,17 @@ describe("checkout intent keeps one idempotency key per order", () => {
   });
 });
 
-describe("auth under concurrency", () => {
-  let db: DatabaseSync;
-
-  beforeEach(() => {
-    db = new DatabaseSync(":memory:");
-    useTestDb(db);
+describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
+  beforeAll(async () => {
+    await startTestDatabase();
   });
 
-  afterEach(() => {
-    db.close();
+  afterAll(async () => {
+    await stopTestDatabase();
+  });
+
+  beforeEach(async () => {
+    await resetTestDatabase();
   });
 
   it("caps a parallel burst of guesses at the per-account limit", async () => {
@@ -165,6 +171,11 @@ describe("auth under concurrency", () => {
     );
     const outcomes = await Promise.allSettled(burst);
     const messages = outcomes.map((o) => (o.status === "rejected" ? String(o.reason?.message) : "ok"));
+
+    // Every outcome is one of the two expected answers, so a stray error is reported by name
+    // rather than surfacing only as a count that is one short.
+    const unexpected = messages.filter((m) => !/incorrect|too many/i.test(m));
+    expect(unexpected).toEqual([]);
 
     // Every guess that reached the password check counted against the limit before it ran.
     expect(messages.filter((m) => /incorrect/i.test(m))).toHaveLength(MAX_LOGIN_ATTEMPTS);
@@ -189,11 +200,12 @@ describe("auth under concurrency", () => {
     await expect(
       verifyCredentials({ email: "victim-after@krave.test", password: "spray-spray-spray" }, attacker)
     ).rejects.toThrow(/too many/i);
-  });
+    // Reaching the client ceiling takes one real sign-in per attempt, each a few round trips.
+  }, 180_000);
 
   it("lets only one of two concurrent resets use the same token", async () => {
     await registerUser(CREDENTIALS);
-    const { token } = createPasswordReset({ email: CREDENTIALS.email })!;
+    const { token } = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
     const outcomes = await Promise.allSettled([
       resetPassword(token, "first-new-password"),
@@ -210,11 +222,11 @@ describe("auth under concurrency", () => {
 
   it("rejects a reset whose token was superseded while its password was hashing", async () => {
     await registerUser(CREDENTIALS);
-    const { token } = createPasswordReset({ email: CREDENTIALS.email })!;
+    const { token } = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
     const inFlight = resetPassword(token, "attacker-chosen-password");
     // A newer request discards every unused token, including the one in flight.
-    createPasswordReset({ email: CREDENTIALS.email });
+    await createPasswordReset({ email: CREDENTIALS.email });
 
     await expect(inFlight).rejects.toThrow(/expired|already used/i);
     await expect(verifyCredentials(CREDENTIALS, "10.2.2.2")).resolves.toMatchObject({
@@ -223,7 +235,7 @@ describe("auth under concurrency", () => {
   });
 });
 
-describe("cancelling an order reaches the kitchen", () => {
+describe.skipIf(!hasTestDatabase)("cancelling an order reaches the kitchen", () => {
   const CHECKOUT = {
     items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"] }],
     addressId: "addr_cp_514",
@@ -232,40 +244,49 @@ describe("cancelling an order reaches the kitchen", () => {
     isGoldMember: false,
     riderTip: 0,
   };
-  let db: DatabaseSync;
 
-  beforeEach(() => {
-    db = new DatabaseSync(":memory:");
-    useTestDb(db);
+  beforeAll(async () => {
+    await startTestDatabase();
   });
 
-  afterEach(() => {
-    db.close();
+  afterAll(async () => {
+    await stopTestDatabase();
+  });
+
+  beforeEach(async () => {
+    await resetTestDatabase();
   });
 
   async function placeOrder() {
     const user = await registerUser(CREDENTIALS);
     const order = createDemoOrder(CHECKOUT);
-    createDeliveryTicket(order);
-    saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
-    return { user, order };
+    await createDeliveryTicket(order);
+    await saveOrder(user.id, order, { addressId: CHECKOUT.addressId, idempotencyKey: null });
+
+    const operator = await registerUser({ ...CREDENTIALS, email: "counter@krave.test" });
+    await grantOutletStaff(operator.id, operator.id, order.resId);
+    return { user, order, counterId: operator.id };
   }
 
   it("takes a ticket nobody accepted off the counter, so it is not cooked", async () => {
-    const { user, order } = await placeOrder();
-    deleteOrder(user.id, order.orderId);
+    const { user, order, counterId } = await placeOrder();
+    await deleteOrder(user.id, order.orderId);
 
-    expect(listOrders(user.id)).toHaveLength(0);
-    expect(listDeliveryTickets(order.resId)).toHaveLength(0);
-    expect(() => advanceDeliveryTicket(order.orderId, "ACCEPTED")).toThrow(/not on this counter/i);
+    expect(await listOrders(user.id)).toHaveLength(0);
+    expect(await listDeliveryTickets(order.resId)).toHaveLength(0);
+    await expect(
+      advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED")
+    ).rejects.toThrow(/not on this counter/i);
   });
 
   it("refuses once the kitchen has accepted the ticket and leaves both records intact", async () => {
-    const { user, order } = await placeOrder();
-    advanceDeliveryTicket(order.orderId, "ACCEPTED");
+    const { user, order, counterId } = await placeOrder();
+    await advanceDeliveryTicket(counterId, order.orderId, "ACCEPTED");
 
-    expect(() => deleteOrder(user.id, order.orderId)).toThrow(/already reached the kitchen/i);
-    expect(listOrders(user.id)).toHaveLength(1);
-    expect(listDeliveryTickets(order.resId)[0]).toMatchObject({ status: "ACCEPTED" });
+    await expect(deleteOrder(user.id, order.orderId)).rejects.toThrow(
+      /already reached the kitchen/i
+    );
+    expect(await listOrders(user.id)).toHaveLength(1);
+    expect((await listDeliveryTickets(order.resId))[0]).toMatchObject({ status: "ACCEPTED" });
   });
 });

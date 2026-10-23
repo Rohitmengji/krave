@@ -1,4 +1,5 @@
-import { getDb } from "./db";
+import { rows, run } from "./pg";
+import { assertOutletStaff } from "./staff";
 import { findDishAcrossRestaurants } from "@/lib/cartEngine";
 import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
 
@@ -8,20 +9,20 @@ import { RESTAURANTS_DATA } from "@/data/zomatoReconstructedData";
  * marking requires a signed-in operator, since one anonymous visitor must not be able to
  * take a dish off a real menu.
  */
-export function listUnavailableItems(outletId?: number): string[] {
-  const db = getDb();
-  const rows = (
-    outletId === undefined
-      ? db.prepare("SELECT item_id FROM dish_availability").all()
-      : db.prepare("SELECT item_id FROM dish_availability WHERE outlet_id = ?").all(outletId)
-  ) as Record<string, unknown>[];
-  return rows.map((row) => String(row.item_id));
+export async function listUnavailableItems(outletId?: number): Promise<string[]> {
+  const found = await (outletId === undefined
+    ? rows<Record<string, unknown>>("SELECT item_id FROM dish_availability")
+    : rows<Record<string, unknown>>(
+        "SELECT item_id FROM dish_availability WHERE outlet_id = $1",
+        [outletId]
+      ));
+  return found.map((row) => String(row.item_id));
 }
 
-export function setDishAvailability(
+export async function setDishAvailability(
   userId: string,
   input: unknown
-): { unavailableItemIds: string[]; itemId: string; unavailable: boolean } {
+): Promise<{ unavailableItemIds: string[]; itemId: string; unavailable: boolean }> {
   const body = (input ?? {}) as Record<string, unknown>;
   const itemId = typeof body.itemId === "string" ? body.itemId : "";
   const found = findDishAcrossRestaurants(itemId);
@@ -34,30 +35,32 @@ export function setDishAvailability(
 
   // The owning outlet comes from the catalog, never from the caller.
   const outletId = found.restaurant.resId;
-  const db = getDb();
+  await assertOutletStaff(userId, outletId);
+
   if (body.unavailable) {
-    db.prepare(
+    await run(
       `INSERT INTO dish_availability (outlet_id, item_id, marked_at, marked_by)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(outlet_id, item_id) DO UPDATE SET marked_at = excluded.marked_at,
-         marked_by = excluded.marked_by`
-    ).run(outletId, itemId, new Date().toISOString(), userId);
-  } else {
-    db.prepare("DELETE FROM dish_availability WHERE outlet_id = ? AND item_id = ?").run(
-      outletId,
-      itemId
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (outlet_id, item_id) DO UPDATE SET marked_at = excluded.marked_at,
+         marked_by = excluded.marked_by`,
+      [outletId, itemId, new Date().toISOString(), userId]
     );
+  } else {
+    await run("DELETE FROM dish_availability WHERE outlet_id = $1 AND item_id = $2", [
+      outletId,
+      itemId,
+    ]);
   }
 
   return {
-    unavailableItemIds: listUnavailableItems(),
+    unavailableItemIds: await listUnavailableItems(),
     itemId,
     unavailable: body.unavailable,
   };
 }
 
 /** Drops rows for dishes the catalog no longer has, so a stale 86 cannot hide a live menu. */
-export function pruneUnknownAvailability(): number {
+export async function pruneUnknownAvailability(): Promise<number> {
   const known = new Set(
     RESTAURANTS_DATA.flatMap((restaurant) =>
       restaurant.menus.flatMap((menu) =>
@@ -65,20 +68,20 @@ export function pruneUnknownAvailability(): number {
       )
     )
   );
-  const db = getDb();
-  const rows = db.prepare("SELECT outlet_id, item_id FROM dish_availability").all() as Record<
-    string,
-    unknown
-  >[];
+  const present = await rows<Record<string, unknown>>(
+    "SELECT outlet_id, item_id FROM dish_availability"
+  );
 
-  let removed = 0;
-  const remove = db.prepare("DELETE FROM dish_availability WHERE outlet_id = ? AND item_id = ?");
-  for (const row of rows) {
-    const itemId = String(row.item_id);
-    if (!known.has(itemId)) {
-      remove.run(Number(row.outlet_id), itemId);
-      removed += 1;
-    }
-  }
-  return removed;
+  const stale = present.filter((row) => !known.has(String(row.item_id)));
+  if (stale.length === 0) return 0;
+
+  // One statement rather than a loop: every row is a network round trip here.
+  await run(
+    `DELETE FROM dish_availability
+     WHERE (outlet_id, item_id) IN (
+       SELECT * FROM UNNEST($1::int[], $2::text[])
+     )`,
+    [stale.map((row) => Number(row.outlet_id)), stale.map((row) => String(row.item_id))]
+  );
+  return stale.length;
 }

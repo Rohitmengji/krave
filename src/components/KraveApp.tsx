@@ -18,6 +18,7 @@ import {
   type KraveSessionState,
 } from "@/lib/checkout";
 import { POS_SEAT_HANDOFF_KEY } from "@/lib/pos/posEngine";
+import { formatBookingDate } from "@/lib/outletClock";
 import {
   checkoutFingerprint,
   readCheckoutIntent,
@@ -1538,7 +1539,7 @@ export function KraveApp({
                         <div>
                           <h4 className="font-bold text-sm">{booking.restaurantName}</h4>
                           <p className="text-xs opacity-70">
-                            {booking.date} at {booking.timeSlot} · {booking.guests}{" "}
+                            {formatBookingDate(booking.date)} at {booking.timeSlot} · {booking.guests}{" "}
                             {booking.guests === 1 ? "Guest" : "Guests"}
                           </p>
                           <p className="text-xs text-emerald-400 font-semibold mt-0.5">
@@ -1762,7 +1763,7 @@ export function KraveApp({
             notify(
               "RESERVATION",
               `Table confirmed at ${booking.restaurantName}`,
-              `${booking.date} at ${booking.timeSlot} for ${booking.guests} guests · ${booking.bookingId}`
+              `${formatBookingDate(booking.date)} at ${booking.timeSlot} for ${booking.guests} guests · ${booking.bookingId}`
             );
             showToast(
               `Table booked at ${booking.restaurantName} for ${booking.guests} guests!`

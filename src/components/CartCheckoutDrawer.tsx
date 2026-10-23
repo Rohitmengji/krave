@@ -1,8 +1,16 @@
 "use client";
 
 import React, { useEffect, useEffectEvent, useRef, useState } from "react";
-import { allergenLabels, DELIVERY_SLOTS, DEMO_PAYMENT_METHODS, KITCHEN_FLAGS, type KitchenHandling } from "@/lib/checkout";
+import {
+  allergenLabels,
+  DELIVERY_SLOTS,
+  DEMO_PAYMENT_METHODS,
+  deliverySlotProblem,
+  KITCHEN_FLAGS,
+  type KitchenHandling,
+} from "@/lib/checkout";
 import { CART_LIMITS } from "@/lib/cartEngine";
+import { useMinuteClock } from "@/lib/useMinuteClock";
 import {
   X,
   ShoppingBag,
@@ -114,11 +122,17 @@ export function CartCheckoutDrawer({
     },
   ]);
 
+  const clockMinute = useMinuteClock();
+
   if (!isOpen) return null;
 
   const hasUnavailableItem = items.some((line) => unavailableItemIds.includes(line.item.id));
   const allergySelected = handling.flags.includes("ALLERGY");
   const allergyNoteMissing = allergySelected && handling.allergyNote.trim().length < 3;
+  const slotProblem = (slot: string) =>
+    clockMinute === null ? null : deliverySlotProblem(slot, new Date(clockMinute));
+  // A window saved earlier (or left open in a tab) can pass; the server refuses it too.
+  const scheduledSlotProblem = slotProblem(scheduledSlot);
 
   const toggleFlag = (id: KitchenHandling["flags"][number]) => {
     const flags = handling.flags.includes(id)
@@ -276,7 +290,9 @@ export function CartCheckoutDrawer({
                     aria-pressed={scheduledSlot === slot}
                     data-testid={`schedule-slot-${slot.replace(/\W+/g, "-").toLowerCase()}`}
                     onClick={() => onSelectScheduledSlot(slot)}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition ${
+                    disabled={scheduledSlot !== slot && slotProblem(slot) !== null}
+                    title={slotProblem(slot) ?? undefined}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition disabled:opacity-40 disabled:cursor-not-allowed ${
                       scheduledSlot === slot
                         ? "text-white border-transparent"
                         : isDark
@@ -291,7 +307,11 @@ export function CartCheckoutDrawer({
                   </button>
                 ))}
               </div>
-              {scheduledSlot !== DELIVERY_SLOTS[0] && (
+              {scheduledSlotProblem ? (
+                <p role="status" data-testid="schedule-slot-problem" className="text-[11px] text-amber-400 font-semibold">
+                  {scheduledSlotProblem}
+                </p>
+              ) : scheduledSlot !== DELIVERY_SLOTS[0] && (
                 <p className="text-[10px] opacity-65">
                   Scheduling is recorded on the demo order. Nothing is dispatched at that time.
                 </p>
@@ -701,7 +721,7 @@ export function CartCheckoutDrawer({
               type="button"
               onClick={handleTriggerZPayCheckout}
               data-testid="place-order-zpaykit-btn"
-              disabled={checkoutPending || hasUnavailableItem || allergyNoteMissing}
+              disabled={checkoutPending || hasUnavailableItem || allergyNoteMissing || scheduledSlotProblem !== null}
               aria-busy={checkoutPending}
               className="w-full py-3.5 px-5 rounded-2xl text-sm font-black text-white shadow-xl flex items-center justify-between transition hover:opacity-95 disabled:opacity-50"
               style={{ backgroundColor: theme.primaryHex }}

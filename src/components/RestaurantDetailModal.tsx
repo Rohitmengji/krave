@@ -22,6 +22,7 @@ import {
   BrandThemePreset,
   DietaryType,
   DiningReservation,
+  DiningSlot,
   DishItem,
   ModifierOption,
   RestaurantEntity,
@@ -30,6 +31,8 @@ import {
 import { calculateDiningPayBill, CART_LIMITS, dishModifierGroups } from "@/lib/cartEngine";
 import { customiserProblem, customiserReducer } from "@/lib/dishCustomiser";
 import { ALLERGENS, allergenLabels, dishAllergenStatus, portionSummary } from "@/lib/checkout";
+import { bookingDateOptions, bookingTimeProblem, formatBookingDate } from "@/lib/outletClock";
+import { useMinuteClock } from "@/lib/useMinuteClock";
 
 interface ReviewFormState {
   error: string | null;
@@ -77,17 +80,15 @@ export function RestaurantDetailModal({
 
   const [customiser, dispatchCustomiser] = useReducer(customiserReducer, null);
 
-  // Dining Table Reservation State
-  const [bookingDate, setBookingDate] = useState("Today, Oct 22");
+  // Dining Table Reservation State. Only explicit picks are stored; the defaults are derived
+  // from the clock on each render, so they stay right across midnight without an effect.
+  const clockMinute = useMinuteClock();
+  const [pickedDate, setPickedDate] = useState<string | null>(null);
   const [bookingGuests, setBookingGuests] = useState(2);
-  const [selectedSlot, setSelectedSlot] = useState(
-    restaurant.diningSlots[0]?.time || "08:00 PM"
-  );
-  const [guestName, setGuestName] = useState("Rohit Mengji");
-  const [guestPhone, setGuestPhone] = useState("+91 98765 43210");
-  const [specialRequest, setSpecialRequest] = useState(
-    "Courtyard window table if available"
-  );
+  const [pickedSlot, setPickedSlot] = useState<string | null>(null);
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
+  const [specialRequest, setSpecialRequest] = useState("");
   const [latestBooking, setLatestBooking] = useState<DiningReservation | null>(null);
 
   // DiningPay Calculator State
@@ -124,6 +125,26 @@ export function RestaurantDetailModal({
 
   const customiserBlocked = customiser ? customiserProblem(customiser) : null;
 
+  const clockNow = clockMinute === null ? null : new Date(clockMinute);
+  const dateOptions = clockNow ? bookingDateOptions(clockNow) : [];
+  const bookingDate = pickedDate ?? dateOptions[0]?.value ?? "";
+  const pickedDatePassed = pickedDate !== null && !dateOptions.some((option) => option.value === pickedDate);
+  const slotClosedReason = (slot: DiningSlot): string | null => {
+    if (slot.seatsLeft <= 0) return "Full";
+    if (!clockNow) return "…";
+    return bookingTimeProblem(bookingDate, slot.time, clockNow) ? "Passed" : null;
+  };
+  const selectedSlot =
+    pickedSlot ?? restaurant.diningSlots.find((slot) => !slotClosedReason(slot))?.time ?? null;
+  const selectedSlotEntry = restaurant.diningSlots.find((slot) => slot.time === selectedSlot);
+  const bookingProblem = !clockNow
+    ? "Checking available times…"
+    : !selectedSlotEntry
+    ? "No tables are left for this day. Please pick another day."
+    : selectedSlotEntry.seatsLeft <= 0
+    ? `${selectedSlotEntry.time} is fully booked. Please pick another time.`
+    : bookingTimeProblem(bookingDate, selectedSlotEntry.time, clockNow);
+
   const confirmDishCustomization = () => {
     if (!customiser || customiserBlocked) return;
     onAddToCart(
@@ -138,7 +159,7 @@ export function RestaurantDetailModal({
 
   const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (bookingLock.current) return;
+    if (bookingLock.current || bookingProblem || !selectedSlot) return;
     bookingLock.current = true;
     setBookingError(null);
     setBookingSubmitting(true);
@@ -727,22 +748,32 @@ export function RestaurantDetailModal({
                 <form onSubmit={handleConfirmBooking} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1 opacity-75">
+                      <label
+                        htmlFor="booking-date"
+                        className="block text-xs font-bold mb-1 opacity-75"
+                      >
                         Select Date
                       </label>
                       <select
+                        id="booking-date"
                         value={bookingDate}
-                        onChange={(e) => setBookingDate(e.target.value)}
+                        onChange={(e) => setPickedDate(e.target.value)}
                         className={`w-full p-2.5 rounded-xl border text-xs font-semibold ${
                           isDark
                             ? "bg-[#0E131D] border-white/15"
                             : "bg-white border-slate-200"
                         }`}
                       >
-                        <option value="Today, Oct 22">Today, Oct 22</option>
-                        <option value="Tomorrow, Oct 23">Tomorrow, Oct 23</option>
-                        <option value="Saturday, Oct 24">Saturday, Oct 24</option>
-                        <option value="Sunday, Oct 25">Sunday, Oct 25</option>
+                        {pickedDatePassed && pickedDate && (
+                          <option value={pickedDate} disabled>
+                            {formatBookingDate(pickedDate)} (passed)
+                          </option>
+                        )}
+                        {dateOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -779,12 +810,15 @@ export function RestaurantDetailModal({
                     <div className="grid grid-cols-2 gap-2">
                       {restaurant.diningSlots.map((slot) => {
                         const active = selectedSlot === slot.time;
+                        const closed = slotClosedReason(slot);
                         return (
                           <button
                             key={slot.time}
                             type="button"
-                            onClick={() => setSelectedSlot(slot.time)}
-                            className={`p-2.5 rounded-xl border text-left transition ${
+                            aria-pressed={active}
+                            disabled={closed !== null}
+                            onClick={() => setPickedSlot(slot.time)}
+                            className={`p-2.5 rounded-xl border text-left transition disabled:opacity-40 disabled:cursor-not-allowed ${
                               active
                                 ? "border-emerald-400 bg-emerald-500/15"
                                 : isDark
@@ -800,7 +834,7 @@ export function RestaurantDetailModal({
                               {slot.discountText}
                             </div>
                             <div className="text-[10px] opacity-55">
-                              {slot.seatsLeft} tables left
+                              {closed ?? `${slot.seatsLeft} tables left`}
                             </div>
                           </button>
                         );
@@ -814,15 +848,24 @@ export function RestaurantDetailModal({
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
                       placeholder="Guest Full Name"
+                      aria-label="Guest full name"
+                      autoComplete="name"
+                      required
+                      minLength={2}
+                      maxLength={80}
                       className={`p-2.5 rounded-xl border text-xs ${
                         isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                       }`}
                     />
                     <input
-                      type="text"
+                      type="tel"
                       value={guestPhone}
                       onChange={(e) => setGuestPhone(e.target.value)}
                       placeholder="Phone Number"
+                      aria-label="Contact phone number"
+                      autoComplete="tel"
+                      required
+                      maxLength={20}
                       className={`p-2.5 rounded-xl border text-xs ${
                         isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                       }`}
@@ -834,10 +877,22 @@ export function RestaurantDetailModal({
                     value={specialRequest}
                     onChange={(e) => setSpecialRequest(e.target.value)}
                     placeholder="Special requests (e.g. Anniversary cake, Quiet corner)"
+                    aria-label="Special requests"
+                    maxLength={200}
                     className={`w-full p-2.5 rounded-xl border text-xs ${
                       isDark ? "bg-[#0E131D] border-white/15" : "bg-white border-slate-200"
                     }`}
                   />
+
+                  {bookingProblem && (
+                    <p
+                      role="status"
+                      data-testid="booking-problem"
+                      className="text-xs text-amber-400 font-semibold"
+                    >
+                      {bookingProblem}
+                    </p>
+                  )}
 
                   {bookingError && (
                     <p role="alert" className="text-xs text-rose-400 font-semibold">
@@ -847,14 +902,16 @@ export function RestaurantDetailModal({
 
                   <button
                     type="submit"
-                    disabled={bookingSubmitting}
+                    disabled={bookingSubmitting || bookingProblem !== null}
                     data-testid="confirm-table-booking-btn"
                     className="w-full py-3 rounded-xl text-xs font-black text-white shadow-lg transition hover:opacity-95 disabled:opacity-50"
                     style={{ backgroundColor: theme.primaryHex }}
                   >
                     {bookingSubmitting
                       ? "Confirming Reservation..."
-                      : `Confirm Table Reservation (${bookingGuests} Guests • ${selectedSlot})`}
+                      : `Confirm Table Reservation (${bookingGuests} Guests${
+                          selectedSlot ? ` • ${selectedSlot}` : ""
+                        })`}
                   </button>
                 </form>
 
@@ -869,7 +926,7 @@ export function RestaurantDetailModal({
                         Table Reserved • {latestBooking.bookingId}
                       </span>
                       <span className="text-[10px] font-mono opacity-75">
-                        {latestBooking.date} @ {latestBooking.timeSlot}
+                        {formatBookingDate(latestBooking.date)} @ {latestBooking.timeSlot}
                       </span>
                     </div>
                     <p className="text-xs">
@@ -987,7 +1044,7 @@ export function RestaurantDetailModal({
                         >
                           <span className="font-bold">{r.restaurantName}</span>
                           <span className="opacity-75">
-                            {r.date} • {r.timeSlot} ({r.guests}p)
+                            {formatBookingDate(r.date)} • {r.timeSlot} ({r.guests}p)
                           </span>
                         </div>
                       ))}

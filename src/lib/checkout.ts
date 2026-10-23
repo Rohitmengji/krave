@@ -9,6 +9,7 @@ import {
   modifierSelectionProblem,
 } from "./cartEngine";
 import { newId } from "./ids";
+import { atOutletClock, bookingTimeProblem } from "./outletClock";
 import type {
   CartLineItem,
   CrystalOrderState,
@@ -283,6 +284,8 @@ function parseCheckout(input: unknown) {
 export interface PlacementContext {
   /** Known only for signed-in customers; when given, first-order offers are enforced. */
   hasOrderedBefore?: boolean;
+  /** The server's clock unless a test pins it. */
+  now?: Date;
 }
 
 /**
@@ -305,6 +308,8 @@ export function validateCheckout(input: unknown, context: PlacementContext = {})
     hasOrderedBefore: context.hasOrderedBefore,
   });
   if (couponProblem) throw new Error(couponProblem);
+  const slotProblem = deliverySlotProblem(checkout.scheduledSlot, context.now);
+  if (slotProblem) throw new Error(slotProblem);
   return checkout;
 }
 
@@ -436,6 +441,19 @@ export function createValidatedReservation(input: unknown): DiningReservation {
     status: "CONFIRMED",
     createdAt: new Date().toISOString(),
   };
+}
+
+/**
+ * The gate for a new booking: everything `createValidatedReservation` checks, plus a real
+ * calendar date inside the booking window and a slot still ahead on the outlet's clock.
+ * Kept separate because stored bookings replay through `createValidatedReservation`, and a
+ * past or pre-ISO booking must stay in history.
+ */
+export function validateReservationRequest(input: unknown, now: Date = new Date()): DiningReservation {
+  const reservation = createValidatedReservation(input);
+  const problem = bookingTimeProblem(reservation.date, reservation.timeSlot, now);
+  if (problem) throw new Error(problem);
+  return reservation;
 }
 
 /**
@@ -717,19 +735,12 @@ export function assertItemsAvailable(
 }
 
 /**
- * Resolve when a requested window actually falls due. Evaluated in the server's local time,
- * which is the same clock the sweep that advances scheduled orders runs on.
+ * Resolve when a requested window actually falls due, on the outlet's clock (IST) whatever
+ * zone the server runs in. Also used to replay stored orders, so it never throws.
  */
 export function scheduledDueAt(slot: string, placedAt: string | Date = new Date()): Date {
   const placed = placedAt instanceof Date ? placedAt : new Date(placedAt);
   const base = Number.isFinite(placed.getTime()) ? placed : new Date();
-
-  const atClock = (hours: number, minutes: number, dayOffset: number) => {
-    const due = new Date(base);
-    due.setDate(due.getDate() + dayOffset);
-    due.setHours(hours, minutes, 0, 0);
-    return due;
-  };
 
   switch (slot) {
     case "In 1 hour":
@@ -737,15 +748,24 @@ export function scheduledDueAt(slot: string, placedAt: string | Date = new Date(
     case "In 2 hours":
       return new Date(base.getTime() + 2 * 60 * 60 * 1000);
     case "Tonight, 8:00 PM": {
-      const tonight = atClock(20, 0, 0);
-      // Ordered after the slot has passed, so it means the next one.
-      return tonight > base ? tonight : atClock(20, 0, 1);
+      const tonight = atOutletClock(base, 20, 0);
+      // New orders cannot pick a passed window (see deliverySlotProblem); an order placed before
+      // that rule still resolves to the next 8 PM rather than one already gone.
+      return tonight > base ? tonight : atOutletClock(base, 20, 0, 1);
     }
     case "Tomorrow, 12:30 PM":
-      return atClock(12, 30, 1);
+      return atOutletClock(base, 12, 30, 1);
     default:
       return base;
   }
+}
+
+/** Why a delivery window can no longer be chosen at `now`, or null when it can. */
+export function deliverySlotProblem(slot: string, now: Date = new Date()): string | null {
+  if (slot === "Tonight, 8:00 PM" && now.getTime() >= atOutletClock(now, 20, 0).getTime()) {
+    return "Tonight's 8:00 PM window has passed. Please choose another time.";
+  }
+  return null;
 }
 
 export type KraveNotificationKind = "ORDER" | "RESERVATION" | "SYSTEM";

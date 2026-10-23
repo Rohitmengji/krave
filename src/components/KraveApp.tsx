@@ -112,6 +112,7 @@ import {
 } from "./lazyDialogs";
 import { OverlayDialog } from "./OverlayDialog";
 import { Toast } from "./Toast";
+import { PAGE_ANNOUNCER_ID } from "@/lib/announcer";
 import { primaryFill, primaryInk } from "@/lib/themeContrast";
 import { useLatch } from "@/lib/useLatch";
 
@@ -953,6 +954,7 @@ export function KraveApp({
 
       {/* Toast Notification */}
       {toast && <Toast key={toast.id} message={toast.message} />}
+      <div id={PAGE_ANNOUNCER_ID} role="status" aria-live="polite" className="sr-only" />
 
       {/* Main Content Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-10 pb-28">

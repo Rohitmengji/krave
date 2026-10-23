@@ -2,6 +2,7 @@
 
 import React, { useEffectEvent, useLayoutEffect, useRef } from "react";
 import { refocusIfDropped } from "@/lib/focusFallback";
+import { registerModalRegion } from "@/lib/announcer";
 
 const CENTRED_PANEL = "m-auto w-full max-w-lg bg-transparent p-4 backdrop:bg-black/80";
 
@@ -58,6 +59,7 @@ function OpenDialog({
   children,
 }: Omit<OverlayDialogProps, "isOpen">) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const announcerRef = useRef<HTMLDivElement>(null);
   const pressStartedOnBackdrop = useRef(false);
   const dismiss = useEffectEvent(() => onDismiss());
   const focusFallback = useEffectEvent(() => returnFocusTo?.() ?? null);
@@ -68,6 +70,10 @@ function OpenDialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (!dialog.open) dialog.showModal();
+    // Everything outside an open modal is inert, so announcements must come from inside it.
+    const unregisterAnnouncer = announcerRef.current
+      ? registerModalRegion(announcerRef.current)
+      : () => {};
     let reopenFrame = 0;
     const handleCancel = (event: Event) => {
       event.preventDefault();
@@ -86,6 +92,7 @@ function OpenDialog({
     dialog.addEventListener("cancel", handleCancel);
     dialog.addEventListener("close", handleClose);
     return () => {
+      unregisterAnnouncer();
       cancelAnimationFrame(reopenFrame);
       dialog.removeEventListener("cancel", handleCancel);
       dialog.removeEventListener("close", handleClose);
@@ -120,6 +127,7 @@ function OpenDialog({
       }}
       className={className}
     >
+      <div ref={announcerRef} role="status" aria-live="polite" className="sr-only" />
       {children}
     </dialog>
   );

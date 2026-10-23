@@ -46,6 +46,89 @@ test.describe("Storefront hygiene", () => {
     expect(violations).toEqual([]);
   });
 
+  test("one Escape closes one layer of nested dialogs", async ({ page }) => {
+    await resetBrowser(page);
+    await page.getByRole("button", { name: "Order Menu" }).first().click();
+    const menu = page.getByTestId("restaurant-detail-modal");
+    await menu.getByRole("button", { name: "ADD" }).first().click();
+    const customise = page.getByRole("button", { name: /Add Item to Cart/ });
+    await expect(customise).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(customise).toBeHidden();
+    await expect(menu).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+  });
+
+  test("a toast raised inside a modal is seen above it and heard from within it", async ({ page }) => {
+    await resetBrowser(page);
+    await page.getByRole("button", { name: /Brand Studio|Customize Branding/ }).first().click();
+    const studio = page.getByTestId("brand-studio-modal");
+    await studio.getByRole("button", { name: /Aurum Saffron/ }).click();
+
+    // Seen: the visual toast is a top-layer popover shown after the dialog, so it paints above.
+    const toast = page.locator("[popover]").filter({ hasText: "Applied Aurum Saffron Reserve theme" });
+    await expect(toast).toBeVisible();
+    expect(await toast.evaluate((element) => element.matches(":popover-open"))).toBe(true);
+
+    // Heard: everything outside an open modal is inert, so the announcement must come from
+    // a live region inside the topmost dialog, not from the toast.
+    await expect(studio.getByRole("status")).toHaveText("Applied Aurum Saffron Reserve theme");
+    await expect(toast).toHaveAttribute("aria-hidden", "true");
+
+    // With no modal open, the page's own region speaks.
+    await page.keyboard.press("Escape");
+    await expect(studio).toBeHidden();
+    await page.getByTestId("location-picker-button").click();
+    await page.getByRole("button", { name: /Indiranagar, Bengaluru/ }).click();
+    await expect(page.locator("#krave-announcer")).toHaveText(
+      "Switched Delivery Subzone to Indiranagar, Bengaluru"
+    );
+  });
+
+  test("DiningPay refuses a bill it cannot price and says why", async ({ page }) => {
+    await resetBrowser(page);
+    await page.getByRole("button", { name: "Order Menu" }).first().click();
+    const menu = page.getByTestId("restaurant-detail-modal");
+    await menu.getByRole("button", { name: /Book Table & DiningPay/ }).click();
+    const amount = menu.getByLabel(/Table Bill Amount/);
+    const pay = menu.getByRole("button", { name: /^Pay ₹/ });
+
+    for (const [typed, reason] of [
+      ["", "Enter your table bill amount."],
+      ["12.5", "Enter the bill in whole rupees."],
+      ["1e3", "Enter the bill as a number of rupees."],
+    ] as const) {
+      await amount.fill(typed);
+      await expect(amount).toHaveAttribute("aria-invalid", "true");
+      await expect(menu.getByText(reason)).toBeVisible();
+      await expect(pay).toBeDisabled();
+    }
+
+    await amount.fill("2500");
+    await expect(amount).toHaveAttribute("aria-invalid", "false");
+    await expect(pay).toBeEnabled();
+  });
+
+  test("reloads the storefront offline from the service worker", async ({ page, context }) => {
+    await resetBrowser(page);
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    // The first load happened before the worker controlled the page; this one is cached by it.
+    await page.reload({ waitUntil: "networkidle" });
+
+    await context.setOffline(true);
+    try {
+      await page.reload();
+      await expect(page.getByRole("button", { name: "Order Menu" }).first()).toBeVisible();
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+
   test("restaurant pages answer on one canonical URL only", async ({ request }) => {
     const canonical = await request.get("/restaurant/19677790");
     expect(canonical.status()).toBe(200);

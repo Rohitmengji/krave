@@ -384,3 +384,86 @@ describe("ST-21 · dialogs load off the storefront's critical path", () => {
     expect(renderToString(createElement(Probe, { open: false }))).toBe("<i>false</i>");
   });
 });
+
+describe("ST-22 · announcements reach screen readers past a modal", () => {
+  type Region = { textContent: string };
+  const makeTimers = () => {
+    const queue = new Map<number, () => void>();
+    let next = 0;
+    return {
+      setTimeout: (callback: () => void) => {
+        queue.set(++next, callback);
+        return next;
+      },
+      clearTimeout: (id: never) => void queue.delete(id as number),
+      flush: () => {
+        for (const [id, callback] of [...queue]) {
+          queue.delete(id);
+          callback();
+        }
+      },
+      size: () => queue.size,
+    };
+  };
+
+  it("speaks from the topmost open dialog, then falls back to the page", async () => {
+    const { announce, registerModalRegion } = await import("@/lib/announcer");
+    const page: Region = { textContent: "" };
+    const doc = { getElementById: () => page as unknown as HTMLElement };
+    const timers = makeTimers();
+    const menu: Region = { textContent: "" };
+    const customiser: Region = { textContent: "" };
+    const closeMenu = registerModalRegion(menu as HTMLElement);
+    const closeCustomiser = registerModalRegion(customiser as HTMLElement);
+
+    announce("Added 1× Paneer", doc, timers);
+    timers.flush();
+    expect(customiser.textContent).toBe("Added 1× Paneer");
+    expect(menu.textContent).toBe("");
+
+    closeCustomiser();
+    announce("Table booked", doc, timers);
+    timers.flush();
+    expect(menu.textContent).toBe("Table booked");
+
+    closeMenu();
+    announce("Signed out", doc, timers);
+    timers.flush();
+    expect(page.textContent).toBe("Signed out");
+  });
+
+  it("resolves the target at write time and lets a newer message replace a pending one", async () => {
+    const { announce, registerModalRegion } = await import("@/lib/announcer");
+    const page: Region = { textContent: "Signed out" };
+    const doc = { getElementById: () => page as unknown as HTMLElement };
+    const timers = makeTimers();
+    const dialog: Region = { textContent: "" };
+    const close = registerModalRegion(dialog as HTMLElement);
+
+    announce("first", doc, timers);
+    announce("second", doc, timers);
+    expect(timers.size()).toBe(1);
+    // The dialog closes before the write: the message must not vanish with it.
+    close();
+    timers.flush();
+    expect(dialog.textContent).toBe("");
+    expect(page.textContent).toBe("second");
+
+    // The same text again is cleared first, so it is a change a screen reader announces.
+    announce("second", doc, timers);
+    expect(page.textContent).toBe("");
+    timers.flush();
+    expect(page.textContent).toBe("second");
+  });
+
+  it("the visual toast is hidden from assistive tech; dialogs own a live region", async () => {
+    const { readFileSync } = await import("node:fs");
+    const toast = readFileSync("src/components/Toast.tsx", "utf8");
+    expect(toast).toContain('aria-hidden="true"');
+    expect(toast).not.toContain('role="status"');
+    expect(toast).toContain("announce(message)");
+    const dialog = readFileSync("src/components/OverlayDialog.tsx", "utf8");
+    expect(dialog).toMatch(/role="status" aria-live="polite"/);
+    expect(dialog).toContain("registerModalRegion(");
+  });
+});

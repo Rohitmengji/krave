@@ -7,6 +7,13 @@ export const POS_SHIFT_STORAGE_KEY = "krave.pos-shift.v1";
 export const POS_SEAT_HANDOFF_KEY = "krave.pos-seat-handoff.v1";
 export const POS_MAX_QUANTITY = 99;
 export const POS_MAX_GUESTS = 50;
+export const POS_MAX_NOTE_LENGTH = 120;
+/** Ceiling for any cash figure the cashier types (float, count, tendered), in rupees. */
+export const POS_MAX_CASH = 10000000;
+/** Off-menu dishes carry this prefix so sync knows to keep the operator's price. */
+export const POS_CUSTOM_ITEM_PREFIX = "custom_";
+/** Every open table is always kept; settled history fills the rest, newest first. */
+export const POS_MAX_STORED_SESSIONS = 200;
 
 /** Indian restaurant GST is split into equal CGST and SGST halves on the taxable value. */
 export const POS_CGST_RATE = 0.025;
@@ -31,8 +38,11 @@ export const POS_TABLES = [
 ] as const;
 
 export type PosPaymentMethod = "CASH" | "CARD" | "UPI";
-/** A merged table keeps its record for audit but can never take items or be settled again. */
-export type PosSessionStatus = "OPEN" | "SETTLED" | "MERGED";
+/**
+ * A merged table keeps its record for audit but can never take items or be settled again.
+ * A released table was freed with nothing to bill (opened by mistake, or every item voided).
+ */
+export type PosSessionStatus = "OPEN" | "SETTLED" | "MERGED" | "RELEASED";
 
 export interface PosMenuItem {
   itemId: string;
@@ -163,8 +173,76 @@ export interface PosGuestSplitShare {
   payableAmount: number;
 }
 
-function roundToPaise(value: number): number {
-  return Math.round(value * 100) / 100;
+const CGST_BASIS_POINTS = Math.round(POS_CGST_RATE * 10000);
+const SGST_BASIS_POINTS = Math.round(POS_SGST_RATE * 10000);
+
+/**
+ * Non-negative integer division rounded half up. Bill math runs in integer paise through this,
+ * because float rupees round some halves the wrong way (2.5% of ₹41.40 is ₹1.035, which
+ * `Math.round(x * 100) / 100` turns into ₹1.03).
+ */
+function divideRounded(numerator: number, denominator: number): number {
+  let quotient = Math.floor(numerator / denominator);
+  let remainder = numerator - quotient * denominator;
+  if (remainder < 0) {
+    quotient -= 1;
+    remainder += denominator;
+  } else if (remainder >= denominator) {
+    quotient += 1;
+    remainder -= denominator;
+  }
+  return remainder * 2 >= denominator ? quotient + 1 : quotient;
+}
+
+function paiseToRupees(paise: number): number {
+  return paise / 100;
+}
+
+/**
+ * Split a whole amount across integer weights so the parts add up to exactly `total`: each part
+ * gets its floor, then the leftover units go to the largest remainders (ties to the earlier
+ * guest). BigInt keeps `total × weight` exact for any bill size.
+ */
+function apportion(total: number, weights: number[]): number[] {
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  if (total <= 0 || weightSum <= 0) return weights.map(() => 0);
+  const bigTotal = BigInt(total);
+  const bigSum = BigInt(weightSum);
+  const parts = weights.map((weight) => {
+    const scaled = bigTotal * BigInt(weight);
+    return { floor: Number(scaled / bigSum), remainder: scaled % bigSum };
+  });
+  let leftover = total - parts.reduce((sum, part) => sum + part.floor, 0);
+  const byRemainder = parts
+    .map((_, index) => index)
+    .sort((a, b) =>
+      parts[a].remainder === parts[b].remainder
+        ? a - b
+        : parts[b].remainder > parts[a].remainder
+          ? 1
+          : -1
+    );
+  const result = parts.map((part) => part.floor);
+  for (const index of byRemainder) {
+    if (leftover <= 0) break;
+    result[index] += 1;
+    leftover -= 1;
+  }
+  return result;
+}
+
+function assertWholePercent(value: number, max: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+    throw new Error(`${label} must be a whole percent between 0 and ${max}.`);
+  }
+  return value;
+}
+
+function assertCash(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > POS_MAX_CASH) {
+    throw new Error(`${label} must be a whole rupee amount.`);
+  }
+  return value;
 }
 
 function assertQuantity(quantity: number): void {
@@ -176,6 +254,9 @@ function assertQuantity(quantity: number): void {
 function assertOpen(session: PosTableSession): void {
   if (session.status === "MERGED") {
     throw new Error("This table was merged into another bill.");
+  }
+  if (session.status === "RELEASED") {
+    throw new Error("This table was released without a bill.");
   }
   if (session.status !== "OPEN") {
     throw new Error("This table is already settled.");
@@ -210,13 +291,21 @@ export function getPosMenu(outletId: number): PosMenuItem[] {
   );
 }
 
-export function openTableSession(input: {
-  outletId: number;
-  tableId: string;
-  guestCount: number;
-  serverName: string;
-  shiftId?: string | null;
-}): PosTableSession {
+/**
+ * Seat a table. Pass the current floor so a table that became occupied meanwhile (another
+ * terminal's state adopted while the seat dialog was open) is refused instead of getting a
+ * second open bill that the floor plan can never reach.
+ */
+export function openTableSession(
+  input: {
+    outletId: number;
+    tableId: string;
+    guestCount: number;
+    serverName: string;
+    shiftId?: string | null;
+  },
+  floor: readonly PosTableSession[] = []
+): PosTableSession {
   const outlet = getPosOutlets().find((candidate) => candidate.outletId === input.outletId);
   if (!outlet) {
     throw new Error("Select a valid outlet before opening a table.");
@@ -234,6 +323,15 @@ export function openTableSession(input: {
   const serverName = input.serverName.trim();
   if (serverName.length < 2 || serverName.length > 40) {
     throw new Error("Enter the steward or server name.");
+  }
+  const occupied = floor.some(
+    (candidate) =>
+      candidate.status === "OPEN" &&
+      candidate.outletId === outlet.outletId &&
+      candidate.tableId === input.tableId
+  );
+  if (occupied) {
+    throw new Error(`Table ${input.tableId} is already occupied.`);
   }
 
   return {
@@ -266,11 +364,12 @@ export function addItemToSession(
 ): PosTableSession {
   assertOpen(session);
   assertQuantity(quantity);
-  const trimmedNote = note.trim().slice(0, 120);
+  const trimmedNote = note.trim().slice(0, POS_MAX_NOTE_LENGTH);
 
   // Repeat taps merge into the same un-fired line so the kitchen receives one clear ticket row.
   const existing = session.lines.find(
-    (line) => line.kotNumber === null && line.itemId === item.itemId && line.note === trimmedNote
+    (line) =>
+      line.kotNumber === null && line.itemId === item.itemId && line.note.trim() === trimmedNote
   );
 
   if (existing) {
@@ -344,17 +443,18 @@ export function addCustomItemToSession(
   if (cleanName.length < 2 || cleanName.length > 80) {
     throw new Error("Enter a custom dish name (2–80 characters).");
   }
-  const cleanPrice = Math.round(custom.price);
+  const cleanPrice = custom.price;
   if (!Number.isSafeInteger(cleanPrice) || cleanPrice < 1 || cleanPrice > 100000) {
     throw new Error("Custom dish price must be a whole rupee amount between ₹1 and ₹1,00,000.");
   }
   const dietary: DietaryType =
     custom.dietary === "non-veg" || custom.dietary === "egg" ? custom.dietary : "veg";
-  const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  // A random id, not one derived from the name: non-Latin names ("मसाला चाय", "अदरक चाय")
+  // all slug to the same string and would merge into one bill line and KOT row.
   return addItemToSession(
     session,
     {
-      itemId: `custom_${slug}_${cleanPrice}`,
+      itemId: `${POS_CUSTOM_ITEM_PREFIX}${newId()}`,
       name: cleanName,
       price: cleanPrice,
       categoryName: "Custom Specials",
@@ -366,6 +466,11 @@ export function addCustomItemToSession(
   );
 }
 
+/**
+ * Store the note exactly as typed (capped): the terminal binds this to a controlled input, so
+ * trimming here would eat the space after every word ("no onion" → "noonion"). Notes are
+ * trimmed when the ticket is fired.
+ */
 export function setLineNote(
   session: PosTableSession,
   lineId: string,
@@ -383,7 +488,7 @@ export function setLineNote(
     ...session,
     lines: session.lines.map((candidate) =>
       candidate.lineId === lineId
-        ? { ...candidate, note: note.trim().slice(0, 120) }
+        ? { ...candidate, note: note.slice(0, POS_MAX_NOTE_LENGTH) }
         : candidate
     ),
   };
@@ -505,49 +610,52 @@ export function mergeTableSessions(
 /**
  * Apportion the table bill across guests based on item assignments (`0` = shared equally,
  * `1..guestCount` = assigned to that specific guest), including proportional discount,
- * service charge, and GST.
+ * service charge, and GST. Shares are whole rupees that add up to exactly the bill's grand
+ * total (and item subtotals to the bill subtotal), so the table never collects a rupee more
+ * or less than the printed bill.
  */
 export function calculateItemizedSplit(
   session: PosTableSession,
   lineAssignments: Record<string, number> = {}
 ): PosGuestSplitShare[] {
   const guests = Math.max(1, session.guestCount);
-  const bill = calculatePosBill(session);
-  const rawSubtotals = Array.from({ length: guests }, () => 0);
+  const bill = computeBillPaise(session);
+  // Weights are scaled by the guest count so an equally shared line stays an integer.
+  const weights = Array.from({ length: guests }, () => 0);
 
   for (const line of session.lines) {
     const lineTotal = line.unitPrice * line.quantity;
     const assigned = lineAssignments[line.lineId] ?? 0;
-    if (assigned >= 1 && assigned <= guests) {
-      rawSubtotals[assigned - 1] += lineTotal;
+    if (Number.isSafeInteger(assigned) && assigned >= 1 && assigned <= guests) {
+      weights[assigned - 1] += lineTotal * guests;
     } else {
-      const equalShare = lineTotal / guests;
       for (let i = 0; i < guests; i += 1) {
-        rawSubtotals[i] += equalShare;
+        weights[i] += lineTotal;
       }
     }
   }
 
-  const multiplier = bill.subtotal > 0 ? bill.grandTotal / bill.subtotal : 0;
+  const itemsPaise = apportion(bill.subtotal, weights);
+  const payableRupees = apportion(bill.grandTotalRupees, weights);
 
-  return rawSubtotals.map((sub, index) => {
-    const itemsSubtotal = roundToPaise(sub);
-    const exactPayable = sub * multiplier;
-    const payableAmount = Math.round(exactPayable);
-    return {
-      guestIndex: index + 1,
-      guestLabel: `Guest ${index + 1}`,
-      itemsSubtotal,
-      taxAndChargesShare: roundToPaise(exactPayable - itemsSubtotal),
-      payableAmount,
-    };
-  });
+  return weights.map((_, index) => ({
+    guestIndex: index + 1,
+    guestLabel: `Guest ${index + 1}`,
+    itemsSubtotal: paiseToRupees(itemsPaise[index]),
+    taxAndChargesShare: paiseToRupees(payableRupees[index] * 100 - itemsPaise[index]),
+    payableAmount: payableRupees[index],
+  }));
 }
 
+/**
+ * Void a line, or only `quantity` of it (1 of 3 naan) so the rest stays fired on its original
+ * KOT. Every void is recorded with its reason for the shift report.
+ */
 export function voidLine(
   session: PosTableSession,
   lineId: string,
-  reason: string
+  reason: string,
+  quantity?: number
 ): PosTableSession {
   assertOpen(session);
   const line = session.lines.find((candidate) => candidate.lineId === lineId);
@@ -558,20 +666,43 @@ export function voidLine(
   if (trimmedReason.length < 3 || trimmedReason.length > 120) {
     throw new Error("Enter a void reason (minimum 3 characters).");
   }
+  const voidQuantity = quantity ?? line.quantity;
+  if (!Number.isSafeInteger(voidQuantity) || voidQuantity < 1 || voidQuantity > line.quantity) {
+    throw new Error(`Void between 1 and ${line.quantity} of ${line.name}.`);
+  }
+  const remaining = line.quantity - voidQuantity;
 
   return {
     ...session,
-    lines: session.lines.filter((candidate) => candidate.lineId !== lineId),
+    lines:
+      remaining === 0
+        ? session.lines.filter((candidate) => candidate.lineId !== lineId)
+        : session.lines.map((candidate) =>
+            candidate.lineId === lineId ? { ...candidate, quantity: remaining } : candidate
+          ),
     voids: [
       ...session.voids,
       {
         name: line.name,
-        quantity: line.quantity,
+        quantity: voidQuantity,
         reason: trimmedReason,
         voidedAt: new Date().toISOString(),
       },
     ],
   };
+}
+
+/**
+ * Free a table that has nothing to bill: opened by mistake, or every item voided. Without this
+ * such a table could be neither settled nor merged away and stayed occupied for good. The
+ * record (and any voids on it) stays for the shift report.
+ */
+export function releaseTable(session: PosTableSession): PosTableSession {
+  assertOpen(session);
+  if (session.lines.length > 0) {
+    throw new Error("Void or settle the items on this table before releasing it.");
+  }
+  return { ...session, status: "RELEASED" };
 }
 
 export function setSessionCharges(
@@ -582,23 +713,16 @@ export function setSessionCharges(
   const next = { ...session };
 
   if (charges.discountPercent !== undefined) {
-    const discount = Math.round(charges.discountPercent);
-    if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
-      throw new Error("Discount must be between 0 and 100 percent.");
-    }
-    next.discountPercent = discount;
+    // Whole percents only: 12.5% used to round silently to 13%, and the server stores an integer.
+    next.discountPercent = assertWholePercent(charges.discountPercent, 100, "Discount");
   }
 
   if (charges.serviceChargePercent !== undefined) {
-    const serviceCharge = Math.round(charges.serviceChargePercent);
-    if (
-      !Number.isFinite(serviceCharge) ||
-      serviceCharge < 0 ||
-      serviceCharge > POS_MAX_SERVICE_CHARGE_PERCENT
-    ) {
-      throw new Error(`Service charge must be between 0 and ${POS_MAX_SERVICE_CHARGE_PERCENT} percent.`);
-    }
-    next.serviceChargePercent = serviceCharge;
+    next.serviceChargePercent = assertWholePercent(
+      charges.serviceChargePercent,
+      POS_MAX_SERVICE_CHARGE_PERCENT,
+      "Service charge"
+    );
   }
 
   if (charges.guestCount !== undefined) {
@@ -636,7 +760,7 @@ export function sendPendingToKitchen(session: PosTableSession): {
     lines: pending.map((line) => ({
       name: line.name,
       quantity: line.quantity,
-      note: line.note,
+      note: line.note.trim(),
       dietary: line.dietary,
     })),
   };
@@ -646,7 +770,7 @@ export function sendPendingToKitchen(session: PosTableSession): {
       ...session,
       nextKotNumber: kotNumber + 1,
       lines: session.lines.map((line) =>
-        line.kotNumber === null ? { ...line, kotNumber } : line
+        line.kotNumber === null ? { ...line, note: line.note.trim(), kotNumber } : line
       ),
       tickets: [...session.tickets, ticket],
     },
@@ -666,31 +790,36 @@ export function findKitchenTicket(
   return ticket;
 }
 
+/** The bill in integer paise; the grand total is also given in whole rupees, as collected. */
+function computeBillPaise(session: PosTableSession) {
+  const subtotal =
+    session.lines.reduce((total, line) => total + line.unitPrice * line.quantity, 0) * 100;
+  const discountAmount = divideRounded(subtotal * session.discountPercent, 100);
+  const discountedBase = Math.max(0, subtotal - discountAmount);
+  const serviceCharge = divideRounded(discountedBase * session.serviceChargePercent, 100);
+  const taxableValue = discountedBase + serviceCharge;
+  const cgst = divideRounded(taxableValue * CGST_BASIS_POINTS, 10000);
+  const sgst = divideRounded(taxableValue * SGST_BASIS_POINTS, 10000);
+  const payable = taxableValue + cgst + sgst;
+  const grandTotalRupees = divideRounded(payable, 100);
+  return { subtotal, discountAmount, serviceCharge, cgst, sgst, payable, grandTotalRupees };
+}
+
 /** Compute the printable bill. Tax applies after discount and on any service charge. */
 export function calculatePosBill(session: PosTableSession): PosBill {
   const itemCount = session.lines.reduce((total, line) => total + line.quantity, 0);
-  const subtotal = session.lines.reduce(
-    (total, line) => total + line.unitPrice * line.quantity,
-    0
-  );
-  const discountAmount = roundToPaise((subtotal * session.discountPercent) / 100);
-  const discountedBase = Math.max(0, subtotal - discountAmount);
-  const serviceCharge = roundToPaise((discountedBase * session.serviceChargePercent) / 100);
-  const taxableValue = discountedBase + serviceCharge;
-  const cgst = roundToPaise(taxableValue * POS_CGST_RATE);
-  const sgst = roundToPaise(taxableValue * POS_SGST_RATE);
-  const payable = taxableValue + cgst + sgst;
-  const grandTotal = Math.round(payable);
+  const paise = computeBillPaise(session);
+  const grandTotal = paise.grandTotalRupees;
 
   return {
     itemCount,
-    subtotal: roundToPaise(subtotal),
-    discountAmount,
-    serviceCharge,
-    cgst,
-    sgst,
-    taxTotal: roundToPaise(cgst + sgst),
-    roundOff: roundToPaise(grandTotal - payable),
+    subtotal: paiseToRupees(paise.subtotal),
+    discountAmount: paiseToRupees(paise.discountAmount),
+    serviceCharge: paiseToRupees(paise.serviceCharge),
+    cgst: paiseToRupees(paise.cgst),
+    sgst: paiseToRupees(paise.sgst),
+    taxTotal: paiseToRupees(paise.cgst + paise.sgst),
+    roundOff: paiseToRupees(grandTotal * 100 - paise.payable),
     grandTotal,
     perGuest: session.guestCount > 0 ? Math.ceil(grandTotal / session.guestCount) : grandTotal,
   };
@@ -710,9 +839,14 @@ export function settleSession(
   }
 
   const bill = calculatePosBill(session);
-  const tendered = method === "CASH" ? Math.round(amountTendered) : bill.grandTotal;
-  if (!Number.isSafeInteger(tendered) || tendered < bill.grandTotal) {
-    throw new Error(`Amount tendered must be at least ₹${bill.grandTotal}.`);
+  // Cash is counted in whole rupees; 100.5 used to be recorded silently as ₹100 tendered.
+  const tendered = method === "CASH" ? amountTendered : bill.grandTotal;
+  if (
+    !Number.isSafeInteger(tendered) ||
+    tendered < bill.grandTotal ||
+    tendered > Math.max(POS_MAX_CASH, bill.grandTotal)
+  ) {
+    throw new Error(`Amount tendered must be a whole rupee amount of at least ₹${bill.grandTotal}.`);
   }
 
   return {
@@ -731,28 +865,28 @@ export function summarizeShift(sessions: PosTableSession[]): PosShiftSummary {
   const settled = sessions.filter((session) => session.status === "SETTLED");
   const byPaymentMethod: Record<PosPaymentMethod, number> = { CASH: 0, CARD: 0, UPI: 0 };
   let grossSales = 0;
-  let taxCollected = 0;
-  let discountsGiven = 0;
+  let taxPaise = 0;
+  let discountPaise = 0;
   let covers = 0;
 
   for (const session of settled) {
-    const bill = calculatePosBill(session);
-    grossSales += bill.grandTotal;
-    taxCollected += bill.taxTotal;
-    discountsGiven += bill.discountAmount;
+    const bill = computeBillPaise(session);
+    grossSales += bill.grandTotalRupees;
+    taxPaise += bill.cgst + bill.sgst;
+    discountPaise += bill.discountAmount;
     covers += session.guestCount;
     if (session.payment) {
-      byPaymentMethod[session.payment.method] += bill.grandTotal;
+      byPaymentMethod[session.payment.method] += bill.grandTotalRupees;
     }
   }
 
   return {
     settledBills: settled.length,
     covers,
-    grossSales: roundToPaise(grossSales),
-    taxCollected: roundToPaise(taxCollected),
-    discountsGiven: roundToPaise(discountsGiven),
-    averageBill: settled.length ? Math.round(grossSales / settled.length) : 0,
+    grossSales,
+    taxCollected: paiseToRupees(taxPaise),
+    discountsGiven: paiseToRupees(discountPaise),
+    averageBill: settled.length ? divideRounded(grossSales, settled.length) : 0,
     byPaymentMethod,
   };
 }
@@ -770,10 +904,7 @@ export function openShift(input: {
   if (openedBy.length < 2 || openedBy.length > 40) {
     throw new Error("Enter the name of the cashier opening the shift.");
   }
-  const openingCash = Math.round(input.openingCash);
-  if (!Number.isSafeInteger(openingCash) || openingCash < 0 || openingCash > 10000000) {
-    throw new Error("Opening cash float must be a whole rupee amount.");
-  }
+  const openingCash = assertCash(input.openingCash, "Opening cash float");
 
   return {
     shiftId: `SHIFT-${newId()}`,
@@ -819,10 +950,7 @@ export function closeShift(
   if (closedBy.length < 2 || closedBy.length > 40) {
     throw new Error("Enter the name of the cashier closing the shift.");
   }
-  const countedCash = Math.round(input.countedCash);
-  if (!Number.isSafeInteger(countedCash) || countedCash < 0 || countedCash > 10000000) {
-    throw new Error("Counted cash must be a whole rupee amount.");
-  }
+  const countedCash = assertCash(input.countedCash, "Counted cash");
 
   const closed: PosShift = {
     ...shift,
@@ -848,7 +976,7 @@ export function closeShift(
       cashSales: summary.byPaymentMethod.CASH,
       expectedCash,
       countedCash,
-      cashVariance: roundToPaise(countedCash - expectedCash),
+      cashVariance: countedCash - expectedCash,
       voidCount: claimed.reduce((total, session) => total + session.voids.length, 0),
       openTablesAtClose: claimed.filter((session) => session.status === "OPEN").length,
       summary,
@@ -906,193 +1034,218 @@ export function restorePosSessions(serialized: string | null): PosTableSession[]
   try {
     const parsed: unknown = JSON.parse(serialized || "[]");
     if (!Array.isArray(parsed)) return [];
+    return keepOpenAndNewest(parsed.flatMap(restorePosSession));
+  } catch {
+    return [];
+  }
+}
 
-    return parsed.slice(0, 200).flatMap((entry) => {
-      if (!isRecord(entry)) return [];
-      const {
-        sessionId,
-        outletId,
-        outletName,
-        tableId,
-        guestCount,
-        serverName,
-        openedAt,
-        status,
-        lines,
-        voids,
-        discountPercent,
-        serviceChargePercent,
-        nextKotNumber,
-        payment,
-        shiftId,
-        tickets,
-        mergedIntoSessionId,
-        revision,
-      } = entry;
+/**
+ * Sessions are appended over a terminal's lifetime, so capping by array position kept the
+ * oldest bills and dropped the newest, open tables included. Keep every open table, fill the
+ * rest with the most recent closed ones, and preserve the original order.
+ */
+function keepOpenAndNewest(sessions: PosTableSession[]): PosTableSession[] {
+  if (sessions.length <= POS_MAX_STORED_SESSIONS) return sessions;
+  const closedRoom = Math.max(
+    0,
+    POS_MAX_STORED_SESSIONS - sessions.filter((session) => session.status === "OPEN").length
+  );
+  const recency = (session: PosTableSession) => {
+    const settledAt = Date.parse(session.payment?.settledAt ?? "");
+    return Number.isFinite(settledAt) ? settledAt : Date.parse(session.openedAt);
+  };
+  const keptClosed = new Set(
+    sessions
+      .filter((session) => session.status !== "OPEN")
+      .sort((a, b) => recency(b) - recency(a))
+      .slice(0, closedRoom)
+  );
+  return sessions.filter((session) => session.status === "OPEN" || keptClosed.has(session));
+}
 
-      if (
-        typeof sessionId !== "string" ||
-        !sessionId.startsWith("POS-") ||
-        typeof outletId !== "number" ||
-        typeof outletName !== "string" ||
-        typeof tableId !== "string" ||
-        !POS_TABLES.some((table) => table.tableId === tableId) ||
-        !Number.isSafeInteger(guestCount) ||
-        typeof serverName !== "string" ||
-        typeof openedAt !== "string" ||
-        !Number.isFinite(Date.parse(openedAt)) ||
-        (status !== "OPEN" && status !== "SETTLED" && status !== "MERGED") ||
-        !Array.isArray(lines)
-      ) {
-        return [];
-      }
+function restorePosSession(entry: unknown): PosTableSession[] {
+  if (!isRecord(entry)) return [];
+  const {
+    sessionId,
+    outletId,
+    outletName,
+    tableId,
+    guestCount,
+    serverName,
+    openedAt,
+    status,
+    lines,
+    voids,
+    discountPercent,
+    serviceChargePercent,
+    nextKotNumber,
+    payment,
+    shiftId,
+    tickets,
+    mergedIntoSessionId,
+    revision,
+  } = entry;
 
-      const restoredLines = lines.flatMap((rawLine): PosOrderLine[] => {
-        if (!isRecord(rawLine)) return [];
-        const { lineId, itemId, name, unitPrice, quantity, dietary, note, kotNumber } = rawLine;
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId.startsWith("POS-") ||
+    typeof outletId !== "number" ||
+    typeof outletName !== "string" ||
+    typeof tableId !== "string" ||
+    !POS_TABLES.some((table) => table.tableId === tableId) ||
+    !Number.isSafeInteger(guestCount) ||
+    typeof serverName !== "string" ||
+    typeof openedAt !== "string" ||
+    !Number.isFinite(Date.parse(openedAt)) ||
+    (status !== "OPEN" && status !== "SETTLED" && status !== "MERGED" && status !== "RELEASED") ||
+    !Array.isArray(lines)
+  ) {
+    return [];
+  }
+
+  const restoredLines = lines.flatMap((rawLine): PosOrderLine[] => {
+    if (!isRecord(rawLine)) return [];
+    const { lineId, itemId, name, unitPrice, quantity, dietary, note, kotNumber } = rawLine;
+    if (
+      typeof lineId !== "string" ||
+      typeof itemId !== "string" ||
+      typeof name !== "string" ||
+      !Number.isSafeInteger(unitPrice) ||
+      (unitPrice as number) < 0 ||
+      !Number.isSafeInteger(quantity) ||
+      (quantity as number) < 1 ||
+      (quantity as number) > POS_MAX_QUANTITY ||
+      (dietary !== "veg" && dietary !== "non-veg" && dietary !== "egg") ||
+      (kotNumber !== null && !Number.isSafeInteger(kotNumber))
+    ) {
+      return [];
+    }
+    return [
+      {
+        lineId,
+        itemId,
+        name,
+        unitPrice: unitPrice as number,
+        quantity: quantity as number,
+        dietary,
+        note: typeof note === "string" ? note.slice(0, POS_MAX_NOTE_LENGTH) : "",
+        kotNumber: kotNumber as number | null,
+      },
+    ];
+  });
+
+  const restoredPayment: PosPayment | null =
+    isRecord(payment) &&
+    (payment.method === "CASH" || payment.method === "CARD" || payment.method === "UPI") &&
+    Number.isSafeInteger(payment.amountTendered) &&
+    Number.isSafeInteger(payment.changeDue) &&
+    typeof payment.settledAt === "string"
+      ? {
+          method: payment.method,
+          amountTendered: payment.amountTendered as number,
+          changeDue: payment.changeDue as number,
+          settledAt: payment.settledAt,
+        }
+      : null;
+
+  if (status === "SETTLED" && !restoredPayment) return [];
+
+  const restoredTickets: PosKitchenTicket[] = Array.isArray(tickets)
+    ? tickets.flatMap((rawTicket): PosKitchenTicket[] => {
+        if (!isRecord(rawTicket)) return [];
+        const { kotNumber, firedAt, mergedFrom, lines: ticketLines } = rawTicket;
         if (
-          typeof lineId !== "string" ||
-          typeof itemId !== "string" ||
-          typeof name !== "string" ||
-          !Number.isSafeInteger(unitPrice) ||
-          (unitPrice as number) < 0 ||
-          !Number.isSafeInteger(quantity) ||
-          (quantity as number) < 1 ||
-          (quantity as number) > POS_MAX_QUANTITY ||
-          (dietary !== "veg" && dietary !== "non-veg" && dietary !== "egg") ||
-          (kotNumber !== null && !Number.isSafeInteger(kotNumber))
+          !Number.isSafeInteger(kotNumber) ||
+          typeof firedAt !== "string" ||
+          !Number.isFinite(Date.parse(firedAt)) ||
+          !Array.isArray(ticketLines)
         ) {
           return [];
         }
         return [
           {
-            lineId,
-            itemId,
-            name,
-            unitPrice: unitPrice as number,
-            quantity: quantity as number,
-            dietary,
-            note: typeof note === "string" ? note.slice(0, 120) : "",
-            kotNumber: kotNumber as number | null,
+            kotNumber: kotNumber as number,
+            tableId,
+            serverName,
+            firedAt,
+            mergedFrom: typeof mergedFrom === "string" ? mergedFrom : null,
+            lines: ticketLines.flatMap((rawLine) =>
+              isRecord(rawLine) &&
+              typeof rawLine.name === "string" &&
+              Number.isSafeInteger(rawLine.quantity) &&
+              (rawLine.dietary === "veg" ||
+                rawLine.dietary === "non-veg" ||
+                rawLine.dietary === "egg")
+                ? [
+                    {
+                      name: rawLine.name,
+                      quantity: rawLine.quantity as number,
+                      note: typeof rawLine.note === "string" ? rawLine.note.slice(0, POS_MAX_NOTE_LENGTH) : "",
+                      dietary: rawLine.dietary,
+                    },
+                  ]
+                : []
+            ),
           },
         ];
-      });
+      })
+    : [];
 
-      const restoredPayment: PosPayment | null =
-        isRecord(payment) &&
-        (payment.method === "CASH" || payment.method === "CARD" || payment.method === "UPI") &&
-        Number.isSafeInteger(payment.amountTendered) &&
-        Number.isSafeInteger(payment.changeDue) &&
-        typeof payment.settledAt === "string"
-          ? {
-              method: payment.method,
-              amountTendered: payment.amountTendered as number,
-              changeDue: payment.changeDue as number,
-              settledAt: payment.settledAt,
-            }
-          : null;
-
-      if (status === "SETTLED" && !restoredPayment) return [];
-
-      const restoredTickets: PosKitchenTicket[] = Array.isArray(tickets)
-        ? tickets.flatMap((rawTicket): PosKitchenTicket[] => {
-            if (!isRecord(rawTicket)) return [];
-            const { kotNumber, firedAt, mergedFrom, lines: ticketLines } = rawTicket;
-            if (
-              !Number.isSafeInteger(kotNumber) ||
-              typeof firedAt !== "string" ||
-              !Number.isFinite(Date.parse(firedAt)) ||
-              !Array.isArray(ticketLines)
-            ) {
-              return [];
-            }
-            return [
-              {
-                kotNumber: kotNumber as number,
-                tableId,
-                serverName,
-                firedAt,
-                mergedFrom: typeof mergedFrom === "string" ? mergedFrom : null,
-                lines: ticketLines.flatMap((rawLine) =>
-                  isRecord(rawLine) &&
-                  typeof rawLine.name === "string" &&
-                  Number.isSafeInteger(rawLine.quantity) &&
-                  (rawLine.dietary === "veg" ||
-                    rawLine.dietary === "non-veg" ||
-                    rawLine.dietary === "egg")
-                    ? [
-                        {
-                          name: rawLine.name,
-                          quantity: rawLine.quantity as number,
-                          note: typeof rawLine.note === "string" ? rawLine.note.slice(0, 120) : "",
-                          dietary: rawLine.dietary,
-                        },
-                      ]
-                    : []
-                ),
-              },
-            ];
-          })
-        : [];
-
-      return [
-        {
-          sessionId,
-          outletId,
-          outletName,
-          tableId,
-          guestCount: Math.min(Math.max(guestCount as number, 1), POS_MAX_GUESTS),
-          serverName,
-          openedAt,
-          status,
-          lines: restoredLines,
-          voids: Array.isArray(voids)
-            ? voids.flatMap((rawVoid): PosVoidRecord[] =>
-                isRecord(rawVoid) &&
-                typeof rawVoid.name === "string" &&
-                Number.isSafeInteger(rawVoid.quantity) &&
-                typeof rawVoid.reason === "string" &&
-                typeof rawVoid.voidedAt === "string"
-                  ? [
-                      {
-                        name: rawVoid.name,
-                        quantity: rawVoid.quantity as number,
-                        reason: rawVoid.reason,
-                        voidedAt: rawVoid.voidedAt,
-                      },
-                    ]
-                  : []
-              )
-            : [],
-          discountPercent:
-            typeof discountPercent === "number"
-              ? Math.min(Math.max(Math.round(discountPercent), 0), 100)
-              : 0,
-          serviceChargePercent:
-            typeof serviceChargePercent === "number"
-              ? Math.min(
-                  Math.max(Math.round(serviceChargePercent), 0),
-                  POS_MAX_SERVICE_CHARGE_PERCENT
-                )
-              : 0,
-          nextKotNumber: Number.isSafeInteger(nextKotNumber)
-            ? Math.max(nextKotNumber as number, 1)
-            : 1,
-          payment: restoredPayment,
-          shiftId: typeof shiftId === "string" && shiftId.startsWith("SHIFT-") ? shiftId : null,
-          tickets: restoredTickets,
-          mergedIntoSessionId:
-            typeof mergedIntoSessionId === "string" && mergedIntoSessionId.startsWith("POS-")
-              ? mergedIntoSessionId
-              : null,
-          revision:
-            Number.isSafeInteger(revision) && (revision as number) >= 0
-              ? (revision as number)
-              : 0,
-        },
-      ];
-    });
-  } catch {
-    return [];
-  }
+  return [
+    {
+      sessionId,
+      outletId,
+      outletName,
+      tableId,
+      guestCount: Math.min(Math.max(guestCount as number, 1), POS_MAX_GUESTS),
+      serverName,
+      openedAt,
+      status,
+      lines: restoredLines,
+      voids: Array.isArray(voids)
+        ? voids.flatMap((rawVoid): PosVoidRecord[] =>
+            isRecord(rawVoid) &&
+            typeof rawVoid.name === "string" &&
+            Number.isSafeInteger(rawVoid.quantity) &&
+            typeof rawVoid.reason === "string" &&
+            typeof rawVoid.voidedAt === "string"
+              ? [
+                  {
+                    name: rawVoid.name,
+                    quantity: rawVoid.quantity as number,
+                    reason: rawVoid.reason,
+                    voidedAt: rawVoid.voidedAt,
+                  },
+                ]
+              : []
+          )
+        : [],
+      discountPercent:
+        typeof discountPercent === "number"
+          ? Math.min(Math.max(Math.round(discountPercent), 0), 100)
+          : 0,
+      serviceChargePercent:
+        typeof serviceChargePercent === "number"
+          ? Math.min(
+              Math.max(Math.round(serviceChargePercent), 0),
+              POS_MAX_SERVICE_CHARGE_PERCENT
+            )
+          : 0,
+      nextKotNumber: Number.isSafeInteger(nextKotNumber)
+        ? Math.max(nextKotNumber as number, 1)
+        : 1,
+      payment: restoredPayment,
+      shiftId: typeof shiftId === "string" && shiftId.startsWith("SHIFT-") ? shiftId : null,
+      tickets: restoredTickets,
+      mergedIntoSessionId:
+        typeof mergedIntoSessionId === "string" && mergedIntoSessionId.startsWith("POS-")
+          ? mergedIntoSessionId
+          : null,
+      revision:
+        Number.isSafeInteger(revision) && (revision as number) >= 0
+          ? (revision as number)
+          : 0,
+    },
+  ];
 }

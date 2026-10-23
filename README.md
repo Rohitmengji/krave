@@ -6,6 +6,8 @@ with REA, not a complete reconstruction of its proprietary application.
 Not affiliated with Zomato. All checkout, payment, booking, and tracking flows
 are demonstrations; they do not contact restaurants or collect money.
 
+Live demo: <https://krave-neon.vercel.app>
+
 ## Evidence Correction
 
 **No genuine Zomato APK was analyzed.** Earlier Android claims were incorrect:
@@ -96,6 +98,10 @@ The public demo runs on Vercel (region `sin1`) against a Neon Postgres branch in
 3. Import the repository into Vercel and set `DATABASE_URL` (pooled host),
    `KRAVE_QUOTE_SECRET` (`openssl rand -hex 32`) and `KRAVE_STAFF_EMAILS`. Never set
    `KRAVE_OPEN_STAFF` on a public deployment.
+
+The repository is connected to the Vercel project: a push to `main` deploys production.
+Other branches get preview deployments, which receive no production variables and so
+never reach the production database.
 
 The pool is attached with `attachDatabasePool`, so an instance drains its connections
 before Vercel suspends it rather than waking up with sockets Neon has already closed.

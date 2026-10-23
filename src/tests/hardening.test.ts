@@ -152,6 +152,18 @@ describe("checkout intent keeps one idempotency key per order", () => {
   });
 });
 
+/** Waits until `count` connections are queued on a lock, so a test can fix the order of a race. */
+async function lockWaiters(count: number) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const row = await one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+    );
+    if ((row?.n ?? 0) >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Expected ${count} lock waiter(s)`);
+}
+
 describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
   beforeAll(async () => {
     await startTestDatabase();
@@ -228,18 +240,8 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
     // Left to timing, a cold connection decides which request reaches the row first. A held
     // row lock fixes the order: the newer request's DELETE queues first, the in-flight
     // reset passes its pre-check and hashes, then queues its claim behind the DELETE.
-    async function lockWaiters(count: number) {
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        const row = await one<{ n: number }>(
-          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
-        );
-        if ((row?.n ?? 0) >= count) return;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      throw new Error(`Expected ${count} lock waiter(s)`);
-    }
     const holder = await getPool().connect();
-    let inFlight: Promise<void> | undefined;
+    let inFlight: ReturnType<typeof resetPassword> | undefined;
     try {
       await holder.query("BEGIN");
       await holder.query("SELECT 1 FROM password_resets WHERE used_at IS NULL FOR UPDATE");
@@ -262,6 +264,41 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
     await expect(verifyCredentials(CREDENTIALS, "10.2.2.2")).resolves.toMatchObject({
       email: CREDENTIALS.email,
     });
+  });
+
+  it("leaves one working link when two reset requests for an account land together", async () => {
+    await registerUser(CREDENTIALS);
+    await createPasswordReset({ email: CREDENTIALS.email });
+
+    // Both requests queue behind a held lock on the existing link, then run back to back.
+    // Each one's cleanup must see the link the other just made, or both links stay live.
+    const holder = await getPool().connect();
+    const requests: Array<ReturnType<typeof createPasswordReset>> = [];
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT 1 FROM password_resets WHERE used_at IS NULL FOR UPDATE");
+      requests.push(
+        createPasswordReset({ email: CREDENTIALS.email }),
+        createPasswordReset({ email: CREDENTIALS.email })
+      );
+      await lockWaiters(2);
+      await holder.query("COMMIT");
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+    }
+    const tokens = (await Promise.all(requests)).map((reset) => reset!.token);
+
+    const used: string[] = [];
+    for (const [i, token] of tokens.entries()) {
+      try {
+        await resetPassword(token, `new-password-number-${i}`);
+        used.push(token);
+      } catch (error) {
+        expect(String(error)).toMatch(/expired|already used/i);
+      }
+    }
+    expect(used).toHaveLength(1);
   });
 });
 

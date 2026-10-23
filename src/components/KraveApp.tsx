@@ -208,7 +208,7 @@ export function KraveApp({
   initialView,
 }: {
   initialRestaurantId?: number;
-  initialView?: "orders";
+  initialView?: "orders" | "signin";
 } = {}) {
   // Device-owned state lives in browser storage, one store per key, shared live with other
   // tabs. Account-owned state lives in a reducer and is never written to this device.
@@ -266,7 +266,7 @@ export function KraveApp({
 
   const [inboxOpen, setInboxOpen] = useState(false);
   const [offersOpen, setOffersOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(initialView === "signin");
   const [disputePending, setDisputePending] = useState(false);
   const disputeLock = useRef(false);
   // Tracking opens straight from checkout, whose drawer is gone by the time it closes.

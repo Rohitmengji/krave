@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+import { MAIL_SINK_PORT } from "./e2e/mailbox";
 
 const PORT = Number(process.env.KRAVE_E2E_PORT || 3099);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -51,6 +52,14 @@ export default defineConfig({
       // One account is staff everywhere. Deliberately not KRAVE_OPEN_STAFF, so the
       // suite still proves that ordinary accounts are refused.
       KRAVE_STAFF_EMAILS: "e2e-staff@krave.test",
+      // Mail goes to the suite's own SMTP sink (e2e/global-setup.ts). The login is blanked
+      // explicitly: an empty value beats .env.local, whose real account must never send here.
+      SMTP_HOST: "127.0.0.1",
+      SMTP_PORT: String(MAIL_SINK_PORT),
+      SMTP_USER: "",
+      SMTP_PASS: "",
+      EMAIL_FROM: "KRAVE <no-reply@krave.test>",
+      KRAVE_PUBLIC_URL: BASE_URL,
     },
   },
 });

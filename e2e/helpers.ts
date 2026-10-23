@@ -36,15 +36,17 @@ export const STAFF_PASSWORD = "e2e-staff-password";
  * signs in afterwards rather than assuming either.
  */
 export async function signInAsStaff(page: Page) {
-  const created = await page.request.post("/api/webroutes/auth/register", {
-    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD, displayName: "E2E Staff" },
-  });
-  if (created.status() === 201) return;
-
+  // Sign in first: every register call spends the per-client signup quota, even when it
+  // fails because the account exists, and the suite would exhaust it after ~30 calls.
   const signedIn = await page.request.post("/api/webroutes/auth/login", {
     data: { email: STAFF_EMAIL, password: STAFF_PASSWORD },
   });
-  expect(signedIn.ok()).toBe(true);
+  if (signedIn.ok()) return;
+
+  const created = await page.request.post("/api/webroutes/auth/register", {
+    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD, displayName: "E2E Staff" },
+  });
+  expect(created.status(), await created.text()).toBe(201);
 }
 
 /** Adds the first dish of the first restaurant, handling the customisation step. */

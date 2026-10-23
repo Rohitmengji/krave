@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import {
   COLLECTIONS_DATA,
   COUPON_OFFERS,
@@ -23,14 +23,17 @@ import {
   QUOTE_LOCK_MINUTES,
 } from "@/lib/server/quoteLock";
 import {
-  createPasswordReset,
   createSession,
   destroySession,
   getUserForToken,
   LOGIN_WINDOW_MINUTES,
   MAX_GUEST_ORDERS_PER_CLIENT,
+  normalizeEmail,
   registerUser,
   reserveClientQuota,
+  reservePasswordResetRequest,
+  RESET_LINK_INVALID,
+  RESET_LINK_SPENT,
   resetPassword,
   revokeAllSessions,
   SESSION_COOKIE,
@@ -38,6 +41,13 @@ import {
   verifyCredentials,
   type AccountUser,
 } from "@/lib/server/auth";
+import {
+  deliverPasswordReset,
+  notifyPasswordChanged,
+  publicOrigin,
+  resetChannel,
+  type ResetChannel,
+} from "@/lib/server/passwordResetMail";
 import {
   advanceOrderStage,
   deleteOrder,
@@ -340,10 +350,15 @@ export async function POST(
   }
 
   if (routePath === "/webroutes/auth/forgot") {
-    // There is no mail provider yet. Outside production the token goes to the server log
-    // so the flow can be exercised locally; in production that log would hand anyone with
-    // log access a way into every account, so no token is created at all.
-    if (process.env.NODE_ENV === "production") {
+    let channel: ResetChannel | null;
+    try {
+      channel = resetChannel(request.nextUrl.origin);
+    } catch (error) {
+      return failed(error, "Could not send a reset link.");
+    }
+    // A token that cannot be delivered must not exist: it would only ever be useful to
+    // someone reading the server's logs.
+    if (!channel) {
       return NextResponse.json(
         {
           status: "error",
@@ -352,27 +367,55 @@ export async function POST(
         { status: 503 }
       );
     }
-    const reset = await createPasswordReset(body);
-    if (reset) {
-      console.info(
-        `[krave] password reset token (expires ${reset.expiresAt.toISOString()}): ${reset.token}`
-      );
+    let email: string;
+    try {
+      email = normalizeEmail((body as { email?: unknown } | null)?.email);
+    } catch (error) {
+      return failed(error, "Enter a valid email address.");
     }
+    try {
+      await reservePasswordResetRequest(email, clientKey(request));
+    } catch (error) {
+      return failed(error, "Too many reset requests.", 429);
+    }
+    const reachable = channel;
+    // After the response, so a known address answers exactly as fast as an unknown one.
+    after(() =>
+      deliverPasswordReset(email, reachable).catch((error: unknown) => {
+        console.error("[krave] Could not deliver a password reset.", error);
+      })
+    );
     // Always identical, so an unknown address cannot be distinguished from a known one.
     return NextResponse.json({
       status: "success",
-      message: "If that account exists, a reset link has been issued.",
+      message: "If that account exists, a reset link is on its way.",
+      delivery: channel.kind,
     });
   }
 
   if (routePath === "/webroutes/auth/reset") {
     const { token, password } = (body ?? {}) as Record<string, unknown>;
     try {
-      await resetPassword(token, password, clientKey(request));
+      const { email } = await resetPassword(token, password, clientKey(request));
+      const origin = publicOrigin(request.nextUrl.origin);
+      if (email && origin) {
+        after(() =>
+          notifyPasswordChanged(email, origin).catch((error: unknown) => {
+            console.error("[krave] Could not send the password-changed notice.", error);
+          })
+        );
+      }
       const response = NextResponse.json({ status: "success", user: null });
       response.cookies.delete(SESSION_COOKIE);
       return response;
     } catch (error) {
+      // Gone rather than a 400: no new password fixes it, only a new link does.
+      if (
+        error instanceof Error &&
+        (error.message === RESET_LINK_INVALID || error.message === RESET_LINK_SPENT)
+      ) {
+        return failed(error, RESET_LINK_SPENT, 410);
+      }
       return failed(error, "Could not reset that password.");
     }
   }

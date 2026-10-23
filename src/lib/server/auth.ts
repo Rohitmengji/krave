@@ -1,6 +1,11 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { one, run, transaction } from "./pg";
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  RESET_LINK_MINUTES,
+} from "@/lib/passwordReset";
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -11,7 +16,6 @@ const scryptAsync = promisify(scrypt) as (
 export const SESSION_COOKIE = "krave_session";
 const SESSION_DAYS = 30;
 const KEY_LENGTH = 64;
-const MIN_PASSWORD_LENGTH = 10;
 
 /** Throttling is per email and per client address, so one does not mask the other. */
 export const MAX_LOGIN_ATTEMPTS = 5;
@@ -29,7 +33,12 @@ export const LOGIN_WINDOW_MINUTES = 15;
  */
 export const MAX_SIGNUPS_PER_CLIENT = 30;
 export const MAX_GUEST_ORDERS_PER_CLIENT = 30;
-const RESET_TOKEN_MINUTES = 30;
+/** Enough to retry a slow or spam-filtered email, too few to flood someone's inbox. */
+export const MAX_RESET_EMAILS_PER_ADDRESS = 3;
+export const MAX_RESET_REQUESTS_PER_CLIENT = 10;
+
+export const RESET_LINK_INVALID = "That reset link is not valid.";
+export const RESET_LINK_SPENT = "That reset link has expired or was already used.";
 
 export interface AccountUser {
   id: string;
@@ -38,7 +47,7 @@ export interface AccountUser {
   isGoldMember: boolean;
 }
 
-function normalizeEmail(value: unknown): string {
+export function normalizeEmail(value: unknown): string {
   const email = typeof value === "string" ? value.trim().toLowerCase() : "";
   // Deliberately permissive: enough structure to be a mailbox, no attempt to prove delivery.
   if (email.length < 5 || email.length > 160 || !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
@@ -48,8 +57,12 @@ function normalizeEmail(value: unknown): string {
 }
 
 function assertPassword(value: unknown): string {
-  if (typeof value !== "string" || value.length < MIN_PASSWORD_LENGTH || value.length > 200) {
-    throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+  if (
+    typeof value !== "string" ||
+    value.length < PASSWORD_MIN_LENGTH ||
+    value.length > PASSWORD_MAX_LENGTH
+  ) {
+    throw new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
   }
   return value;
 }
@@ -155,6 +168,23 @@ export async function reserveClientQuota(
   refusal: string
 ): Promise<void> {
   await reserveLoginAttempt([[key, limit]], refusal);
+}
+
+/**
+ * Counts a reset request against the address and the client before anything else happens,
+ * whether or not an account exists, so hitting the limit says nothing about which do.
+ */
+export async function reservePasswordResetRequest(
+  email: string,
+  clientKey: string
+): Promise<void> {
+  await reserveLoginAttempt(
+    [
+      [`reset:${email}`, MAX_RESET_EMAILS_PER_ADDRESS],
+      [`reset-client:${clientKey}`, MAX_RESET_REQUESTS_PER_CLIENT],
+    ],
+    `Too many reset requests. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
+  );
 }
 
 export async function registerUser(
@@ -275,8 +305,8 @@ export async function revokeAllSessions(userId: string): Promise<void> {
 
 /**
  * Issue a reset token. Returns null for an unknown address so the caller can answer
- * identically either way and account existence stays unguessable. There is no mail
- * provider here, so the caller is responsible for delivering the token out of band.
+ * identically either way and account existence stays unguessable. Delivering it is the
+ * caller's job (see passwordResetMail.ts).
  */
 export async function createPasswordReset(
   input: unknown
@@ -293,9 +323,16 @@ export async function createPasswordReset(
   if (!row) return null;
 
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + RESET_TOKEN_MINUTES * 60 * 1000);
+  const expiresAt = new Date(Date.now() + RESET_LINK_MINUTES * 60 * 1000);
 
   await transaction(async (client) => {
+    // Two requests at once would each delete before either inserts, leaving both links
+    // live. Taken alone, before the DELETE, so the DELETE reads after the other committed.
+    // An advisory lock, not the user row: resetPassword locks the link then the user, and
+    // taking them here in the other order could deadlock.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `password-reset:${String(row.id)}`,
+    ]);
     // Only the newest token should work, so earlier unused ones are discarded.
     await client.query("DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL", [
       String(row.id),
@@ -309,13 +346,14 @@ export async function createPasswordReset(
   return { token, expiresAt };
 }
 
+/** Resolves with the account's email, so its owner can be told the password changed. */
 export async function resetPassword(
   token: unknown,
   newPassword: unknown,
   clientKey = "unknown-client"
-): Promise<void> {
+): Promise<{ email: string | null }> {
   if (typeof token !== "string" || token.length < 20) {
-    throw new Error("That reset link is not valid.");
+    throw new Error(RESET_LINK_INVALID);
   }
   const password = assertPassword(newPassword);
 
@@ -327,13 +365,13 @@ export async function resetPassword(
     [tokenHash, new Date().toISOString()]
   );
   if (!pending) {
-    throw new Error("That reset link has expired or was already used.");
+    throw new Error(RESET_LINK_SPENT);
   }
 
   const salt = randomBytes(16).toString("hex");
   const hash = await hashPassword(password, salt);
 
-  await transaction(async (client) => {
+  return transaction(async (client) => {
     // Claimed atomically after the slow hash: a concurrent reset with the same token, or a
     // newer token issued meanwhile (which deletes this one), must make this attempt fail.
     const now = new Date().toISOString();
@@ -343,7 +381,7 @@ export async function resetPassword(
     );
     const claimed = claimedRows.rows[0] as Record<string, unknown> | undefined;
     if (!claimed) {
-      throw new Error("That reset link has expired or was already used.");
+      throw new Error(RESET_LINK_SPENT);
     }
     const userId = String(claimed.user_id);
     const ownerRows = await client.query("SELECT email FROM users WHERE id = $1", [userId]);
@@ -365,5 +403,6 @@ export async function resetPassword(
     await client.query("DELETE FROM login_attempts WHERE attempt_key = $1", [
       `client:${clientKey}`,
     ]);
+    return { email: owner ? String(owner.email) : null };
   });
 }

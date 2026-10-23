@@ -53,6 +53,9 @@ and run `npm run build` followed by `npm start`. If port 3005 is occupied, use
 | `KRAVE_QUOTE_SECRET` | In production | HMAC key for checkout price locks. Without it in production, locks are disabled and checkout falls back to live pricing. Development generates a per-process key. |
 | `KRAVE_STAFF_EMAILS` | No | Comma-separated emails treated as staff at every outlet. How the first operator is created. |
 | `KRAVE_OPEN_STAFF` | No | Set to `1` to treat **every** signed-in account as staff everywhere. Demo convenience only; never set it on anything real. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | For password reset | Mail server for reset links. Port 587 must offer STARTTLS (a login is never sent unencrypted); 465 uses TLS from the start. Without `SMTP_HOST`, production refuses reset requests and development writes the link to the server log. |
+| `EMAIL_FROM` | No | Sender, e.g. `KRAVE <me@example.com>`. Defaults to `KRAVE` at `SMTP_USER`; required when the server takes no login. Gmail only sends from the signed-in address. |
+| `KRAVE_PUBLIC_URL` | In production, off Vercel | Site address used in emailed links, never taken from the request. On Vercel it defaults to the project's production domain. |
 
 ### Who may act as staff
 
@@ -98,6 +101,8 @@ The public demo runs on Vercel (region `sin1`) against a Neon Postgres branch in
 3. Import the repository into Vercel and set `DATABASE_URL` (pooled host),
    `KRAVE_QUOTE_SECRET` (`openssl rand -hex 32`) and `KRAVE_STAFF_EMAILS`. Never set
    `KRAVE_OPEN_STAFF` on a public deployment.
+4. For "Forgot password?", also set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` and `SMTP_PASS`.
+   Without them the site still runs, and reset requests are refused rather than issued.
 
 The repository is connected to the Vercel project: a push to `main` deploys production.
 Other branches get preview deployments, which receive no production variables and so
@@ -115,8 +120,9 @@ These are deliberate for a demo and must be closed before taking real money:
   arrival must be derived on the server first.
 - A guest who cancels is not reported to the kitchen, and guest checkout has no
   idempotency key, so only signed-in checkouts are protected against double submission.
-- Password reset answers 503 in production: there is no email provider, and a token that
-  cannot be delivered must not be created.
+- Password reset emails come from one personal SMTP account, so its provider's daily
+  sending cap is the ceiling. Requests are limited to 3 per address and 10 per network
+  address per 15 minutes, counted whether or not the account exists.
 - Every address may create 30 accounts and place 30 guest orders per 15 minutes; sign-in
   is throttled per account and per address. Limits are stored in Postgres, so they hold
   across serverless instances.
@@ -185,14 +191,17 @@ terminal reloads and redoes its change.
 Accounts are a demo. They live in Postgres, created by `npm run db:setup`. Passwords are
 salted and hashed with scrypt and never stored in plain text. Sign-in is throttled per
 account and per client, a reset token can recover a locked account, and a reset signs out
-every device. There is still no email delivery — in development the reset token is
-written to the server log, and in production reset is unavailable — and no email
-verification. Do not reuse a real password.
+every device. "Forgot password?" emails a single-use link valid for 30 minutes; the token
+rides in the URL fragment, so it never reaches a server log or a Referer header, and the
+owner is emailed when the password changes. There is still no email verification at
+sign-up, so an address is not proven to belong to whoever registered it. Do not reuse a
+real password.
 
 ## Next Milestones
 
 1. Automatic merge for concurrent terminals, not just conflict detection.
-2. Email delivery and verification for reset tokens.
+2. Email verification at sign-up, so staff access by email address cannot be claimed by
+   whoever registers the address first.
 3. Licensed restaurant data and payment-provider sandbox integration with webhooks.
 4. Restaurant/merchant operations for accepting and dispatching delivery orders.
 5. Authorized genuine Android APK investigation before making parity claims.

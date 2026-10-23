@@ -12,6 +12,9 @@ export default defineConfig({
     // dozens of sign-in attempts. A timed-out test keeps running and corrupts the next one.
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    // .env.local holds a real SMTP login. Blank wins over the file, so no test mails a person;
+    // a test that needs mail sets its own server.
+    env: { SMTP_HOST: "", SMTP_USER: "", SMTP_PASS: "", EMAIL_FROM: "", KRAVE_PUBLIC_URL: "" },
   },
   resolve: {
     alias: {

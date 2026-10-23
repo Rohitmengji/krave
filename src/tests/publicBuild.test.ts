@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/webroutes/[...slug]/route";
@@ -76,6 +76,23 @@ describe("public build", () => {
       if (file === "ReaInspectorModal.tsx") continue;
       const text = readFileSync(path.join(componentsDir, file), "utf8");
       expect(text, file).not.toMatch(/Zomato|Hyperpure|FSSAI #/);
+    }
+  });
+
+  it("declares a tab and install icon that the build serves", async () => {
+    // Without a declared icon, browsers request /favicon.ico, which 404s, and a shared
+    // link opens with a blank tab.
+    const { metadata } = await import("@/app/layout");
+    const { default: manifest } = await import("@/app/manifest");
+    const declared = (value: unknown) =>
+      [...JSON.stringify(value ?? null).matchAll(/"(\/[^"?#]+)/g)].map((match) => match[1]);
+
+    const pageIcons = declared(metadata.icons);
+    const installIcons = declared(manifest().icons);
+    expect(pageIcons).not.toHaveLength(0);
+    expect(installIcons).not.toHaveLength(0);
+    for (const url of [...pageIcons, ...installIcons]) {
+      expect(existsSync(path.resolve(__dirname, "../../public", url.slice(1))), url).toBe(true);
     }
   });
 });

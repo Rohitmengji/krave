@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   description:
     "Independent food delivery and dining prototype informed by public website observations. Demo checkout and tracking.",
   appleWebApp: { capable: true, title: "KRAVE", statusBarStyle: "black-translucent" },
+  icons: { icon: { url: "/icon.svg", type: "image/svg+xml" } },
 };
 
 export const viewport: Viewport = {

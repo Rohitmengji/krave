@@ -37,6 +37,7 @@ import {
   POS_SHIFT_STORAGE_KEY,
   POS_STORAGE_KEY,
   POS_TABLES,
+  releaseTable,
   restorePosSessions,
   restorePosShift,
   sendPendingToKitchen,
@@ -1104,7 +1105,20 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
               <ul className="max-h-72 space-y-2 overflow-y-auto">
                 {activeSession.lines.length === 0 && (
-                  <li className="text-xs opacity-60">No items added yet.</li>
+                  <li className="flex items-center justify-between gap-2 text-xs">
+                    <span className="opacity-60">No items added yet.</span>
+                    <button
+                      type="button"
+                      data-testid="pos-release-table"
+                      onClick={() => {
+                        updateActiveSession(releaseTable);
+                        setActiveTableId(null);
+                      }}
+                      className="min-h-11 rounded-xl border border-white/15 px-3 text-xs font-bold hover:bg-white/5"
+                    >
+                      Free this table
+                    </button>
+                  </li>
                 )}
                 {activeSession.lines.map((line) => (
                   <li

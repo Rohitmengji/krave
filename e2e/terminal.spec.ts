@@ -138,6 +138,15 @@ test.describe("Dine-in terminal", () => {
     await expect(page.getByTestId("pos-guest-name-2")).toHaveValue("Sunita");
   });
 
+  test("frees a table opened by mistake", async ({ page }) => {
+    await freshTerminal(page, "Release");
+    await openTable(page, "T4");
+    await page.getByRole("button", { name: KARI_FULL }).click();
+    await page.getByRole("button", { name: "Remove" }).click();
+    await page.getByTestId("pos-release-table").click();
+    await expect(page.getByTestId("pos-table-T4")).toContainText("Free");
+  });
+
   test("merges one table into another and frees the source", async ({ page }) => {
     await freshTerminal(page, "Merge");
     await openTable(page, "T1");

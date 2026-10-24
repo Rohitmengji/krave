@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { addDishAndFire, openTable, registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 import { createRestaurant, openTerminal } from "./restaurants";
 
-const PASSWORD = "e2e-demo-password";
+const PASSWORD = "135790";
 const PANEER = /Paneer Tikka/;
 
 /** Settle a table on the counter and return the claim code printed on its receipt. */

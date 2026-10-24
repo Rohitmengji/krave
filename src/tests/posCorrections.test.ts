@@ -108,7 +108,7 @@ describe.skipIf(!hasTestDatabase)("owner PIN and corrected bills on the server",
   afterAll(stopTestDatabase);
   beforeEach(resetTestDatabase);
 
-  const PASSWORD = "correct-horse-battery";
+  const PASSWORD = "135790";
 
   async function owner() {
     const user = await registerUser({ email: "owner@pin.test", password: PASSWORD });

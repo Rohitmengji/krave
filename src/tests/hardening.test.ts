@@ -38,7 +38,7 @@ import {
   writeCheckoutIntent,
 } from "@/lib/checkoutIntent";
 
-const CREDENTIALS = { email: "chef@krave.test", password: "correct-horse-battery" };
+const CREDENTIALS = { email: "chef@krave.test", password: "135790" };
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 // Demo orders and kitchen tickets run on the legacy fictional catalog, which the app no longer ships.
@@ -225,13 +225,13 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
     const { token } = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
     const outcomes = await Promise.allSettled([
-      resetPassword(token, "first-new-password"),
-      resetPassword(token, "second-new-password"),
+      resetPassword(token, "135796"),
+      resetPassword(token, "246816"),
     ]);
     expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
     expect(outcomes.filter((o) => o.status === "rejected")).toHaveLength(1);
 
-    const winner = outcomes[0].status === "fulfilled" ? "first-new-password" : "second-new-password";
+    const winner = outcomes[0].status === "fulfilled" ? "135796" : "246816";
     await expect(
       verifyCredentials({ email: CREDENTIALS.email, password: winner }, "10.1.1.1")
     ).resolves.toMatchObject({ email: CREDENTIALS.email });

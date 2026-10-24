@@ -116,7 +116,7 @@ function ChangeEmailForm({ currentEmail, primaryHex }: { currentEmail: string; p
     if (inFlight.current || state.status !== "editing") return;
     const address = newEmail.trim();
     if (!address || !password) {
-      dispatch({ type: "REFUSED", message: "Enter the new address and your current password." });
+      dispatch({ type: "REFUSED", message: "Enter the new address and your current PIN." });
       return;
     }
     if (address.toLowerCase() === currentEmail) {

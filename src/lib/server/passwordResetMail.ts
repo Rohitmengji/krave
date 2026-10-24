@@ -66,21 +66,21 @@ export function passwordResetMessage(to: string, link: string): MailMessage {
   const href = escapeHtml(link);
   return {
     to,
-    subject: "Reset your KRAVE password",
+    subject: "Reset your KRAVE PIN",
     text: [
-      "Someone asked to reset the password for your KRAVE account.",
+      "Someone asked to reset the PIN for your KRAVE account.",
       "",
-      `Choose a new password here. The link works once and expires in ${RESET_LINK_MINUTES} minutes:`,
+      `Choose a new PIN here. The link works once and expires in ${RESET_LINK_MINUTES} minutes:`,
       link,
       "",
-      "If this wasn't you, ignore this email. Your password stays the same.",
+      "If this wasn't you, ignore this email. Your PIN stays the same.",
     ].join("\n"),
     html: emailLayout(
-      "Reset your password",
-      `<p style="${EMAIL_PARAGRAPH}">Someone asked to reset the password for your KRAVE account.</p>
-<p style="margin:0 0 18px"><a href="${href}" style="display:inline-block;background:#047857;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:12px">Choose a new password</a></p>
+      "Reset your PIN",
+      `<p style="${EMAIL_PARAGRAPH}">Someone asked to reset the PIN for your KRAVE account.</p>
+<p style="margin:0 0 18px"><a href="${href}" style="display:inline-block;background:#047857;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:12px">Choose a new PIN</a></p>
 <p style="${EMAIL_SMALL}">The link works once and expires in ${RESET_LINK_MINUTES} minutes. If the button doesn't open, copy this address into your browser:<br><span style="word-break:break-all">${href}</span></p>
-<p style="${EMAIL_SMALL}">If this wasn't you, ignore this email. Your password stays the same.</p>`
+<p style="${EMAIL_SMALL}">If this wasn't you, ignore this email. Your PIN stays the same.</p>`
     ),
   };
 }
@@ -96,23 +96,23 @@ export function passwordChangedMessage(
   const href = escapeHtml(signInUrl);
   const what =
     source === "reset"
-      ? "The password for your KRAVE account was just changed, and every device was signed out."
-      : "The password for your KRAVE account was just changed from its account settings, and your other devices were signed out.";
+      ? "The PIN for your KRAVE account was just changed, and every device was signed out."
+      : "The PIN for your KRAVE account was just changed from its account settings, and your other devices were signed out.";
   return {
     to,
-    subject: "Your KRAVE password was changed",
+    subject: "Your KRAVE PIN was changed",
     text: [
       what,
       "",
-      `If that was you, sign in with the new password: ${signInUrl}`,
+      `If that was you, sign in with the new PIN: ${signInUrl}`,
       "",
-      "If it wasn't you, choose \"Forgot password?\" on the sign-in screen to take the account back, and change your email password too.",
+      "If it wasn't you, choose \"Forgot PIN?\" on the sign-in screen to take the account back.",
     ].join("\n"),
     html: emailLayout(
-      "Your password was changed",
+      "Your PIN was changed",
       `<p style="${EMAIL_PARAGRAPH}">${escapeHtml(what)}</p>
-<p style="${EMAIL_PARAGRAPH}">If that was you, <a href="${href}" style="color:#047857;font-weight:700">sign in with the new password</a>.</p>
-<p style="${EMAIL_SMALL}">If it wasn't you, choose "Forgot password?" on the sign-in screen to take the account back, and change your email password too.</p>`
+<p style="${EMAIL_PARAGRAPH}">If that was you, <a href="${href}" style="color:#047857;font-weight:700">sign in with the new PIN</a>.</p>
+<p style="${EMAIL_SMALL}">If it wasn't you, choose "Forgot PIN?" on the sign-in screen to take the account back.</p>`
     ),
   };
 }

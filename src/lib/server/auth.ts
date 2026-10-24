@@ -38,7 +38,7 @@ export const MAX_RESET_REQUESTS_PER_CLIENT = 10;
 export const RESET_LINK_INVALID = "That reset link is not valid.";
 export const RESET_LINK_SPENT = "That reset link has expired or was already used.";
 
-export const WRONG_CURRENT_PASSWORD = "Your current password is incorrect.";
+export const WRONG_CURRENT_PASSWORD = "Your current PIN is incorrect.";
 export const REAUTH_THROTTLED = `Too many wrong passwords. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`;
 export const SAME_PASSWORD = "Choose a PIN different from your current one.";
 export const PASSWORD_CHANGED_ELSEWHERE =

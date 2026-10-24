@@ -233,8 +233,8 @@ export interface PosSyncResult {
 }
 
 /**
- * Push a terminal's offline queue. The device is the only writer, so this is a full replace of
- * the sessions it sent; sessions it no longer knows about are left alone rather than deleted.
+ * Push a terminal's offline queue. Each table is shared by the outlet, so this replaces only
+ * the sessions it sent; tables another waiter owns are left alone rather than deleted.
  */
 export async function syncPosState(userId: string, payload: unknown): Promise<PosSyncResult> {
   const body = (payload ?? {}) as Record<string, unknown>;

@@ -29,7 +29,7 @@ function freshClientAddress(): string {
 
 export async function registerAccount(page: Page, email: string, password: string) {
   const response = await page.request.post("/api/webroutes/auth/register", {
-    data: { email, password, displayName: "E2E Guest" },
+    data: { email, password, displayName: "E2E Guest", phone: "9876543210" },
     headers: { "x-forwarded-for": freshClientAddress() },
   });
   expect(response.status()).toBe(201);
@@ -37,7 +37,7 @@ export async function registerAccount(page: Page, email: string, password: strin
 
 /** Matches KRAVE_STAFF_EMAILS in playwright.config.ts. */
 export const STAFF_EMAIL = "e2e-staff@krave.test";
-export const STAFF_PASSWORD = "e2e-staff-password";
+export const STAFF_PASSWORD = "246810";
 
 /**
  * Signs in as the one account the server treats as staff.
@@ -54,7 +54,7 @@ export async function signInAsStaff(page: Page) {
   if (signedIn.ok()) return;
 
   const created = await page.request.post("/api/webroutes/auth/register", {
-    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD, displayName: "E2E Staff" },
+    data: { email: STAFF_EMAIL, password: STAFF_PASSWORD, displayName: "E2E Staff", phone: "9876543210" },
   });
   expect(created.status(), await created.text()).toBe(201);
 }

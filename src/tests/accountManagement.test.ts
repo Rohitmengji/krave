@@ -61,7 +61,7 @@ import {
 } from "./support/testDb";
 
 const SITE = "https://krave.example";
-const OWNER = { email: "owner@krave.test", password: "original-password" };
+const OWNER = { email: "owner@krave.test", password: "246810" };
 
 function stubProductionMail() {
   vi.stubEnv("NODE_ENV", "production");
@@ -139,7 +139,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
   describe("profile", () => {
     it("saves a name and a normalised phone, for this account only", async () => {
       const { user, token } = await signedIn();
-      const other = await registerUser({ email: "other@krave.test", password: "other-password" });
+      const other = await registerUser({ email: "other@krave.test", password: "135793" });
 
       const response = await post(
         "account/profile",
@@ -186,7 +186,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
 
       const response = await post(
         "account/password",
-        { currentPassword: OWNER.password, newPassword: "brand-new-password" },
+        { currentPassword: OWNER.password, newPassword: "246813" },
         token
       );
       expect(response.status).toBe(200);
@@ -195,7 +195,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       expect(await getUserForToken(otherDevice)).toBeNull();
       await expect(verifyCredentials(OWNER, "10.9.9.1")).rejects.toThrow(/incorrect/);
       await expect(
-        verifyCredentials({ email: OWNER.email, password: "brand-new-password" }, "10.9.9.2")
+        verifyCredentials({ email: OWNER.email, password: "246813" }, "10.9.9.2")
       ).resolves.toMatchObject({ id: user.id });
       // A reset link sent before the change cannot undo it.
       await expect(resetPassword(earlierReset!.token, "someone-elses-pick")).rejects.toThrow(
@@ -204,7 +204,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
 
       await runAfterTasks();
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ to: OWNER.email, subject: "Your KRAVE password was changed" });
+      expect(sent[0]).toMatchObject({ to: OWNER.email, subject: "Your KRAVE PIN was changed" });
       expect(sent[0].text).toContain("account settings");
     });
 
@@ -213,7 +213,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       for (let attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt += 1) {
         const response = await post(
           "account/password",
-          { currentPassword: `wrong-guess-${attempt}`, newPassword: "brand-new-password" },
+          { currentPassword: `wrong-guess-${attempt}`, newPassword: "246813" },
           token
         );
         expect(response.status).toBe(400);
@@ -221,7 +221,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       }
       const locked = await post(
         "account/password",
-        { currentPassword: OWNER.password, newPassword: "brand-new-password" },
+        { currentPassword: OWNER.password, newPassword: "246813" },
         token
       );
       expect(locked.status).toBe(429);
@@ -249,7 +249,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
     it("lets exactly one of two simultaneous changes win", async () => {
       const { token } = await signedIn();
       const responses = await Promise.all(
-        ["first-new-password", "second-new-password"].map((newPassword) =>
+        ["135796", "246816"].map((newPassword) =>
           post("account/password", { currentPassword: OWNER.password, newPassword }, token)
         )
       );
@@ -257,7 +257,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       expect(statuses.filter((status) => status === 200)).toHaveLength(1);
       // The loser either saw the change land (409) or checked against the new password (400).
       expect(statuses.filter((status) => status === 409 || status === 400)).toHaveLength(1);
-      const winner = statuses[0] === 200 ? "first-new-password" : "second-new-password";
+      const winner = statuses[0] === 200 ? "135796" : "246816";
       await expect(
         verifyCredentials({ email: OWNER.email, password: winner }, "10.9.9.4")
       ).resolves.toBeTruthy();
@@ -337,7 +337,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       const { token } = await signedIn();
       await post("account/email", { newEmail: "taken@krave.test", password: OWNER.password }, token);
       await runAfterTasks();
-      await registerUser({ email: "taken@krave.test", password: "someone-elses-pw" });
+      await registerUser({ email: "taken@krave.test", password: "246815" });
 
       const confirmed = await post("auth/verify-email", { token: linkToken(sent[0]) });
       expect(confirmed.status).toBe(409);
@@ -370,7 +370,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       stubProductionMail();
       const response = await post("auth/register", {
         email: "fresh@krave.test",
-        password: "fresh-password-1",
+        password: "246814",
       });
       expect(response.status).toBe(201);
       expect((await response.json()).user).toMatchObject({
@@ -398,7 +398,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
          WHERE table_name = 'users' AND column_name = 'email_verified_at'`
       );
       expect(column?.column_default ?? null).toBeNull();
-      expect((await registerUser({ email: "plain@krave.test", password: "plain-password-1" })).emailVerified).toBe(
+      expect((await registerUser({ email: "plain@krave.test", password: "135795" })).emailVerified).toBe(
         false
       );
     });
@@ -457,7 +457,7 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
     it.each([
       [{ password: OWNER.password, confirmation: "delete" }, /Type DELETE/],
       [{ password: OWNER.password }, /Type DELETE/],
-      [{ password: "wrong-password", confirmation: "DELETE" }, /current password is incorrect/],
+      [{ password: "wrong-password", confirmation: "DELETE" }, /current PIN is incorrect/],
     ])("needs the typed word and the password: %j", async (body, message) => {
       const { user, token } = await signedIn();
       const response = await post("account/delete", body, token);

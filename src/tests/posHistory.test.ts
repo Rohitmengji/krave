@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDatabase)("sales history", () => {
   afterAll(stopTestDatabase);
   beforeEach(resetTestDatabase);
 
-  const PASSWORD = "correct-horse-battery";
+  const PASSWORD = "135790";
   const HOUR = 3_600_000;
 
   async function owner() {

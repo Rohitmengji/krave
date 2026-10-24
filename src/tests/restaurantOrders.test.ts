@@ -31,7 +31,7 @@ describe.skipIf(!hasTestDatabase)("restaurant ordering", () => {
   const newKey = () => `test-key-${Date.now()}-${keySeq++}`.padEnd(20, "x");
 
   async function createOwner(email = "owner@jagadamba.test") {
-    return registerUser({ email, password: "correct-horse-battery" });
+    return registerUser({ email, password: "135790" });
   }
 
   /** A published restaurant taking takeaway and delivery orders, with one dish. */

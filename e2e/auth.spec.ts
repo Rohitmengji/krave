@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 
-const PASSWORD = "e2e-demo-password";
+const PASSWORD = "135790";
 
 test.describe("Auth hardening", () => {
   test("throttles sign-in and refuses even the correct password while locked", async ({ page }) => {

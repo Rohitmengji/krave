@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 import { latestConfirmLink, subjectsFor } from "./mailbox";
 
-const PASSWORD = "e2e-account-password";
+const PASSWORD = "135791";
 
 async function waitForConfirmLink(address: string): Promise<string> {
   await expect.poll(() => latestConfirmLink(address), { timeout: 15_000 }).not.toBeNull();
@@ -59,12 +59,12 @@ test.describe("Account settings", () => {
     const email = await openAccount(page, "password");
     const section = page.getByTestId("account-password");
 
-    await section.getByLabel("Current password").fill(PASSWORD);
-    await section.getByLabel("New password", { exact: true }).fill("e2e-changed-password");
-    await section.getByLabel("Type the new password again").fill("e2e-changed-password");
+    await section.getByLabel("Current PIN").fill(PASSWORD);
+    await section.getByLabel("New PIN", { exact: true }).fill("246811");
+    await section.getByLabel("Type the new PIN again").fill("246811");
     await section.getByRole("button", { name: "Change password" }).click();
-    await expect(section.getByRole("status")).toContainText("Password changed");
-    await expect.poll(() => subjectsFor(email)).toContain("Your KRAVE password was changed");
+    await expect(section.getByRole("status")).toContainText("PIN changed");
+    await expect.poll(() => subjectsFor(email)).toContain("Your KRAVE PIN was changed");
 
     // Still signed in here.
     await page.reload();
@@ -77,7 +77,7 @@ test.describe("Account settings", () => {
           data: { email, password },
         });
       expect((await login(PASSWORD)).status()).toBe(400);
-      expect((await login("e2e-changed-password")).status()).toBe(201);
+      expect((await login("246811")).status()).toBe(201);
     } finally {
       await elsewhere.close();
     }
@@ -105,7 +105,7 @@ test.describe("Account settings", () => {
 
     await section.getByRole("button", { name: "Change email address" }).click();
     await section.getByLabel("New email address").fill(newEmail);
-    await section.getByLabel("Current password").fill(PASSWORD);
+    await section.getByLabel("Current PIN").fill(PASSWORD);
     await section.getByRole("button", { name: "Send link to new address" }).click();
     await expect(page.getByTestId("email-change-form").getByRole("status")).toContainText(
       `Check ${newEmail}`
@@ -141,7 +141,7 @@ test.describe("Account settings", () => {
 
     await page.getByRole("button", { name: "Delete account..." }).click();
     const dialog = page.getByRole("alertdialog", { name: "Delete your account?" });
-    const password = dialog.getByLabel("Password");
+    const password = dialog.getByLabel("PIN");
     await expect(password).toBeFocused();
     const confirm = dialog.getByRole("button", { name: "Delete account" });
     await expect(confirm).toBeDisabled();
@@ -151,15 +151,15 @@ test.describe("Account settings", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await page.getByRole("button", { name: "Delete account..." }).click();
-    await expect(dialog.getByLabel("Password")).toHaveValue("");
+    await expect(dialog.getByLabel("PIN")).toHaveValue("");
 
-    await dialog.getByLabel("Password").fill("not-the-password");
+    await dialog.getByLabel("PIN").fill("not-the-password");
     await dialog.getByLabel("Type DELETE to confirm").fill("DELETE");
     await confirm.click();
-    await expect(dialog.getByRole("alert")).toHaveText("Your current password is incorrect.");
+    await expect(dialog.getByRole("alert")).toHaveText("Your current PIN is incorrect.");
     await expect(page.getByTestId("account-settings")).toBeVisible();
 
-    await dialog.getByLabel("Password").fill(PASSWORD);
+    await dialog.getByLabel("PIN").fill(PASSWORD);
     await confirm.click();
     await expect(page.getByRole("heading", { name: "Your account was deleted" })).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

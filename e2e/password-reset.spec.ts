@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 import { latestResetLink, subjectsFor } from "./mailbox";
 
-const OLD_PASSWORD = "e2e-old-password";
-const NEW_PASSWORD = "e2e-brand-new-password";
+const OLD_PASSWORD = "135792";
+const NEW_PASSWORD = "246812";
 
 async function waitForResetLink(email: string): Promise<string> {
   await expect.poll(() => latestResetLink(email), { timeout: 15_000 }).not.toBeNull();
@@ -19,7 +19,7 @@ async function requestResetLink(page: Page, email: string): Promise<string> {
 }
 
 async function chooseNewPassword(page: Page, password: string, confirmation = password) {
-  await page.getByLabel("New password").fill(password);
+  await page.getByLabel("New PIN").fill(password);
   await page.getByLabel("Type it again").fill(confirmation);
 }
 
@@ -35,9 +35,9 @@ test.describe("Forgotten password", () => {
     await page.goto("/signin");
     const dialog = page.getByRole("dialog", { name: "Account" });
     await dialog.getByLabel("Email", { exact: true }).fill(email);
-    await dialog.getByRole("button", { name: "Forgot password?" }).click();
+    await dialog.getByRole("button", { name: "Forgot PIN?" }).click();
 
-    await expect(dialog.getByRole("heading", { name: "Reset your password" })).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Reset your PIN" })).toBeVisible();
     // What they typed to sign in carries over, and the field is ready for them.
     const address = dialog.getByLabel("Email you signed up with");
     await expect(address).toHaveValue(email);
@@ -49,18 +49,18 @@ test.describe("Forgotten password", () => {
 
     await page.goto(await waitForResetLink(email));
     await chooseNewPassword(page, NEW_PASSWORD);
-    await page.getByRole("button", { name: "Save new password" }).click();
+    await page.getByRole("button", { name: "Save new PIN" }).click();
 
-    await expect(page.getByRole("heading", { name: "Password updated" })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "PIN updated" })).toBeFocused();
     // The spent token does not stay in the address bar.
     expect(new URL(page.url()).hash).toBe("");
-    await expect.poll(() => subjectsFor(email)).toContain("Your KRAVE password was changed");
+    await expect.poll(() => subjectsFor(email)).toContain("Your KRAVE PIN was changed");
 
     await page.getByRole("link", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/signin$/);
     const signIn = page.getByRole("dialog", { name: "Account" });
     await signIn.getByLabel("Email", { exact: true }).fill(email);
-    await signIn.getByLabel(/^Password/).fill(NEW_PASSWORD);
+    await signIn.getByLabel(/^PIN/).fill(NEW_PASSWORD);
     await signIn.getByTestId("account-submit").click();
     await expect(page.getByTestId("navbar-account")).toHaveAttribute("title", /Signed in as/);
 
@@ -82,8 +82,8 @@ test.describe("Forgotten password", () => {
     expect(spent.status()).toBe(200);
 
     await page.goto(link);
-    await chooseNewPassword(page, "another-new-password");
-    await page.getByRole("button", { name: "Save new password" }).click();
+    await chooseNewPassword(page, "246817");
+    await page.getByRole("button", { name: "Save new PIN" }).click();
 
     await expect(page.getByRole("heading", { name: "This link no longer works" })).toBeFocused();
     await expect(page.getByText(/expired or was already used/)).toBeVisible();
@@ -104,9 +104,9 @@ test.describe("Forgotten password", () => {
     });
     await page.goto(link);
     await chooseNewPassword(page, NEW_PASSWORD);
-    await page.getByRole("button", { name: "Save new password" }).dblclick();
+    await page.getByRole("button", { name: "Save new PIN" }).dblclick();
 
-    await expect(page.getByRole("heading", { name: "Password updated" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "PIN updated" })).toBeVisible();
     expect(resets).toBe(1);
   });
 
@@ -116,13 +116,13 @@ test.describe("Forgotten password", () => {
       if (request.url().includes("/auth/reset")) resets.push(request.url());
     });
     await page.goto(`/reset-password#token=${"a".repeat(43)}`);
-    await chooseNewPassword(page, "first-password-1", "other-password-1");
-    await page.getByRole("button", { name: "Save new password" }).click();
+    await chooseNewPassword(page, "135799", "246819");
+    await page.getByRole("button", { name: "Save new PIN" }).click();
 
     await expect(page.getByTestId("reset-form").getByRole("alert")).toHaveText(
-      "The two passwords don't match."
+      "The two PINs don't match."
     );
-    await expect(page.getByLabel("New password")).toHaveAttribute("aria-invalid", "true");
+    await expect(page.getByLabel("New PIN")).toHaveAttribute("aria-invalid", "true");
     expect(resets).toEqual([]);
   });
 

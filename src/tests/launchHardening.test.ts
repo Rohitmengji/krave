@@ -30,7 +30,7 @@ vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
   ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
 }));
 
-const CREDENTIALS = { email: "launch@krave.test", password: "correct-horse-battery" };
+const CREDENTIALS = { email: "launch@krave.test", password: "135790" };
 const CHECKOUT = {
   items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"] }],
   addressId: "addr_cp_514",

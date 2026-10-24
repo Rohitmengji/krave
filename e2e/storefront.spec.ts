@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 import { createRestaurant } from "./restaurants";
 
-const PASSWORD = "e2e-demo-password";
+const PASSWORD = "135790";
 
 test.describe("Storefront", () => {
   test("lists only published restaurants and opens their real menu", async ({ page }) => {
@@ -10,8 +10,9 @@ test.describe("Storefront", () => {
     const listed = await createRestaurant(page, "Storefront Listed", { publish: true });
     const draft = await createRestaurant(page, "Storefront Draft");
 
-    // A signed-out customer sees what owners have published, and nothing invented.
+    // A signed-in customer sees what owners have published, and nothing invented.
     await page.request.post("/api/webroutes/auth/logout");
+    await registerAccount(page, uniqueEmail("browser"), PASSWORD);
     await page.goto("/", { waitUntil: "networkidle" });
     const directory = page.getByTestId("restaurant-directory");
     await expect(directory.getByRole("link", { name: listed.name })).toBeVisible();
@@ -50,6 +51,8 @@ test.describe("Storefront", () => {
 
   test("opens the inbox and closes it with Escape", async ({ page }) => {
     await resetBrowser(page);
+    await registerAccount(page, uniqueEmail("inbox"), PASSWORD);
+    await page.goto("/", { waitUntil: "networkidle" });
 
     await page.getByTestId("navbar-inbox").click();
     const inbox = page.getByRole("dialog", { name: "Notifications" });
@@ -98,16 +101,17 @@ test.describe("Accounts", () => {
     await page.getByTestId("navbar-account").click();
     await page.getByTestId("account-sign-out").click();
     await expect(page.getByTestId("navbar-account")).toContainText("Sign in");
-    // The dialog has closed, so the page's own region speaks.
     await expect(page.locator("#krave-announcer")).toHaveText("Signed out.");
     // The offline terminal listed this account's outlets and menus.
     await expect
       .poll(() => page.evaluate(async () => Boolean(await caches.match("/pos"))))
       .toBe(false);
 
-    await page.getByTestId("navbar-account").click();
+    // Signing out leaves the required sign-in dialog open, so the page behind it is locked.
+    const dialog = page.locator("dialog[open]");
+    await expect(dialog).toBeVisible();
     await page.getByLabel("Email").fill(email);
-    await page.getByLabel(/Password/).fill(PASSWORD);
+    await page.getByLabel(/PIN/).fill(PASSWORD);
     await page.getByTestId("account-submit").click();
     await expect(page.getByTestId("navbar-account")).toContainText("E2E Guest");
   });

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { addDishAndFire, openTable, registerAccount, resetBrowser, STAFF_PASSWORD, uniqueEmail } from "./helpers";
 import { createRestaurant, openTerminal, type E2eRestaurant } from "./restaurants";
 
-const PASSWORD = "e2e-demo-password";
+const PASSWORD = "135790";
 const PANEER = /Paneer Tikka/;
 const KARI_FULL = /Chicken Kari \(Full\)/;
 

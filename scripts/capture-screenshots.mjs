@@ -80,7 +80,7 @@ async function main() {
   // Refund claim: needs a signed-in account with a delivered order.
   const email = `shots-${Date.now()}@krave.test`;
   await page.request.post(`${BASE}/api/webroutes/auth/register`, {
-    data: { email, password: "screenshot-password", displayName: "Screenshot Guest" },
+    data: { email, password: "135790", displayName: "Screenshot Guest", phone: "9876543210" },
   });
   await page.reload({ waitUntil: "networkidle" });
 
@@ -115,8 +115,9 @@ async function main() {
   await page.request.post(`${BASE}/api/webroutes/auth/register`, {
     data: {
       email: `reviewer-${Date.now()}@krave.test`,
-      password: "screenshot-password",
+      password: "135790",
       displayName: "Counter Staff",
+      phone: "9876543211",
     },
   });
 

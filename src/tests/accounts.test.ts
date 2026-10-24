@@ -97,7 +97,7 @@ vi.mock("@/data/zomatoReconstructedData", async (importOriginal) => ({
   ...(await import("./support/legacyCatalog")).LEGACY_CATALOG,
 }));
 
-const CREDENTIALS = { email: "Chef@Krave.test", password: "correct-horse-battery" };
+const CREDENTIALS = { email: "Chef@Krave.test", password: "135790" };
 const CHECKOUT = {
   items: [{ itemId: "ctl_820099425", quantity: 1, optionIds: ["opt_500g"] }],
   addressId: "addr_cp_514",
@@ -365,15 +365,15 @@ describe("Accounts and durable orders", () => {
     ))!;
     expect(String(stored.token_hash)).not.toBe(reset.token);
 
-    await resetPassword(reset.token, "a-brand-new-password");
+    await resetPassword(reset.token, "135794");
 
     expect(await getUserForToken(sessionToken)).toBeNull();
     await expect(verifyCredentials(CREDENTIALS)).rejects.toThrow();
     await expect(
-      verifyCredentials({ email: CREDENTIALS.email, password: "a-brand-new-password" })
+      verifyCredentials({ email: CREDENTIALS.email, password: "135794" })
     ).resolves.toMatchObject({ id: user.id });
 
-    await expect(resetPassword(reset.token, "yet-another-password")).rejects.toThrow();
+    await expect(resetPassword(reset.token, "yet-an135793")).rejects.toThrow();
   });
 
   it("refuses an expired, unknown or weak reset", async () => {
@@ -381,10 +381,10 @@ describe("Accounts and durable orders", () => {
     const reset = (await createPasswordReset({ email: CREDENTIALS.email }))!;
 
     await expect(resetPassword(reset.token, "short")).rejects.toThrow();
-    await expect(resetPassword("not-a-real-token-value", "a-brand-new-password")).rejects.toThrow();
+    await expect(resetPassword("not-a-real-token-value", "135794")).rejects.toThrow();
 
     await run("UPDATE password_resets SET expires_at = $1", ["2000-01-01T00:00:00.000Z"]);
-    await expect(resetPassword(reset.token, "a-brand-new-password")).rejects.toThrow(/expired/i);
+    await expect(resetPassword(reset.token, "135794")).rejects.toThrow(/expired/i);
   });
 
   it("does not reveal whether an email has an account", async () => {
@@ -402,11 +402,11 @@ describe("Accounts and durable orders", () => {
     await expect(verifyCredentials(CREDENTIALS, "4.4.4.4")).rejects.toThrow(/too many/i);
 
     const reset = (await createPasswordReset({ email: CREDENTIALS.email }))!;
-    await resetPassword(reset.token, "a-brand-new-password", "4.4.4.4");
+    await resetPassword(reset.token, "135794", "4.4.4.4");
 
     // Both the account lockout and the requesting client's lockout are lifted.
     await expect(
-      verifyCredentials({ email: CREDENTIALS.email, password: "a-brand-new-password" }, "4.4.4.4")
+      verifyCredentials({ email: CREDENTIALS.email, password: "135794" }, "4.4.4.4")
     ).resolves.toMatchObject({ email: "chef@krave.test" });
   });
 
@@ -583,6 +583,34 @@ describe("Dine-in terminal sync", () => {
 
     expect((await loadPosState(other.id)).sessions).toHaveLength(0);
     expect((await loadPosState(user.id)).sessions).toHaveLength(1);
+  });
+
+  it("shows an open table to every waiter who can bill the outlet", async () => {
+    const waiter = await registerUser({ email: "waiter@krave.test", password: CREDENTIALS.password });
+    const restaurant = await one<{ id: string }>(
+      "SELECT id FROM managed_restaurants WHERE pos_outlet_id = $1",
+      [outlet.outletId]
+    );
+    await run(
+      `INSERT INTO restaurant_memberships (restaurant_id, user_id, role, granted_at, granted_by)
+       VALUES ($1, $2, 'staff', $3, $4)`,
+      [restaurant?.id, waiter.id, new Date().toISOString(), user.id]
+    );
+
+    const opened = await syncPosState(user.id, { sessions: [firedTable()], shift: null });
+    expect((await loadPosState(waiter.id)).sessions.map((session) => session.sessionId)).toEqual([
+      opened.sessions[0].sessionId,
+    ]);
+
+    const [openedTable] = opened.sessions;
+    const added = sendPendingToKitchen(addItemToSession(openedTable, MENU[0], 1)).session;
+    const afterWaiter = await syncPosState(waiter.id, { sessions: [added], shift: null });
+    expect(afterWaiter.rejected).toEqual([]);
+    expect(afterWaiter.conflicts).toEqual([]);
+    const shared = (await loadPosState(user.id)).sessions.find(
+      (session) => session.sessionId === openedTable.sessionId
+    );
+    expect(shared?.lines.map((line) => line.quantity)).toEqual([2, 1]);
   });
 
   it("replaces the stored floor on each sync instead of duplicating it", async () => {

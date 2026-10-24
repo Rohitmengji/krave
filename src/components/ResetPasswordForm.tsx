@@ -135,7 +135,7 @@ function NewPasswordForm({
   return (
     <form onSubmit={save} noValidate className="space-y-4" data-testid="reset-form">
       <div className="space-y-1.5">
-        <h1 className="text-xl font-black">Choose a new password</h1>
+        <h1 className="text-xl font-black">Choose a new PIN</h1>
         <p id={hintId} className="text-sm leading-relaxed text-white/75">
           A PIN of {PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} digits. You&apos;ll be signed out
           everywhere, then sign in again with the new one.
@@ -241,11 +241,10 @@ function PasswordUpdated({ primaryHex }: { primaryHex: string }) {
       <CheckCircle2 className="h-8 w-8 text-emerald-400" aria-hidden="true" />
       <div className="space-y-1.5">
         <h1 ref={heading} tabIndex={-1} className="text-xl font-black outline-offset-4">
-          Password updated
+          PIN updated
         </h1>
         <p className="text-sm leading-relaxed text-white/75">
-          You&apos;re signed out on every device, including this one. Sign in with your new
-          password.
+          You&apos;re signed out on every device, including this one. Sign in with your new PIN.
         </p>
       </div>
       <Link

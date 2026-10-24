@@ -1,21 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { resetBrowser } from "./helpers";
+import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 
 // Behaviours that only exist in a real browser: focus movement, lazy-chunk mounting,
 // response headers and routing. The unit suite covers the logic behind each one.
 test.describe("Storefront hygiene", () => {
-  test("a lazily loaded dialog keeps typed input across close and reopen", async ({ page }) => {
+  test("the required sign-in dialog keeps typed input and does not close on Escape", async ({ page }) => {
     await resetBrowser(page);
-    const signIn = page.getByRole("button", { name: /Sign in/ }).first();
     const dialog = page.locator("dialog[open]");
 
-    await signIn.click();
+    await expect(dialog).toBeVisible();
     await dialog.getByLabel(/email/i).first().fill("draft@krave.test");
     await page.keyboard.press("Escape");
-    await expect(dialog).toHaveCount(0);
-    await expect(signIn).toBeFocused();
-
-    await signIn.click();
+    await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel(/email/i).first()).toHaveValue("draft@krave.test");
   });
 
@@ -32,14 +28,15 @@ test.describe("Storefront hygiene", () => {
     expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
     expect(headers["x-content-type-options"]).toBe("nosniff");
 
-    // Opening a dialog fetches its chunk; that must pass the policy too.
-    await page.getByRole("button", { name: /Sign in/ }).first().click();
+    // The required sign-in dialog fetches its chunk; that must pass the policy too.
     await expect(page.locator("dialog[open]")).toBeVisible();
     expect(violations).toEqual([]);
   });
 
   test("a toast raised inside a modal is seen above it and heard from within it", async ({ page }) => {
     await resetBrowser(page);
+    await registerAccount(page, uniqueEmail("studio"), "135790");
+    await page.goto("/", { waitUntil: "networkidle" });
     await page.getByRole("button", { name: /Brand Studio|Customize Branding/ }).first().click();
     const studio = page.getByTestId("brand-studio-modal");
     await studio.getByRole("button", { name: /Aurum Saffron/ }).click();

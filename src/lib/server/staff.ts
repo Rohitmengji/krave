@@ -1,3 +1,4 @@
+import { isDesignatedOwnerEmail } from "./designatedOwners";
 import { one, rows, run } from "./pg";
 
 /**
@@ -35,10 +36,14 @@ async function emailFor(userId: string): Promise<string> {
   return row ? String(row.email).toLowerCase() : "";
 }
 
+function isConfiguredStaffEmail(email: string): boolean {
+  return configuredStaffEmails().has(email) || isDesignatedOwnerEmail(email);
+}
+
 export async function isOutletStaff(userId: string, outletId: number): Promise<boolean> {
   if (openStaffMode()) return true;
   if (!Number.isSafeInteger(outletId)) return false;
-  if (configuredStaffEmails().has(await emailFor(userId))) return true;
+  if (isConfiguredStaffEmail(await emailFor(userId))) return true;
 
   const row = await one("SELECT 1 FROM outlet_staff WHERE user_id = $1 AND outlet_id = $2", [
     userId,
@@ -50,7 +55,7 @@ export async function isOutletStaff(userId: string, outletId: number): Promise<b
 /** True when this account is staff somewhere, for views that are not outlet-scoped. */
 export async function isAnyOutletStaff(userId: string): Promise<boolean> {
   if (openStaffMode()) return true;
-  if (configuredStaffEmails().has(await emailFor(userId))) return true;
+  if (isConfiguredStaffEmail(await emailFor(userId))) return true;
 
   const row = await one("SELECT 1 FROM outlet_staff WHERE user_id = $1", [userId]);
   return row !== undefined;
@@ -61,7 +66,7 @@ export async function hasAssignedStaffAccess(user: {
   id: string;
   email: string;
 }): Promise<boolean> {
-  if (configuredStaffEmails().has(user.email.toLowerCase())) return true;
+  if (isConfiguredStaffEmail(user.email.toLowerCase())) return true;
   const row = await one("SELECT 1 FROM outlet_staff WHERE user_id = $1", [user.id]);
   return row !== undefined;
 }

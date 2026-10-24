@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { one, rows, run, transaction, type Queryable } from "./pg";
+import { isDesignatedOwnerEmail } from "./designatedOwners";
+import { normalizeEmail } from "./auth";
 import { isValidClockTime, WEEKDAY_NAMES, type OpeningHours } from "@/lib/managedOrders";
 
 const RESTAURANT_ADMIN_EMAILS = [
@@ -190,7 +192,8 @@ export function mapRestaurant(row: RestaurantRow): ManagedRestaurant {
 }
 
 export function isRestaurantAdminEmail(email: string): boolean {
-  return RESTAURANT_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+  const normalized = email.trim().toLowerCase();
+  return RESTAURANT_ADMIN_EMAILS.includes(normalized) || isDesignatedOwnerEmail(normalized);
 }
 
 export async function isRestaurantAdmin(userId: string): Promise<boolean> {

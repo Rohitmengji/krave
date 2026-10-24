@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   Leaf,
+  Lock,
   Merge,
   Minus,
   Pencil,
@@ -28,6 +29,7 @@ import {
   addItemToSession,
   calculateItemizedSplit,
   calculatePosBill,
+  changeSettledPayment,
   closeShift,
   findKitchenTicket,
   getShiftSessions,
@@ -39,6 +41,7 @@ import {
   POS_STORAGE_KEY,
   POS_TABLES,
   releaseTable,
+  reopenSettledSession,
   restorePosSessions,
   restorePosShift,
   sendPendingToKitchen,
@@ -46,6 +49,7 @@ import {
   setLineQuantity,
   setSessionCharges,
   setTableGuest,
+  setTableServer,
   settleSession,
   summarizeShift,
   transferTableSession,
@@ -63,6 +67,7 @@ import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
 import { BillSmsLink, displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
 import { DietaryMark, PosMenuGrid } from "./PosMenuGrid";
+import { PosOwnerApproval, type OwnerCorrection } from "./PosOwnerApproval";
 
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
 
@@ -214,6 +219,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const [claimCodes, setClaimCodes] = useState<Record<string, string>>({});
   /** `sessionId:seat` of the guest whose name and mobile are being corrected. */
   const [editingGuest, setEditingGuest] = useState<string | null>(null);
+  const [editingServerFor, setEditingServerFor] = useState<string | null>(null);
+  const [serverDraft, setServerDraft] = useState("");
+  const [ownerAction, setOwnerAction] = useState<{
+    kind: "payment" | "reopen";
+    sessionId: string;
+  } | null>(null);
 
   // Custom off-menu dish form state
   const [customDishOpen, setCustomDishOpen] = useState(false);
@@ -530,6 +541,33 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
       return null;
     } catch (caught) {
       return caught instanceof Error ? caught.message : "Could not save this guest.";
+    }
+  }
+
+  /** Applied only after the owner's PIN has been accepted by the server. */
+  function applyOwnerCorrection(sessionId: string, correction: OwnerCorrection): string | null {
+    const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+    if (!session) return "This bill is no longer on this terminal.";
+    const openShiftId = activeShift?.shiftId ?? null;
+    try {
+      const next =
+        correction.kind === "payment"
+          ? changeSettledPayment(session, correction.method, correction.reason, openShiftId)
+          : reopenSettledSession(session, correction.reason, openShiftId, sessions);
+      setSessions((previous) =>
+        previous.map((candidate) => (candidate.sessionId === sessionId ? next : candidate))
+      );
+      if (correction.kind === "reopen") {
+        setReceiptSessionId(null);
+        setOutletId(next.outletId);
+        setActiveTableId(next.tableId);
+        announce(`${next.tableId} reopened. Add items, then settle again.`);
+      } else {
+        announce(`Table ${next.tableId} bill now marked as paid by ${correction.method}.`);
+      }
+      return null;
+    } catch (caught) {
+      return caught instanceof Error ? caught.message : "Could not change this bill.";
     }
   }
 
@@ -1013,9 +1051,55 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <h2 id="bill-heading" className="text-sm font-black">
               {activeSession ? `Table ${activeSession.tableId}` : "No table selected"}
             </h2>
-            {activeSession && (
-              <span className="text-[11px] opacity-60">{activeSession.serverName}</span>
-            )}
+            {activeSession &&
+              (editingServerFor === activeSession.sessionId ? (
+                <form
+                  className="flex items-center gap-1"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    updateActiveSession((session) => setTableServer(session, serverDraft));
+                    if (serverDraft.trim().length >= 2) setEditingServerFor(null);
+                  }}
+                >
+                  <input
+                    aria-label="Waiter name"
+                    data-testid="pos-server-input"
+                    value={serverDraft}
+                    maxLength={40}
+                    onChange={(event) => setServerDraft(event.target.value)}
+                    className="min-h-9 w-28 rounded-lg border border-white/15 bg-[#0E131D] px-2 text-xs"
+                  />
+                  <button
+                    type="submit"
+                    data-testid="pos-server-save"
+                    className="min-h-9 rounded-lg bg-emerald-600 px-2.5 text-xs font-black"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel"
+                    onClick={() => setEditingServerFor(null)}
+                    className="min-h-9 rounded-lg px-1.5 hover:bg-white/10"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="pos-edit-server"
+                  aria-label={`Waiter: ${activeSession.serverName}. Change`}
+                  onClick={() => {
+                    setServerDraft(activeSession.serverName);
+                    setEditingServerFor(activeSession.sessionId);
+                  }}
+                  className="flex min-h-9 items-center gap-1 rounded-lg px-2 text-[11px] opacity-70 hover:bg-white/5 hover:opacity-100"
+                >
+                  {activeSession.serverName}
+                  <Pencil className="h-3 w-3" aria-hidden="true" />
+                </button>
+              ))}
           </div>
           {activeSession &&
             (editingGuest === `${activeSession.sessionId}:1` ? (
@@ -1889,6 +1973,25 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               </>
             )}
 
+            {receiptSession.corrections.length > 0 && (
+              <div
+                data-testid="pos-receipt-corrections"
+                className="mt-2 space-y-0.5 border-t border-dashed border-black/40 pt-1 text-[10px]"
+              >
+                {receiptSession.corrections.map((correction, index) => (
+                  <div key={`${correction.at}-${index}`}>
+                    Corrected{" "}
+                    {new Date(correction.at).toLocaleTimeString("en-IN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                    : {correction.detail}
+                    {correction.reason ? ` — ${correction.reason}` : ""}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="mt-3 text-center">Thank you! Please visit again.</p>
             {receiptSession.status === "SETTLED" && claimCodes[receiptSession.sessionId] && (
               <div className="mt-3 border-t border-dashed border-black/40 pt-2 text-center">
@@ -1972,6 +2075,39 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 ))}
             </div>
 
+            {receiptSession.status === "SETTLED" && (
+              <div className="pos-no-print mt-4 space-y-1 font-sans">
+                {receiptSession.shiftId && receiptSession.shiftId !== activeShift?.shiftId ? (
+                  <p className="text-center text-[11px] text-black/60">
+                    This bill is in a closed shift, so it can no longer be changed.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      data-testid="pos-change-payment"
+                      onClick={() =>
+                        setOwnerAction({ kind: "payment", sessionId: receiptSession.sessionId })
+                      }
+                      className="flex min-h-11 items-center justify-center gap-1 rounded-lg border border-black/20 text-xs font-bold"
+                    >
+                      <Lock className="h-3.5 w-3.5" aria-hidden="true" /> Change payment
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="pos-reopen-bill"
+                      onClick={() =>
+                        setOwnerAction({ kind: "reopen", sessionId: receiptSession.sessionId })
+                      }
+                      className="flex min-h-11 items-center justify-center gap-1 rounded-lg border border-black/20 text-xs font-bold"
+                    >
+                      <Lock className="h-3.5 w-3.5" aria-hidden="true" /> Reopen bill
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="pos-no-print mt-4 grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -1992,6 +2128,23 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           </div>
         </div>
       )}
+
+      {ownerAction &&
+        (() => {
+          const target = sessions.find((session) => session.sessionId === ownerAction.sessionId);
+          if (!target?.payment) return null;
+          return (
+            <PosOwnerApproval
+              kind={ownerAction.kind}
+              outletId={target.outletId}
+              tableId={target.tableId}
+              total={calculatePosBill(target).grandTotal}
+              currentMethod={target.payment.method}
+              onApply={(correction) => applyOwnerCorrection(target.sessionId, correction)}
+              onClose={() => setOwnerAction(null)}
+            />
+          );
+        })()}
 
       {/* Interactive Guest Bill Splitter Modal */}
       {splitModalOpen && activeSession && bill && (

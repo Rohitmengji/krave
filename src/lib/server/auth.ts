@@ -472,6 +472,31 @@ export async function verifyAccountPassword(
   return (await confirmCurrentPassword(userId, password, clientKey)).user;
 }
 
+/** A short secret other than the password (the table POS owner PIN), stored as `salt:hash`. */
+export async function hashSecret(secret: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  return `${salt}:${await hashPassword(secret, salt)}`;
+}
+
+/**
+ * Checks a short secret against its stored hash, throttled under `key` like sign-in: a 4-digit
+ * PIN has only 10,000 values, so unthrottled it could be walked in minutes.
+ */
+export async function checkThrottledSecret(
+  key: string,
+  secret: string,
+  stored: string,
+  refusal: string
+): Promise<boolean> {
+  const reserved = await reserveLoginAttempt([[key, MAX_LOGIN_ATTEMPTS]], refusal);
+  const [salt, expectedHex] = stored.split(":");
+  const candidate = Buffer.from(await hashPassword(secret, salt ?? ""), "hex");
+  const expected = Buffer.from(expectedHex ?? "", "hex");
+  const matches = candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  if (matches) await settleLoginSuccess(reserved, key);
+  return matches;
+}
+
 /**
  * Sets a new password for a signed-in user. Other devices are signed out and unused reset
  * links stop working; the device that made the change stays signed in.

@@ -125,8 +125,8 @@ async function writeSession(
     `INSERT INTO pos_sessions (id, user_id, shift_id, outlet_id, outlet_name, table_id, guest_count,
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
        merged_into_session_id, payment_method, payment_amount_tendered, payment_change_due,
-       payment_settled_at, synced_at, revision, guests_json, tax_rate_bps)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+       payment_settled_at, synced_at, revision, guests_json, tax_rate_bps, corrections_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
     [
       session.sessionId,
       userId,
@@ -150,6 +150,7 @@ async function writeSession(
       revision,
       JSON.stringify(session.guests),
       session.taxRateBps,
+      JSON.stringify(session.corrections),
     ]
   );
 
@@ -271,8 +272,8 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
   return state;
 }
 
-/** The column is validated again by restorePosSessions; this only has to survive bad JSON. */
-function parseGuests(value: unknown): unknown {
+/** JSON columns are validated again by restorePosSessions; this only has to survive bad JSON. */
+function parseJsonColumn(value: unknown): unknown {
   try {
     return JSON.parse(String(value ?? "[]"));
   } catch {
@@ -330,8 +331,9 @@ export async function loadPosState(
     tableId: String(row.table_id),
     guestCount: Number(row.guest_count),
     serverName: String(row.server_name),
-    guests: parseGuests(row.guests_json),
+    guests: parseJsonColumn(row.guests_json),
     taxRateBps: Number(row.tax_rate_bps),
+    corrections: parseJsonColumn(row.corrections_json),
     openedAt: String(row.opened_at),
     status: String(row.status),
     discountPercent: Number(row.discount_percent),

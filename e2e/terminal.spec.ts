@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addDishAndFire, openTable, registerAccount, resetBrowser, uniqueEmail } from "./helpers";
+import { addDishAndFire, openTable, registerAccount, resetBrowser, STAFF_PASSWORD, uniqueEmail } from "./helpers";
 import { createRestaurant, openTerminal, type E2eRestaurant } from "./restaurants";
 
 const PASSWORD = "e2e-demo-password";
@@ -167,6 +167,48 @@ test.describe("Dine-in terminal", () => {
     expect(decodeURIComponent((await receipt.getByTestId("pos-receipt-sms-1").getAttribute("href")) ?? "")).toBe(
       `sms:+919222233333?&body=${restaurant.name}: Hi Late Guest, your bill for table T5 is Rs.252. Paid, thank you for visiting!`
     );
+  });
+
+  test("lets the owner fix a paid bill with the PIN, and staff fix the waiter's name", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Owner fix");
+    const pin = await page.request.post(`/api/owner/${restaurant.id}/pos-pin`, {
+      data: { pin: "2468", password: STAFF_PASSWORD },
+    });
+    expect(pin.ok(), await pin.text()).toBe(true);
+
+    await openTable(page, "T2");
+    await page.getByTestId("pos-edit-server").click();
+    await page.getByTestId("pos-server-input").fill("Ravi");
+    await page.getByTestId("pos-server-save").click();
+    await expect(page.getByTestId("pos-edit-server")).toContainText("Ravi");
+
+    await addDishAndFire(page, PANEER);
+    await page.getByTestId("pos-settle").click();
+    await page.getByTestId("pos-confirm-settle").click();
+    const receipt = page.getByRole("dialog", { name: "Bill" });
+    await expect(receipt).toContainText("Server: Ravi");
+
+    // Settled as cash by mistake: only the owner's PIN changes it.
+    await receipt.getByTestId("pos-change-payment").click();
+    const approval = page.getByRole("dialog", { name: "Change payment" });
+    await approval.getByTestId("pos-owner-method-UPI").click();
+    await approval.getByTestId("pos-owner-pin").fill("1111");
+    await approval.getByTestId("pos-owner-confirm").click();
+    await expect(approval).toContainText("Wrong owner PIN");
+    await approval.getByTestId("pos-owner-pin").fill("2468");
+    await approval.getByTestId("pos-owner-confirm").click();
+    await expect(approval).toBeHidden();
+    await expect(receipt.getByTestId("pos-receipt-corrections")).toContainText("Paid by CASH → UPI");
+
+    // The guests ordered more after paying: the owner reopens the bill with a reason.
+    await receipt.getByTestId("pos-reopen-bill").click();
+    const reopen = page.getByRole("dialog", { name: "Reopen bill" });
+    await reopen.getByTestId("pos-owner-reason").fill("Ordered more");
+    await reopen.getByTestId("pos-owner-pin").fill("2468");
+    await reopen.getByTestId("pos-owner-confirm").click();
+    await expect(page.getByTestId("pos-table-T2")).not.toContainText("Free");
+    await addDishAndFire(page, KARI_FULL);
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
   });
 
   test("frees a table opened by mistake", async ({ page }) => {

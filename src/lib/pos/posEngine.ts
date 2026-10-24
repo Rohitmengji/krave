@@ -122,6 +122,14 @@ export interface PosGuest {
   phone: string | null;
 }
 
+export interface PosCorrection {
+  kind: "payment" | "reopen";
+  at: string;
+  /** What changed, in words for the bill: "Paid by CASH → UPI". */
+  detail: string;
+  reason: string;
+}
+
 export interface PosTableSession {
   sessionId: string;
   outletId: number;
@@ -146,6 +154,8 @@ export interface PosTableSession {
   /** Every fired ticket is kept verbatim so a reprint shows what the kitchen received. */
   tickets: PosKitchenTicket[];
   mergedIntoSessionId: string | null;
+  /** Owner-approved changes to a paid bill, kept so the bill shows what was changed and why. */
+  corrections: PosCorrection[];
   /** Server-assigned version this device last synced; 0 means the server has never seen it. */
   revision: number;
 }
@@ -383,6 +393,7 @@ export function openTableSession(
     shiftId: input.shiftId ?? null,
     tickets: [],
     mergedIntoSessionId: null,
+    corrections: [],
     revision: 0,
   };
 }
@@ -794,6 +805,97 @@ export function releaseTable(session: PosTableSession): PosTableSession {
   return { ...session, status: "RELEASED" };
 }
 
+/** Correct the waiter on a table; tickets already sent keep the name they were sent with. */
+export function setTableServer(session: PosTableSession, serverName: string): PosTableSession {
+  assertOpen(session);
+  const name = serverName.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 40) {
+    throw new Error("Enter the steward or server name.");
+  }
+  return { ...session, serverName: name };
+}
+
+const MAX_CORRECTION_REASON = 120;
+
+/**
+ * A paid bill can be corrected only while its shift is still open: once a shift is closed its
+ * Z-report has been counted against the cash drawer and must not change underneath it.
+ */
+function assertCorrectable(session: PosTableSession, openShiftId: string | null): PosPayment {
+  if (session.status !== "SETTLED" || !session.payment) {
+    throw new Error("Only a paid bill can be corrected.");
+  }
+  if (session.shiftId && session.shiftId !== openShiftId) {
+    throw new Error("This bill belongs to a closed shift, so it can no longer be changed.");
+  }
+  return session.payment;
+}
+
+/** Owner-approved: the guest paid another way than the bill was settled as. */
+export function changeSettledPayment(
+  session: PosTableSession,
+  method: PosPaymentMethod,
+  reason: string,
+  openShiftId: string | null
+): PosTableSession {
+  const payment = assertCorrectable(session, openShiftId);
+  if (method === payment.method) {
+    throw new Error(`This bill is already marked as ${method}.`);
+  }
+  const total = calculatePosBill(session).grandTotal;
+  return {
+    ...session,
+    // What was handed over in cash is not known after the fact, so the bill records it as exact.
+    payment: { ...payment, method, amountTendered: total, changeDue: 0 },
+    corrections: [
+      ...session.corrections,
+      {
+        kind: "payment",
+        at: new Date().toISOString(),
+        detail: `Paid by ${payment.method} → ${method}`,
+        reason: reason.trim().slice(0, MAX_CORRECTION_REASON),
+      },
+    ],
+  };
+}
+
+/** Owner-approved: put a paid bill back on its table, e.g. when the guests order more. */
+export function reopenSettledSession(
+  session: PosTableSession,
+  reason: string,
+  openShiftId: string | null,
+  floor: readonly PosTableSession[]
+): PosTableSession {
+  const payment = assertCorrectable(session, openShiftId);
+  const why = reason.trim();
+  if (why.length < 3) {
+    throw new Error("Say why the bill is being reopened (at least 3 characters).");
+  }
+  const occupied = floor.some(
+    (candidate) =>
+      candidate.status === "OPEN" &&
+      candidate.outletId === session.outletId &&
+      candidate.tableId === session.tableId
+  );
+  if (occupied) {
+    throw new Error(`Table ${session.tableId} has new guests. Free it before reopening this bill.`);
+  }
+  return {
+    ...session,
+    status: "OPEN",
+    payment: null,
+    corrections: [
+      ...session.corrections,
+      {
+        kind: "reopen",
+        at: new Date().toISOString(),
+        detail: `Reopened (was paid ₹${calculatePosBill(session).grandTotal} by ${payment.method})`,
+        reason: why.slice(0, MAX_CORRECTION_REASON),
+      },
+    ],
+  };
+}
+
 export function setSessionCharges(
   session: PosTableSession,
   charges: { discountPercent?: number; serviceChargePercent?: number; guestCount?: number }
@@ -1168,6 +1270,27 @@ function keepOpenAndNewest(sessions: PosTableSession[]): PosTableSession[] {
   return sessions.filter((session) => session.status === "OPEN" || keptClosed.has(session));
 }
 
+function restoreCorrections(raw: unknown): PosCorrection[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): PosCorrection[] =>
+    isRecord(entry) &&
+    (entry.kind === "payment" || entry.kind === "reopen") &&
+    typeof entry.at === "string" &&
+    Number.isFinite(Date.parse(entry.at)) &&
+    typeof entry.detail === "string" &&
+    typeof entry.reason === "string"
+      ? [
+          {
+            kind: entry.kind,
+            at: entry.at,
+            detail: entry.detail.slice(0, 160),
+            reason: entry.reason.slice(0, MAX_CORRECTION_REASON),
+          },
+        ]
+      : []
+  );
+}
+
 /** Malformed entries are dropped one by one, so a bad phone never costs the table its bill. */
 function restoreGuests(raw: unknown): PosGuest[] {
   if (!Array.isArray(raw)) return [];
@@ -1210,6 +1333,7 @@ function restorePosSession(entry: unknown): PosTableSession[] {
     shiftId,
     tickets,
     mergedIntoSessionId,
+    corrections,
     revision,
   } = entry;
 
@@ -1370,6 +1494,7 @@ function restorePosSession(entry: unknown): PosTableSession[] {
         typeof mergedIntoSessionId === "string" && mergedIntoSessionId.startsWith("POS-")
           ? mergedIntoSessionId
           : null,
+      corrections: restoreCorrections(corrections),
       revision:
         Number.isSafeInteger(revision) && (revision as number) >= 0
           ? (revision as number)

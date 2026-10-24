@@ -4,6 +4,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { OverlayDialog } from "@/components/OverlayDialog";
 import { RestaurantOrderingSettings } from "@/components/RestaurantOrderingSettings";
+import { PosPinSettings } from "@/components/PosPinSettings";
 import { RestaurantOrdersPanel } from "@/components/RestaurantOrdersPanel";
 import type { OpeningHours } from "@/lib/managedOrders";
 import { announce } from "@/lib/announcer";
@@ -849,6 +850,8 @@ export function RestaurantOwnerDashboard() {
                     dispatch({ type: "notice", message });
                   }}
                 />
+
+                <PosPinSettings key={`pin-${state.restaurant.id}`} restaurantId={state.restaurant.id} />
 
                 <section className="space-y-5 rounded-2xl border border-white/10 bg-[#121721] p-6">
                   <div>

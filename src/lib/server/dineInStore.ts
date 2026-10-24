@@ -47,7 +47,8 @@ function toBill(row: Record<string, unknown>, includeCode: boolean): DineInBill 
 /**
  * Record settled tables as claimable bills. Totals are recomputed here rather than taken
  * from the terminal, for the same reason sync reprices lines: an offline device is not a
- * source of truth about money.
+ * source of truth about money. A bill the owner corrected or reopened and settled again is
+ * updated in place, so a guest who saved it sees what was finally paid; its code stays.
  */
 export async function recordSettledBills(sessions: PosTableSession[]): Promise<void> {
   for (const session of sessions) {
@@ -57,7 +58,12 @@ export async function recordSettledBills(sessions: PosTableSession[]): Promise<v
       `INSERT INTO dine_in_bills (session_id, outlet_id, outlet_name, table_id, guest_count,
          settled_at, payment_method, grand_total, lines_json, claim_code, claimed_by, claimed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL)
-       ON CONFLICT (session_id) DO NOTHING`,
+       ON CONFLICT (session_id) DO UPDATE SET
+         guest_count = EXCLUDED.guest_count,
+         settled_at = EXCLUDED.settled_at,
+         payment_method = EXCLUDED.payment_method,
+         grand_total = EXCLUDED.grand_total,
+         lines_json = EXCLUDED.lines_json`,
       [
         session.sessionId,
         session.outletId,

@@ -12,6 +12,7 @@ import {
   Leaf,
   Merge,
   Minus,
+  Pencil,
   Plus,
   Printer,
   Receipt,
@@ -60,7 +61,7 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
-import { BillSmsLink, displayMobile, PosGuestCard } from "./PosGuestCard";
+import { BillSmsLink, displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
 import { DietaryMark, PosMenuGrid } from "./PosMenuGrid";
 
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
@@ -211,6 +212,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const syncRevisions = useRef(new Map<string, number>());
 
   const [claimCodes, setClaimCodes] = useState<Record<string, string>>({});
+  /** `sessionId:seat` of the guest whose name and mobile are being corrected. */
+  const [editingGuest, setEditingGuest] = useState<string | null>(null);
 
   // Custom off-menu dish form state
   const [customDishOpen, setCustomDishOpen] = useState(false);
@@ -1014,12 +1017,42 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <span className="text-[11px] opacity-60">{activeSession.serverName}</span>
             )}
           </div>
-          {leadGuest && (
-            <p data-testid="pos-lead-guest" className="text-[11px] opacity-75">
-              Guest: {leadGuest.name || "Unnamed"}
-              {leadGuest.phone ? ` · ${displayMobile(leadGuest.phone)}` : ""}
-            </p>
-          )}
+          {activeSession &&
+            (editingGuest === `${activeSession.sessionId}:1` ? (
+              <GuestContactEditor
+                seat={1}
+                guest={leadGuest}
+                tone="dark"
+                onSave={(input) => saveGuest(activeSession.sessionId, 1, input)}
+                onDone={() => setEditingGuest(null)}
+              />
+            ) : leadGuest ? (
+              <div className="flex items-center justify-between gap-2">
+                <p data-testid="pos-lead-guest" className="min-w-0 truncate text-xs opacity-80">
+                  Guest: {leadGuest.name || "Unnamed"}
+                  {leadGuest.phone ? ` · ${displayMobile(leadGuest.phone)}` : ""}
+                </p>
+                <button
+                  type="button"
+                  data-testid="pos-edit-lead-guest"
+                  onClick={() => setEditingGuest(`${activeSession.sessionId}:1`)}
+                  className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs font-bold text-sky-300 hover:bg-white/5"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                data-testid="pos-add-lead-guest"
+                onClick={() => setEditingGuest(`${activeSession.sessionId}:1`)}
+                className="flex min-h-11 w-full items-center gap-1.5 rounded-lg border border-dashed border-white/15 px-3 text-xs font-bold text-sky-300 hover:bg-white/5"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                Add guest name & mobile
+              </button>
+            ))}
 
           {error && (
             <p role="alert" className="rounded-xl bg-rose-500/15 px-3 py-2 text-xs text-rose-300">
@@ -1875,27 +1908,69 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               </p>
             )}
 
-            {receiptSmsGuests.length > 0 && (
-              <div className="pos-no-print mt-4 space-y-2">
-                {receiptSmsGuests.map((guest) => (
-                  <BillSmsLink
+            <div className="pos-no-print mt-4 space-y-2">
+              {receiptSmsGuests.map((guest) =>
+                editingGuest === `${receiptSession.sessionId}:${guest.seat}` ? (
+                  <GuestContactEditor
                     key={guest.seat}
-                    phone={guest.phone}
-                    testId={`pos-receipt-sms-${guest.seat}`}
-                    label={`SMS bill to ${guest.name || displayMobile(guest.phone)}`}
-                    text={billSmsText({
-                      outletName: receiptSession.outletName,
-                      tableId: receiptSession.tableId,
-                      guestName: guest.name,
-                      total: receiptBill.grandTotal,
-                      guestCount: receiptSession.guestCount,
-                      share: null,
-                      paid: receiptSession.status === "SETTLED",
-                    })}
+                    seat={guest.seat}
+                    guest={guest}
+                    tone="light"
+                    onSave={(input) => saveGuest(receiptSession.sessionId, guest.seat, input)}
+                    onDone={() => setEditingGuest(null)}
                   />
+                ) : (
+                  <div key={guest.seat} className="flex gap-1.5">
+                    <div className="min-w-0 flex-1">
+                      <BillSmsLink
+                        phone={guest.phone}
+                        testId={`pos-receipt-sms-${guest.seat}`}
+                        label={`SMS ${guest.name || displayMobile(guest.phone)}`}
+                        text={billSmsText({
+                          outletName: receiptSession.outletName,
+                          tableId: receiptSession.tableId,
+                          guestName: guest.name,
+                          total: receiptBill.grandTotal,
+                          guestCount: receiptSession.guestCount,
+                          share: null,
+                          paid: receiptSession.status === "SETTLED",
+                        })}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      data-testid={`pos-receipt-edit-${guest.seat}`}
+                      aria-label={`Edit ${guest.name || "guest"}'s number`}
+                      onClick={() => setEditingGuest(`${receiptSession.sessionId}:${guest.seat}`)}
+                      className="flex min-h-11 items-center gap-1 rounded-xl border border-black/20 px-3 font-sans text-xs font-bold"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      Edit
+                    </button>
+                  </div>
+                )
+              )}
+              {receiptSmsGuests.length === 0 &&
+                (editingGuest === `${receiptSession.sessionId}:1` ? (
+                  <GuestContactEditor
+                    seat={1}
+                    guest={receiptSession.guests.find((guest) => guest.seat === 1)}
+                    tone="light"
+                    onSave={(input) => saveGuest(receiptSession.sessionId, 1, input)}
+                    onDone={() => setEditingGuest(null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="pos-receipt-add-guest"
+                    onClick={() => setEditingGuest(`${receiptSession.sessionId}:1`)}
+                    className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-black/30 font-sans text-xs font-bold"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    Add a mobile number to text this bill
+                  </button>
                 ))}
-              </div>
-            )}
+            </div>
 
             <div className="pos-no-print mt-4 grid grid-cols-2 gap-2">
               <button

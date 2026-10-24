@@ -42,6 +42,99 @@ export function BillSmsLink({
 }
 
 /**
+ * Add or correct one guest's name and mobile, wherever the guest is shown. Clearing both
+ * fields and saving removes the guest.
+ */
+export function GuestContactEditor({
+  seat,
+  guest,
+  tone,
+  onSave,
+  onDone,
+}: {
+  seat: number;
+  guest: PosGuest | undefined;
+  /** The receipt is printed black on white; the rest of the terminal is dark. */
+  tone: "dark" | "light";
+  /** Returns an error message, or null once saved. */
+  onSave: (input: { name: string; phone: string }) => string | null;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState(guest?.name ?? "");
+  const [phone, setPhone] = useState(guest?.phone ? displayMobile(guest.phone) : "");
+  const [error, setError] = useState<string | null>(null);
+  const field =
+    tone === "dark"
+      ? "border-white/15 bg-[#0E131D] text-white"
+      : "border-black/30 bg-white text-black";
+
+  return (
+    <form
+      data-testid={`pos-guest-editor-${seat}`}
+      className="space-y-1.5 font-sans"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const problem = onSave({ name, phone });
+        setError(problem);
+        if (!problem) onDone();
+      }}
+    >
+      <div className="grid grid-cols-2 gap-1.5">
+        <input
+          type="text"
+          aria-label={`Guest ${seat} name`}
+          data-testid="pos-guest-edit-name"
+          value={name}
+          maxLength={40}
+          autoComplete="off"
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Name"
+          className={`min-h-11 w-full rounded-lg border px-2.5 text-sm ${field}`}
+        />
+        <input
+          type="tel"
+          inputMode="tel"
+          aria-label={`Guest ${seat} mobile number`}
+          data-testid="pos-guest-edit-phone"
+          value={phone}
+          maxLength={16}
+          autoComplete="off"
+          // Opening the editor to fix a number should put the cursor straight on it.
+          autoFocus
+          onChange={(event) => setPhone(event.target.value)}
+          placeholder="Mobile (10 digits)"
+          className={`min-h-11 w-full rounded-lg border px-2.5 text-sm ${field}`}
+        />
+      </div>
+      {error && (
+        <p role="alert" className={`text-xs ${tone === "dark" ? "text-rose-400" : "text-red-700"}`}>
+          {error}
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          data-testid="pos-guest-edit-cancel"
+          onClick={onDone}
+          className={`min-h-11 rounded-lg border text-xs font-bold ${
+            tone === "dark" ? "border-white/15" : "border-black/30"
+          }`}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          data-testid="pos-guest-edit-save"
+          className="min-h-11 rounded-lg bg-emerald-600 text-xs font-black text-white"
+        >
+          Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * One guest's part of a split bill, with their name and mobile number. Edits stay in this card
  * until saved, so a half-typed number never reaches the table.
  */

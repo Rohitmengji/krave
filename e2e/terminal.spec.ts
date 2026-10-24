@@ -113,6 +113,16 @@ test.describe("Dine-in terminal", () => {
       `sms:+919876543210?&body=${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378. Thank you!`
     );
 
+    // A wrong number is corrected right where it is shown, and a bad one is refused.
+    await page.getByTestId("pos-edit-lead-guest").click();
+    await page.getByTestId("pos-guest-edit-phone").fill("98765 4321");
+    await page.getByTestId("pos-guest-edit-save").click();
+    await expect(page.getByTestId("pos-guest-editor-1")).toContainText("10-digit");
+    await page.getByTestId("pos-guest-edit-phone").fill("90000 11111");
+    await page.getByTestId("pos-guest-edit-save").click();
+    await expect(page.getByTestId("pos-lead-guest")).toHaveText("Guest: Ramesh · 90000 11111");
+    expect(await whole.getAttribute("href")).toMatch(/^sms:\+919000011111\?/);
+
     await page.getByTestId("pos-open-split").click();
     const split = page.getByRole("dialog", { name: "Split bill by guest" });
     await split.getByLabel("Assign Paneer Tikka").selectOption({ label: "Ramesh only" });
@@ -136,6 +146,27 @@ test.describe("Dine-in terminal", () => {
     await expect(page.getByTestId("pos-lead-guest")).toContainText("Ramesh");
     await page.getByTestId("pos-open-split").click();
     await expect(page.getByTestId("pos-guest-name-2")).toHaveValue("Sunita");
+  });
+
+  test("adds and corrects a guest's number after the bill is paid", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Fix number");
+    await openTable(page, "T5");
+    await addDishAndFire(page, PANEER);
+    await page.getByTestId("pos-settle").click();
+    await page.getByTestId("pos-confirm-settle").click();
+
+    const receipt = page.getByRole("dialog", { name: "Bill" });
+    await receipt.getByTestId("pos-receipt-add-guest").click();
+    await receipt.getByTestId("pos-guest-edit-name").fill("Late Guest");
+    await receipt.getByTestId("pos-guest-edit-phone").fill("91111 22222");
+    await receipt.getByTestId("pos-guest-edit-save").click();
+
+    await receipt.getByTestId("pos-receipt-edit-1").click();
+    await receipt.getByTestId("pos-guest-edit-phone").fill("92222 33333");
+    await receipt.getByTestId("pos-guest-edit-save").click();
+    expect(decodeURIComponent((await receipt.getByTestId("pos-receipt-sms-1").getAttribute("href")) ?? "")).toBe(
+      `sms:+919222233333?&body=${restaurant.name}: Hi Late Guest, your bill for table T5 is Rs.252. Paid, thank you for visiting!`
+    );
   });
 
   test("frees a table opened by mistake", async ({ page }) => {

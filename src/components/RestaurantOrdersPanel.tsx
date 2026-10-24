@@ -16,7 +16,8 @@ import {
   type OwnerOrderView,
 } from "@/lib/ownerOrders";
 
-const POLL_MS = 15_000;
+/** Short enough that a new order shows on every waiter's screen without a refresh. */
+const POLL_MS = 2_000;
 
 const ACTION_LABELS: Partial<Record<RestaurantOrderStatus, string>> = {
   accepted: "Accept",

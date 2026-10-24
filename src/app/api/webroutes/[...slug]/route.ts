@@ -7,6 +7,7 @@ import {
   SAVED_ADDRESSES,
   TOP_BRANDS_DATA,
 } from "@/data/zomatoReconstructedData";
+import { registrationProblem } from "@/lib/accountRules";
 import { filterAndSortRestaurants } from "@/lib/cartEngine";
 import { DiscoveryTabKey } from "@/types/krave";
 import {
@@ -400,6 +401,15 @@ export async function POST(
 
   if (routePath === "/webroutes/auth/register" || routePath === "/webroutes/auth/login") {
     try {
+      if (routePath === "/webroutes/auth/register") {
+        const fields = (body ?? {}) as Record<string, unknown>;
+        const problem = registrationProblem({
+          displayName: typeof fields.displayName === "string" ? fields.displayName : "",
+          phone: typeof fields.phone === "string" ? fields.phone : "",
+          password: typeof fields.password === "string" ? fields.password : "",
+        });
+        if (problem) throw new Error(problem);
+      }
       const user =
         routePath === "/webroutes/auth/register"
           ? await registerUser(body, clientKey(request))

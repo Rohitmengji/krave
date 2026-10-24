@@ -2,12 +2,8 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import { DatabaseFault, one, run, transaction } from "./pg";
 import { hasAssignedStaffAccess } from "./staff";
-import {
-  PASSWORD_MAX_LENGTH,
-  PASSWORD_MIN_LENGTH,
-  RESET_LINK_MINUTES,
-} from "@/lib/passwordReset";
-import { DELETE_CONFIRMATION_WORD } from "@/lib/accountRules";
+import { pinProblem, RESET_LINK_MINUTES } from "@/lib/passwordReset";
+import { DELETE_CONFIRMATION_WORD, normalizePhone } from "@/lib/accountRules";
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -44,7 +40,7 @@ export const RESET_LINK_SPENT = "That reset link has expired or was already used
 
 export const WRONG_CURRENT_PASSWORD = "Your current password is incorrect.";
 export const REAUTH_THROTTLED = `Too many wrong passwords. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`;
-export const SAME_PASSWORD = "Choose a password different from your current one.";
+export const SAME_PASSWORD = "Choose a PIN different from your current one.";
 export const PASSWORD_CHANGED_ELSEWHERE =
   "Your password was just changed on another device. Sign in again with the new one.";
 export const DELETE_BLOCKED_BY_STAFF_ACCESS =
@@ -71,14 +67,10 @@ export function normalizeEmail(value: unknown): string {
 }
 
 function assertPassword(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length < PASSWORD_MIN_LENGTH ||
-    value.length > PASSWORD_MAX_LENGTH
-  ) {
-    throw new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
-  }
-  return value;
+  const password = typeof value === "string" ? value : "";
+  const problem = pinProblem(password);
+  if (problem) throw new Error(problem);
+  return password;
 }
 
 async function hashPassword(password: string, salt: string): Promise<string> {
@@ -231,23 +223,35 @@ export async function registerUser(
     );
   }
 
+  const phoneInput = typeof body.phone === "string" ? body.phone : "";
+  const phone = phoneInput.trim() === "" ? { ok: true as const, phone: null } : normalizePhone(phoneInput);
+  if (!phone.ok) throw new Error(phone.message);
+
   const salt = randomBytes(16).toString("hex");
   const user: AccountUser = {
     id: `usr_${randomUUID()}`,
     email,
     displayName,
     isGoldMember: false,
-    phone: null,
+    phone: phone.phone,
     emailVerified: false,
   };
 
   // The UNIQUE index decides, not a prior SELECT: two simultaneous signups for the same
   // address would both pass a check-then-insert.
   const inserted = await run(
-    `INSERT INTO users (id, email, display_name, password_hash, password_salt, is_gold_member, created_at)
-     VALUES ($1, $2, $3, $4, $5, 0, $6)
+    `INSERT INTO users (id, email, display_name, password_hash, password_salt, is_gold_member, phone, created_at)
+     VALUES ($1, $2, $3, $4, $5, 0, $6, $7)
      ON CONFLICT (email) DO NOTHING`,
-    [user.id, email, displayName, await hashPassword(password, salt), salt, new Date().toISOString()]
+    [
+      user.id,
+      email,
+      displayName,
+      await hashPassword(password, salt),
+      salt,
+      user.phone,
+      new Date().toISOString(),
+    ]
   );
   if (inserted === 0) {
     throw new Error("An account already exists for that email.");

@@ -103,7 +103,7 @@ export function PosPinSettings({ restaurantId }: { restaurantId: string }) {
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-slate-300">Your account password</span>
+          <span className="text-slate-300">Your account PIN</span>
           <input
             type="password"
             autoComplete="current-password"

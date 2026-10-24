@@ -29,12 +29,12 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
     event.preventDefault();
     if (inFlight.current || state.status !== "editing") return;
     if (!current) {
-      dispatch({ type: "REFUSED", message: "Enter your current password." });
+      dispatch({ type: "REFUSED", message: "Enter your current PIN." });
       return;
     }
     const problem =
       newPasswordProblem(next, confirmation) ??
-      (next === current ? "Choose a password different from your current one." : null);
+      (next === current ? "Choose a PIN different from your current one." : null);
     if (problem) {
       dispatch({ type: "REFUSED", message: problem });
       return;
@@ -52,7 +52,7 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
       setConfirmation("");
       dispatch({
         type: "SAVED",
-        notice: "Password changed. Your other devices were signed out; this one stays signed in.",
+        notice: "PIN changed. Your other devices were signed out; this one stays signed in.",
       });
     } catch (caught) {
       setCurrent("");
@@ -65,13 +65,13 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
   const type = visible ? "text" : "password";
   return (
     <Section
-      title="Password"
-      description="Changing it signs you out on every other device."
+      title="PIN"
+      description="A 6 to 8 digit PIN. Changing it signs you out on every other device."
       testId="account-password"
     >
       <form onSubmit={save} noValidate className="space-y-4">
         <label className="block space-y-1 text-xs">
-          <span className="text-white/75">Current password</span>
+          <span className="text-white/75">Current PIN</span>
           <input
             type={type}
             autoComplete="current-password"
@@ -85,7 +85,7 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
         </label>
         <div className="space-y-1">
           <label className="block space-y-1 text-xs">
-            <span className="text-white/75">New password</span>
+            <span className="text-white/75">New PIN</span>
             <input
               type={type}
               autoComplete="new-password"
@@ -99,11 +99,11 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
             />
           </label>
           <p id={hintId} className="text-xs text-white/60">
-            At least {PASSWORD_MIN_LENGTH} characters, different from the current one.
+            {PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} digits, different from the current PIN.
           </p>
         </div>
         <label className="block space-y-1 text-xs">
-          <span className="text-white/75">Type the new password again</span>
+          <span className="text-white/75">Type the new PIN again</span>
           <input
             type={type}
             autoComplete="new-password"
@@ -123,7 +123,7 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
             onChange={(event) => setVisible(event.target.checked)}
             className="h-4 w-4"
           />
-          Show passwords
+          Show PIN
         </label>
         <SectionOutcome state={state} errorId={errorId} />
         <button
@@ -134,7 +134,7 @@ export function PasswordSection({ primaryHex }: { primaryHex: string }) {
           className={PRIMARY_BUTTON}
           style={{ backgroundColor: primaryFill(primaryHex) }}
         >
-          {saving ? "Changing..." : "Change password"}
+          {saving ? "Changing..." : "Change PIN"}
         </button>
       </form>
     </Section>

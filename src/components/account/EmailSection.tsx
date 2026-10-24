@@ -176,7 +176,7 @@ function ChangeEmailForm({ currentEmail, primaryHex }: { currentEmail: string; p
         />
       </label>
       <label className="block space-y-1 text-xs">
-        <span className="text-white/75">Current password</span>
+        <span className="text-white/75">Current PIN</span>
         <input
           type="password"
           autoComplete="current-password"

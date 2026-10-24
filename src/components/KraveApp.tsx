@@ -251,6 +251,8 @@ export function KraveApp({
 
   const [inboxOpen, setInboxOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(initialView === "signin");
+  // Set once the server has answered. Offline stays usable; a signed-out reply closes the app.
+  const [needsAccount, setNeedsAccount] = useState(false);
   const [disputePending, setDisputePending] = useState(false);
   const disputeLock = useRef(false);
   // Tracking opens straight from checkout, whose drawer is gone by the time it closes.
@@ -270,7 +272,8 @@ export function KraveApp({
   const [brandStudioOpen, setBrandStudioOpen] = useState(false);
   // Lazy dialogs mount on first open and then stay mounted, so their state outlives a close.
   const cartMounted = useLatch(cartOpen);
-  const accountMounted = useLatch(accountOpen);
+  const accountGateOpen = accountOpen || (needsAccount && !account);
+  const accountMounted = useLatch(accountGateOpen);
   const reaMounted = useLatch(reaInspectorOpen);
   const brandMounted = useLatch(brandStudioOpen);
   useEffect(() => scheduleDialogPreload(), []);
@@ -312,9 +315,12 @@ export function KraveApp({
     refreshController.current = controller;
     // Offline or no server: the local demo session stays in charge.
     void requestAccount(controller).then((payload) => {
-      if (payload && refreshController.current === controller) {
-        adoptServerState(dispatchAccount, INITIAL_ACCOUNT_STATE.epoch, payload);
-      }
+      if (refreshController.current !== controller) return;
+      if (!payload) return;
+      adoptServerState(dispatchAccount, INITIAL_ACCOUNT_STATE.epoch, payload);
+      const signedIn = Boolean((payload as { user?: unknown }).user);
+      setNeedsAccount(!signedIn);
+      if (signedIn) setAccountOpen(false);
     });
     return () => controller.abort();
   }, []);
@@ -379,6 +385,8 @@ export function KraveApp({
     endAccountSession();
     adoptAvailability(payload);
     dispatchAccount({ type: "SIGNED_IN", payload });
+    setNeedsAccount(false);
+    setAccountOpen(false);
     setActiveOrderId(null);
   }
 
@@ -395,6 +403,8 @@ export function KraveApp({
     // Bumps the session epoch, so replies still in flight for the account are dropped.
     endAccountSession();
     dispatchAccount({ type: "SIGNED_OUT" });
+    setNeedsAccount(true);
+    setAccountOpen(true);
     setActiveOrderId(null);
     // The offline copy of /pos lists the outlets and menus this account could bill.
     if ("caches" in window) {
@@ -1545,13 +1555,17 @@ export function KraveApp({
       )}
       {accountMounted && (
         <AccountDialog
-          isOpen={accountOpen}
-          onClose={() => setAccountOpen(false)}
+          isOpen={accountGateOpen}
+          onClose={() => {
+            if (needsAccount && !account) return;
+            setAccountOpen(false);
+          }}
           theme={theme}
           isDark={isDark}
           user={account}
           onAuthenticated={handleAuthenticated}
           onSignOut={handleSignOut}
+          required={needsAccount && !account}
         />
       )}
     </div>

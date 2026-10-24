@@ -65,7 +65,10 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
-import { BillSmsLink, displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
+import { displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
+import { SendBill } from "./SendBill";
+import { PosReceiptPaper } from "./PosReceiptPaper";
+import { PosSalesHistory } from "./PosSalesHistory";
 import { DietaryMark, PosMenuGrid } from "./PosMenuGrid";
 import { PosOwnerApproval, type OwnerCorrection } from "./PosOwnerApproval";
 
@@ -215,8 +218,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const [syncState, setSyncState] = useState<"local" | "pending" | "synced" | "failed">("local");
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const syncRevisions = useRef(new Map<string, number>());
+  // What the server last accepted per table, so each sync sends only tables that changed;
+  // resending a whole day's bills on every tap made syncing slower as the day went on.
+  const syncedSnapshots = useRef(new Map<string, string>());
+  const syncedShift = useRef<string | null>(null);
 
   const [claimCodes, setClaimCodes] = useState<Record<string, string>>({});
+  const [billNumbers, setBillNumbers] = useState<Record<string, number>>({});
   /** `sessionId:seat` of the guest whose name and mobile are being corrected. */
   const [editingGuest, setEditingGuest] = useState<string | null>(null);
   const [editingServerFor, setEditingServerFor] = useState<string | null>(null);
@@ -239,7 +247,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const [lineAssignments, setLineAssignments] = useState<Record<string, number>>({});
 
   // Settled bills history drawer state
-  const [settledDrawerOpen, setSettledDrawerOpen] = useState(false);
+  const [salesOpen, setSalesOpen] = useState(false);
 
   const isKnownOutlet = useEffectEvent((id: number) =>
     outlets.some((outlet) => outlet.outletId === id)
@@ -324,7 +332,10 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         );
         for (const session of stored) {
           syncRevisions.current.set(session.sessionId, session.revision);
+          syncedSnapshots.current.set(session.sessionId, JSON.stringify(session));
         }
+        if (state.billNumbers) setBillNumbers(state.billNumbers);
+        if (state.claimCodes) setClaimCodes((current) => ({ ...current, ...state.claimCodes }));
         setSessions((current) => (current.length === 0 ? stored : current));
         const storedShift = restorePosShift(JSON.stringify(state.shift ?? null));
         const adoptableShift = storedShift && isKnownOutlet(storedShift.outletId) ? storedShift : null;
@@ -342,9 +353,14 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   // Push the queue after changes settle, so a burst of taps is one request.
   useEffect(() => {
     if (!hydrated || !syncAccount) return;
+    const changed = sessions.filter(
+      (session) => syncedSnapshots.current.get(session.sessionId) !== JSON.stringify(session)
+    );
+    const shiftJson = JSON.stringify(activeShift);
+    if (changed.length === 0 && shiftJson === syncedShift.current) return;
     setSyncState("pending");
     const timer = setTimeout(() => {
-      const payload = sessions.map((session) => ({
+      const payload = changed.map((session) => ({
         ...session,
         revision: syncRevisions.current.get(session.sessionId) ?? 0,
       }));
@@ -361,9 +377,23 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           for (const stored of restorePosSessions(JSON.stringify(result.sessions ?? []))) {
             syncRevisions.current.set(stored.sessionId, stored.revision);
           }
+          const refused = new Set(
+            [...(result.conflicts ?? []), ...(result.rejected ?? [])].map(
+              (entry: { sessionId: string }) => entry.sessionId
+            )
+          );
+          for (const session of changed) {
+            if (!refused.has(session.sessionId)) {
+              syncedSnapshots.current.set(session.sessionId, JSON.stringify(session));
+            }
+          }
+          syncedShift.current = shiftJson;
           setSyncState("synced");
           if (result.claimCodes) {
             setClaimCodes((current) => ({ ...current, ...result.claimCodes }));
+          }
+          if (result.billNumbers) {
+            setBillNumbers((current) => ({ ...current, ...result.billNumbers }));
           }
           // A conflict is recoverable by reloading; a rejection is not, so they read differently.
           const conflict = result.conflicts?.[0];
@@ -416,14 +446,6 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     [activeSession]
   );
 
-  const settledSessions = useMemo(
-    () =>
-      sessions
-        .filter((session) => session.status === "SETTLED" && session.outletId === outletId)
-        .reverse(),
-    [sessions, outletId]
-  );
-
   const freeTables = useMemo(
     () =>
       POS_TABLES.filter(
@@ -453,10 +475,18 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
       : []
   );
 
-  const shift = useMemo(
-    () => summarizeShift(sessions.filter((session) => session.outletId === outletId)),
-    [sessions, outletId]
-  );
+  // The header counts today on this phone; Sales shows every terminal's bills from the server.
+  const today = useMemo(() => {
+    const midnight = new Date(now);
+    midnight.setHours(0, 0, 0, 0);
+    return summarizeShift(
+      sessions.filter(
+        (session) =>
+          session.outletId === outletId &&
+          Date.parse(session.payment?.settledAt ?? "") >= midnight.getTime()
+      )
+    );
+  }, [sessions, outletId, now]);
 
   /** Tables the active bill can absorb: same outlet, still open, and not this table. */
   const mergeCandidates = useMemo(
@@ -767,16 +797,22 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <button
               type="button"
               data-testid="pos-open-settled-history"
-              onClick={() => setSettledDrawerOpen(true)}
+              onClick={() => setSalesOpen(true)}
               className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 hover:border-emerald-400/50 transition"
             >
-              Bills <strong className="text-emerald-400">{shift.settledBills}</strong>
+              Bills today <strong className="text-emerald-400">{today.settledBills}</strong>
+            </button>
+            <button
+              type="button"
+              data-testid="pos-open-sales"
+              onClick={() => setSalesOpen(true)}
+              className="flex items-center gap-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1.5 font-bold hover:bg-emerald-500/20 transition"
+            >
+              Sales today <strong className="text-emerald-300">₹{formatMoney(today.grossSales)}</strong>
+              <span aria-hidden="true">›</span>
             </button>
             <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
-              Sales <strong className="text-emerald-400">₹{formatMoney(shift.grossSales)}</strong>
-            </span>
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
-              Covers <strong className="text-emerald-400">{shift.covers}</strong>
+              Covers <strong className="text-emerald-400">{today.covers}</strong>
             </span>
             <button
               type="button"
@@ -1474,7 +1510,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 </div>
 
                 {smsGuest?.phone && activeSession.lines.length > 0 && (
-                  <BillSmsLink
+                  <SendBill
                     phone={smsGuest.phone}
                     testId="pos-sms-bill"
                     label={`SMS bill ₹${bill.grandTotal} to ${smsGuest.name || displayMobile(smsGuest.phone)}`}
@@ -1759,11 +1795,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 <button
                   key={method}
                   type="button"
+                  data-testid={`pos-payment-${method}`}
+                  aria-pressed={paymentMethod === method}
                   onClick={() => {
                     setPaymentMethod(method);
                     setTendered(String(bill.grandTotal));
                   }}
-                  className={`rounded-xl border py-2 text-xs font-bold ${
+                  className={`min-h-11 rounded-xl border py-2 text-xs font-bold ${
                     paymentMethod === method
                       ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                       : "border-white/15"
@@ -1875,141 +1913,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4"
         >
           <div className="pos-receipt my-auto w-full max-w-xs rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
-            <div className="text-center">
-              <div className="text-sm font-black">{receiptSession.outletName}</div>
-              <div>{receiptSession.status === "SETTLED" ? "BILL · PAID" : "BILL"}</div>
-              <div>
-                Table {receiptSession.tableId} · {receiptSession.guestCount} guests
-              </div>
-              <div>Server: {receiptSession.serverName}</div>
-              <div>{new Date(receiptSession.openedAt).toLocaleString()}</div>
-            </div>
-
-            <hr className="my-2 border-dashed border-black/40" />
-
-            <table className="w-full">
-              <thead>
-                <tr className="text-left">
-                  <th className="font-bold">Item</th>
-                  <th className="w-8 text-center font-bold">Qty</th>
-                  <th className="w-16 text-right font-bold">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receiptSession.lines.map((line) => (
-                  <tr key={line.lineId}>
-                    <td className="pr-1 align-top">{line.name}</td>
-                    <td className="text-center align-top">{line.quantity}</td>
-                    <td className="text-right align-top">
-                      {formatMoney(line.unitPrice * line.quantity)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <hr className="my-2 border-dashed border-black/40" />
-
-            <div className="space-y-0.5">
-              <div className="flex justify-between">
-                <span>Subtotal</span>
-                <span>{formatMoney(receiptBill.subtotal)}</span>
-              </div>
-              {receiptBill.discountAmount > 0 && (
-                <div className="flex justify-between">
-                  <span>Discount ({receiptSession.discountPercent}%)</span>
-                  <span>−{formatMoney(receiptBill.discountAmount)}</span>
-                </div>
-              )}
-              {receiptBill.serviceCharge > 0 && (
-                <div className="flex justify-between">
-                  <span>Service ({receiptSession.serviceChargePercent}%)</span>
-                  <span>{formatMoney(receiptBill.serviceCharge)}</span>
-                </div>
-              )}
-              {receiptBill.cgstRateBps + receiptBill.sgstRateBps > 0 && (
-                <>
-                  <div className="flex justify-between">
-                    <span>CGST {receiptBill.cgstRateBps / 100}%</span>
-                    <span>{formatMoney(receiptBill.cgst)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>SGST {receiptBill.sgstRateBps / 100}%</span>
-                    <span>{formatMoney(receiptBill.sgst)}</span>
-                  </div>
-                </>
-              )}
-              <div className="flex justify-between">
-                <span>Round off</span>
-                <span>{formatMoney(receiptBill.roundOff)}</span>
-              </div>
-              <div className="flex justify-between border-t border-black/40 pt-1 text-sm font-black">
-                <span>TOTAL</span>
-                <span>₹{receiptBill.grandTotal}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Per guest</span>
-                <span>₹{receiptBill.perGuest}</span>
-              </div>
-            </div>
-
-            {receiptSession.payment && (
-              <>
-                <hr className="my-2 border-dashed border-black/40" />
-                <div className="space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>Paid by</span>
-                    <span>{receiptSession.payment.method}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Tendered</span>
-                    <span>₹{receiptSession.payment.amountTendered}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Change</span>
-                    <span>₹{receiptSession.payment.changeDue}</span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {receiptSession.corrections.length > 0 && (
-              <div
-                data-testid="pos-receipt-corrections"
-                className="mt-2 space-y-0.5 border-t border-dashed border-black/40 pt-1 text-[10px]"
-              >
-                {receiptSession.corrections.map((correction, index) => (
-                  <div key={`${correction.at}-${index}`}>
-                    Corrected{" "}
-                    {new Date(correction.at).toLocaleTimeString("en-IN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                    : {correction.detail}
-                    {correction.reason ? ` — ${correction.reason}` : ""}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <p className="mt-3 text-center">Thank you! Please visit again.</p>
-            {receiptSession.status === "SETTLED" && claimCodes[receiptSession.sessionId] && (
-              <div className="mt-3 border-t border-dashed border-black/40 pt-2 text-center">
-                <div className="text-[9px] uppercase tracking-wide">Add this bill to your Krave account</div>
-                <div
-                  data-testid="pos-receipt-claim-code"
-                  className="text-base font-black tracking-[0.2em]"
-                >
-                  {claimCodes[receiptSession.sessionId]}
-                </div>
-                <div className="text-[9px]">Enter it under Your Orders. Valid for 30 days.</div>
-              </div>
-            )}
-            {receiptBill.taxTotal > 0 && (
-              <p className="mt-1 text-center text-[9px]">
-                Not a GST tax invoice: no GSTIN is on record for this restaurant.
-              </p>
-            )}
+            <PosReceiptPaper
+              session={receiptSession}
+              bill={receiptBill}
+              billNumber={billNumbers[receiptSession.sessionId] ?? null}
+              claimCode={claimCodes[receiptSession.sessionId] ?? null}
+            />
 
             <div className="pos-no-print mt-4 space-y-2">
               {receiptSmsGuests.map((guest) =>
@@ -2023,33 +1932,36 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     onDone={() => setEditingGuest(null)}
                   />
                 ) : (
-                  <div key={guest.seat} className="flex gap-1.5">
-                    <div className="min-w-0 flex-1">
-                      <BillSmsLink
-                        phone={guest.phone}
-                        testId={`pos-receipt-sms-${guest.seat}`}
-                        label={`SMS ${guest.name || displayMobile(guest.phone)}`}
-                        text={billSmsText({
-                          outletName: receiptSession.outletName,
-                          tableId: receiptSession.tableId,
-                          guestName: guest.name,
-                          total: receiptBill.grandTotal,
-                          guestCount: receiptSession.guestCount,
-                          share: null,
-                          paid: receiptSession.status === "SETTLED",
-                        })}
-                      />
+                  <div key={guest.seat} className="space-y-1.5 rounded-xl border border-black/10 p-2 font-sans">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate">
+                        <strong>{guest.name || "Guest"}</strong> · {displayMobile(guest.phone)}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid={`pos-receipt-edit-${guest.seat}`}
+                        aria-label={`Edit ${guest.name || "guest"}'s number`}
+                        onClick={() => setEditingGuest(`${receiptSession.sessionId}:${guest.seat}`)}
+                        className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg border border-black/20 px-2.5 font-bold"
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                        Edit
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      data-testid={`pos-receipt-edit-${guest.seat}`}
-                      aria-label={`Edit ${guest.name || "guest"}'s number`}
-                      onClick={() => setEditingGuest(`${receiptSession.sessionId}:${guest.seat}`)}
-                      className="flex min-h-11 items-center gap-1 rounded-xl border border-black/20 px-3 font-sans text-xs font-bold"
-                    >
-                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                      Edit
-                    </button>
+                    <SendBill
+                      phone={guest.phone}
+                      testId={`pos-receipt-sms-${guest.seat}`}
+                      label={`SMS ₹${receiptBill.grandTotal}`}
+                      text={billSmsText({
+                        outletName: receiptSession.outletName,
+                        tableId: receiptSession.tableId,
+                        guestName: guest.name,
+                        total: receiptBill.grandTotal,
+                        guestCount: receiptSession.guestCount,
+                        share: null,
+                        paid: receiptSession.status === "SETTLED",
+                      })}
+                    />
                   </div>
                 )
               )}
@@ -2247,79 +2159,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         </div>
       )}
 
-      {/* Settled Shift Bills Drawer */}
-      {settledDrawerOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Settled shift bills"
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-        >
-          <div className="w-full max-w-lg space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-black">Settled Bills & Shift Summary</h2>
-                <p className="text-xs opacity-65">
-                  {shift.settledBills} bills · ₹{formatMoney(shift.grossSales)} total · Tax ₹
-                  {formatMoney(shift.taxCollected)}
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Close settled bills"
-                onClick={() => setSettledDrawerOpen(false)}
-                className="rounded-lg p-1 hover:bg-white/10"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              {(["CASH", "CARD", "UPI"] as const).map((method) => (
-                <div key={method} className="rounded-xl border border-white/10 bg-[#0E131D] p-2.5">
-                  <div className="text-[10px] opacity-60">{method}</div>
-                  <div className="font-black text-emerald-400">
-                    ₹{formatMoney(shift.byPaymentMethod[method])}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <ul className="max-h-64 divide-y divide-white/10 overflow-y-auto text-xs">
-              {settledSessions.length === 0 && (
-                <li className="py-4 text-center opacity-60">No settled bills in this shift yet.</li>
-              )}
-              {settledSessions.map((settled) => {
-                const settledBill = calculatePosBill(settled);
-                return (
-                  <li
-                    key={settled.sessionId}
-                    className="flex items-center justify-between py-2.5"
-                  >
-                    <div>
-                      <div className="font-bold">
-                        Table {settled.tableId} · ₹{settledBill.grandTotal} ({settled.payment?.method})
-                      </div>
-                      <div className="text-[11px] opacity-60">
-                        {settled.guestCount} guests · Server: {settled.serverName}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSettledDrawerOpen(false);
-                        setReceiptSessionId(settled.sessionId);
-                      }}
-                      className="rounded-lg border border-white/15 px-2.5 py-1.5 font-bold hover:bg-white/5"
-                    >
-                      View Invoice
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </div>
+      {salesOpen && (
+        <PosSalesHistory
+          outletId={outletId}
+          outletName={currentOutlet.name}
+          localSessions={sessions}
+          onClose={() => setSalesOpen(false)}
+        />
       )}
 
       {/* Shift open / cash-up */}

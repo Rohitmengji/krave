@@ -107,10 +107,18 @@ test.describe("Dine-in terminal", () => {
     await addDishAndFire(page, PANEER);
     await addDishAndFire(page, KARI_FULL);
     await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
+    const message = `${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378. Thank you!`;
+    // This browser is a laptop: SMS goes out from a phone by scanning the code.
+    await page.getByTestId("pos-sms-bill-open").click();
+    const handoff = page.getByTestId("pos-sms-bill-handoff");
+    await expect(handoff.getByRole("img", { name: /QR code/ })).toBeVisible();
+    await expect(handoff).toContainText("1 SMS");
     const whole = page.getByTestId("pos-sms-bill");
-    await expect(whole).toContainText("1 SMS");
     expect(decodeURIComponent((await whole.getAttribute("href")) ?? "")).toBe(
-      `sms:+919876543210?&body=${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378. Thank you!`
+      `sms:+919876543210?&body=${message}`
+    );
+    expect(decodeURIComponent((await page.getByTestId("pos-sms-bill-whatsapp").getAttribute("href")) ?? "")).toBe(
+      `https://wa.me/919876543210?text=${message}`
     );
 
     // A wrong number is corrected right where it is shown, and a bad one is refused.
@@ -132,8 +140,9 @@ test.describe("Dine-in terminal", () => {
     await split.getByTestId("pos-guest-name-2").fill("Sunita");
     await split.getByTestId("pos-guest-phone-2").fill("91234 56789");
     await split.getByTestId("pos-guest-save-2").click();
+    await expect(split.getByTestId("pos-guest-sms-2-open")).toContainText("SMS ₹63");
+    await split.getByTestId("pos-guest-sms-2-open").click();
     const share = split.getByTestId("pos-guest-sms-2");
-    await expect(share).toContainText("SMS ₹63");
     expect(decodeURIComponent((await share.getAttribute("href")) ?? "")).toContain(
       "Hi Sunita, the bill for table T3 is Rs.378 for 2 guests. Your share is Rs.63."
     );
@@ -164,6 +173,7 @@ test.describe("Dine-in terminal", () => {
     await receipt.getByTestId("pos-receipt-edit-1").click();
     await receipt.getByTestId("pos-guest-edit-phone").fill("92222 33333");
     await receipt.getByTestId("pos-guest-edit-save").click();
+    await receipt.getByTestId("pos-receipt-sms-1-open").click();
     expect(decodeURIComponent((await receipt.getByTestId("pos-receipt-sms-1").getAttribute("href")) ?? "")).toBe(
       `sms:+919222233333?&body=${restaurant.name}: Hi Late Guest, your bill for table T5 is Rs.252. Paid, thank you for visiting!`
     );
@@ -209,6 +219,51 @@ test.describe("Dine-in terminal", () => {
     await expect(page.getByTestId("pos-table-T2")).not.toContainText("Free");
     await addDishAndFire(page, KARI_FULL);
     await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
+  });
+
+  test("keeps every paid bill in Sales, searchable, and reopens any of them as a receipt", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Sales");
+    await page.getByTestId("pos-table-T1").click();
+    await page.getByTestId("pos-lead-guest-name").fill("Ramesh");
+    await page.getByTestId("pos-lead-guest-phone").fill("98765 43210");
+    await page.getByTestId("pos-confirm-open-table").click();
+    await addDishAndFire(page, PANEER);
+    await page.getByTestId("pos-settle").click();
+    await page.getByTestId("pos-confirm-settle").click();
+    await expect(page.getByTestId("pos-receipt-bill-number")).toHaveText("Bill No. 1", { timeout: 20_000 });
+    await page.getByTestId("pos-close-receipt").click();
+
+    await openTable(page, "T2");
+    await addDishAndFire(page, KARI_FULL);
+    await page.getByTestId("pos-settle").click();
+    await page.getByTestId("pos-payment-UPI").click();
+    await page.getByTestId("pos-confirm-settle").click();
+    await expect(page.getByTestId("pos-receipt-bill-number")).toHaveText("Bill No. 2", { timeout: 20_000 });
+    await page.getByTestId("pos-close-receipt").click();
+
+    await page.getByTestId("pos-open-sales").click();
+    const sales = page.getByRole("dialog", { name: "Sales history" });
+    await expect(sales.getByTestId("sales-entry")).toHaveCount(2);
+    await expect(sales.getByTestId("sales-summary")).toContainText("₹378");
+    await expect(sales.getByTestId("sales-entry").first()).toContainText("#2");
+
+    await sales.getByTestId("sales-search").fill("ramesh");
+    await expect(sales.getByTestId("sales-entry")).toHaveCount(1);
+    await sales.getByTestId("sales-entry").click();
+
+    // A guest asks for their bill later: it reprints exactly, and can be texted to any number.
+    const past = page.getByRole("dialog", { name: "Past bill" });
+    await expect(past).toContainText("Bill No. 1");
+    await expect(past).toContainText("Paneer Tikka");
+    await past.getByTestId("sales-receipt-number").fill("91234 56789");
+    await past.getByTestId("sales-receipt-sms-other-open").click();
+    expect(decodeURIComponent((await past.getByTestId("sales-receipt-sms-other").getAttribute("href")) ?? "")).toBe(
+      `sms:+919123456789?&body=${restaurant.name}: Hello, your bill for table T1 is Rs.252. Paid, thank you for visiting!`
+    );
+    await past.getByTestId("sales-receipt-close").click();
+
+    await sales.getByTestId("sales-range-yesterday").click();
+    await expect(sales).toContainText("No bills");
   });
 
   test("frees a table opened by mistake", async ({ page }) => {

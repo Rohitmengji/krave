@@ -131,6 +131,14 @@ async function billableRestaurants(
   }));
 }
 
+/** The restaurant's name when this account may bill (and so see the bills of) an outlet. */
+export async function billableOutletName(userId: string, outletId: number): Promise<string | null> {
+  const restaurant = (await billableRestaurants(userId)).find(
+    (candidate) => candidate.outletId === outletId
+  );
+  return restaurant?.name ?? null;
+}
+
 /** The restaurants this account may bill for at a table, each with its orderable dishes. */
 export async function listPosOutlets(userId: string): Promise<PosOutlet[]> {
   const restaurants = await billableRestaurants(userId);

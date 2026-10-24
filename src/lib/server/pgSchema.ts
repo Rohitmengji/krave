@@ -153,6 +153,13 @@ ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS guests_json TEXT NOT NULL DEFA
 -- Rows from before the rate was per restaurant were all billed at 5% GST.
 ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS tax_rate_bps INTEGER NOT NULL DEFAULT 500;
 ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS corrections_json TEXT NOT NULL DEFAULT '[]';
+-- Sales history: a bill number per restaurant, and the total the server computed when paid.
+ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS bill_number INTEGER;
+ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS grand_total INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS pos_sessions_bill_number_idx
+  ON pos_sessions(outlet_id, bill_number) WHERE bill_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS pos_sessions_sales_idx
+  ON pos_sessions(outlet_id, payment_settled_at DESC, id DESC) WHERE status = 'SETTLED';
 
 CREATE TABLE IF NOT EXISTS pos_lines (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

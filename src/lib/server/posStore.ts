@@ -101,10 +101,10 @@ async function writeSession(
   // FOR UPDATE: the revision is read and then written against, so the row must stay put
   // for the rest of this transaction.
   const existing = (
-    await client.query("SELECT revision FROM pos_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE", [
-      session.sessionId,
-      userId,
-    ])
+    await client.query(
+      "SELECT revision, bill_number FROM pos_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
+      [session.sessionId, userId]
+    )
   ).rows[0] as Record<string, unknown> | undefined;
 
   // Optimistic concurrency: the device must have based its edit on what the server holds.
@@ -116,6 +116,19 @@ async function writeSession(
   }
   const revision = storedRevision + 1;
 
+  // A bill keeps its number for life, through corrections and a reopen; it is given one the
+  // first time it is paid. The lock makes numbering per restaurant gapless across terminals.
+  let billNumber = existing?.bill_number == null ? null : Number(existing.bill_number);
+  if (billNumber === null && session.status === "SETTLED") {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`pos-bill:${session.outletId}`]);
+    const next = await client.query(
+      "SELECT COALESCE(MAX(bill_number), 0) + 1 AS next FROM pos_sessions WHERE outlet_id = $1",
+      [session.outletId]
+    );
+    billNumber = Number(next.rows[0].next);
+  }
+  const grandTotal = session.status === "SETTLED" ? calculatePosBill(session).grandTotal : null;
+
   // Lines, tickets and voids cascade from the session row, so this clears them too.
   await client.query("DELETE FROM pos_sessions WHERE id = $1 AND user_id = $2", [
     session.sessionId,
@@ -125,8 +138,9 @@ async function writeSession(
     `INSERT INTO pos_sessions (id, user_id, shift_id, outlet_id, outlet_name, table_id, guest_count,
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
        merged_into_session_id, payment_method, payment_amount_tendered, payment_change_due,
-       payment_settled_at, synced_at, revision, guests_json, tax_rate_bps, corrections_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+       payment_settled_at, synced_at, revision, guests_json, tax_rate_bps, corrections_json,
+       bill_number, grand_total)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
     [
       session.sessionId,
       userId,
@@ -151,6 +165,8 @@ async function writeSession(
       JSON.stringify(session.guests),
       session.taxRateBps,
       JSON.stringify(session.corrections),
+      billNumber,
+      grandTotal,
     ]
   );
 
@@ -205,6 +221,8 @@ export interface PosSyncResult {
   rejected: { sessionId: string; reason: string }[];
   /** Printed on the receipt so a guest can attach the bill to their own account. */
   claimCodes: Record<string, string>;
+  /** Printed on the bill; given by the server the first time a bill is paid. */
+  billNumbers: Record<string, number>;
 }
 
 /**
@@ -261,7 +279,12 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
     }
   });
 
-  const state = await loadPosState(userId, rejected, conflicts);
+  const state = await loadPosState(
+    userId,
+    rejected,
+    conflicts,
+    incoming.map((session) => session.sessionId)
+  );
   // Only tables the server actually accepted become claimable bills.
   await recordSettledBills(state.sessions);
   for (const session of state.sessions) {
@@ -281,16 +304,10 @@ function parseJsonColumn(value: unknown): unknown {
   }
 }
 
-export async function loadPosState(
-  userId: string,
-  rejected: PosSyncResult["rejected"] = [],
-  conflicts: PosSyncResult["conflicts"] = []
-): Promise<PosSyncResult> {
-  const sessionRows = await rows<Record<string, unknown>>(
-    "SELECT * FROM pos_sessions WHERE user_id = $1 ORDER BY opened_at LIMIT 200",
-    [userId]
-  );
-
+/** Full tables, with lines, tickets and voids, for session rows read from the database. */
+export async function hydrateSessions(
+  sessionRows: Record<string, unknown>[]
+): Promise<PosTableSession[]> {
   const ids = sessionRows.map((row) => String(row.id));
   // Three queries for the whole floor rather than three per table.
   const [allLines, allTickets, allVoids] = ids.length
@@ -379,7 +396,27 @@ export async function loadPosState(
   }));
 
   // Re-validate on the way out so a hand-edited row cannot reach the terminal.
-  const sessions = restorePosSessions(JSON.stringify(rebuilt));
+  return restorePosSessions(JSON.stringify(rebuilt));
+}
+
+export async function loadPosState(
+  userId: string,
+  rejected: PosSyncResult["rejected"] = [],
+  conflicts: PosSyncResult["conflicts"] = [],
+  sentIds: string[] = []
+): Promise<PosSyncResult> {
+  // Every open table and every table the device just sent (it needs their new revisions),
+  // plus recent closed bills; older history is read through listSalesHistory instead.
+  const sessionRows = await rows<Record<string, unknown>>(
+    `SELECT * FROM (
+       SELECT * FROM pos_sessions WHERE user_id = $1 AND (status = 'OPEN' OR id = ANY($2::text[]))
+       UNION
+       (SELECT * FROM pos_sessions WHERE user_id = $1 AND status <> 'OPEN'
+        ORDER BY COALESCE(payment_settled_at, opened_at) DESC LIMIT 100)
+     ) AS floor ORDER BY opened_at`,
+    [userId, sentIds]
+  );
+  const sessions = await hydrateSessions(sessionRows);
   const shiftRow = await one<Record<string, unknown>>(
     "SELECT * FROM pos_shifts WHERE user_id = $1 LIMIT 1",
     [userId]
@@ -405,5 +442,10 @@ export async function loadPosState(
     rejected,
     conflicts,
     claimCodes: {},
+    billNumbers: Object.fromEntries(
+      sessionRows
+        .filter((row) => row.bill_number != null)
+        .map((row) => [String(row.id), Number(row.bill_number)])
+    ),
   };
 }

@@ -31,6 +31,16 @@ export function smsHref(phone: string, body: string): string {
   return `sms:${phone}?&body=${encodeURIComponent(body)}`;
 }
 
+/** wa.me wants the number as digits only, country code first. */
+export function whatsAppHref(phone: string, body: string): string {
+  return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(body)}`;
+}
+
+/** What a phone camera reads from a QR code as "send this SMS": number and text prefilled. */
+export function smsQrPayload(phone: string, body: string): string {
+  return `SMSTO:${phone}:${body}`;
+}
+
 // Characters the GSM 03.38 alphabet can only send as two-character escapes.
 const GSM_EXTENDED = /[\^{}\\[\]~|€]/g;
 const GSM_BASIC = /^[A-Za-z0-9 @£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\\[\]~|€]*$/;

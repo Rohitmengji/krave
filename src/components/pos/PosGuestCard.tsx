@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { MessageSquare } from "lucide-react";
-import { billSmsText, smsHref, smsSegments } from "@/lib/pos/billSms";
+import { billSmsText } from "@/lib/pos/billSms";
+import { SendBill } from "./SendBill";
 import { normalizeIndianMobile, type PosGuest, type PosGuestSplitShare } from "@/lib/pos/posEngine";
 
 function formatMoney(value: number): string {
@@ -13,32 +13,6 @@ function formatMoney(value: number): string {
 export function displayMobile(phone: string): string {
   const digits = phone.replace(/^\+91/, "");
   return `${digits.slice(0, 5)} ${digits.slice(5)}`;
-}
-
-/** A text-the-bill link that opens the phone's own messaging app, on whichever SIM it picks. */
-export function BillSmsLink({
-  phone,
-  text,
-  label,
-  testId,
-}: {
-  phone: string;
-  text: string;
-  label: string;
-  testId: string;
-}) {
-  const segments = smsSegments(text);
-  return (
-    <a
-      href={smsHref(phone, text)}
-      data-testid={testId}
-      className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-black text-white hover:bg-sky-500"
-    >
-      <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-      {label}
-      <span className="font-normal opacity-80">· {segments === 1 ? "1 SMS" : `${segments} SMS`}</span>
-    </a>
-  );
 }
 
 /**
@@ -232,7 +206,7 @@ export function PosGuestCard({
       </form>
 
       {guest?.phone && !dirty && (
-        <BillSmsLink
+        <SendBill
           phone={guest.phone}
           testId={`pos-guest-sms-${seat}`}
           label={`SMS ₹${share.payableAmount}`}

@@ -47,7 +47,13 @@ export type PosSessionStatus = "OPEN" | "SETTLED" | "MERGED" | "RELEASED";
 
 export interface PosMenuItem {
   itemId: string;
+  /** Full name as billed and sent to the kitchen, portion included: "Mutton Biriyani (Half)". */
   name: string;
+  /** The dish this portion belongs to, so the counter shows one card per dish. */
+  dishId: string;
+  dishName: string;
+  /** "Half", "Full", "2 pieces"; null for a dish sold one way. */
+  portion: string | null;
   /** Whole rupees. */
   price: number;
   categoryName: string;
@@ -521,11 +527,15 @@ export function addCustomItemToSession(
     custom.dietary === "non-veg" || custom.dietary === "egg" ? custom.dietary : "veg";
   // A random id, not one derived from the name: non-Latin names ("मसाला चाय", "अदरक चाय")
   // all slug to the same string and would merge into one bill line and KOT row.
+  const itemId = `${POS_CUSTOM_ITEM_PREFIX}${newId()}`;
   return addItemToSession(
     session,
     {
-      itemId: `${POS_CUSTOM_ITEM_PREFIX}${newId()}`,
+      itemId,
       name: cleanName,
+      dishId: itemId,
+      dishName: cleanName,
+      portion: null,
       price: cleanPrice,
       categoryName: "Custom Specials",
       dietary,

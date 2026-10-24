@@ -94,6 +94,9 @@ async function loadDishes(restaurantIds: string[]): Promise<CatalogDish[]> {
           item: {
             itemId: posItemId(id, choice.variantId),
             name: choice.label ? `${String(row.name)} (${choice.label})` : String(row.name),
+            dishId: id,
+            dishName: String(row.name),
+            portion: choice.label,
             price: paise / 100,
             categoryName: String(row.category_name),
             dietary: posDietary(textList(row.dietary_tags)),

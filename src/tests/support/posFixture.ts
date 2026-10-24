@@ -17,6 +17,9 @@ export const TEST_OUTLETS: PosOutlet[] = RESTAURANTS_DATA.map((restaurant) => ({
         (item): PosMenuItem => ({
           itemId: item.id,
           name: item.name,
+          dishId: item.id,
+          dishName: item.name,
+          portion: null,
           price: Math.round(item.price),
           categoryName: category.name,
           dietary: item.dietary,

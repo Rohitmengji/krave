@@ -60,6 +60,7 @@ import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
 import { BillSmsLink, displayMobile, PosGuestCard } from "./PosGuestCard";
+import { DietaryMark, PosMenuGrid } from "./PosMenuGrid";
 
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
 
@@ -106,25 +107,6 @@ function formatElapsed(openedAt: string, now: number): string {
   const minutes = Math.max(0, Math.floor((now - Date.parse(openedAt)) / 60000));
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function DietaryMark({ dietary }: { dietary: "veg" | "non-veg" | "egg" }) {
-  const tone =
-    dietary === "veg"
-      ? "border-emerald-500 bg-emerald-500"
-      : dietary === "egg"
-      ? "border-amber-500 bg-amber-500"
-      : "border-rose-500 bg-rose-500";
-  const [border, background] = tone.split(" ");
-  return (
-    <span
-      aria-label={dietary}
-      title={dietary}
-      className={`inline-flex w-3.5 h-3.5 shrink-0 items-center justify-center rounded-sm border-2 ${border}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${background}`} />
-    </span>
-  );
 }
 
 export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
@@ -397,7 +379,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     return menu.filter((item) => {
       if (unavailableItemIds.includes(item.itemId)) return false;
       if (categoryFilter && item.categoryName !== categoryFilter) return false;
-      if (query && !item.name.toLowerCase().includes(query)) return false;
+      if (query && !query.split(/\s+/).every((word) => item.name.toLowerCase().includes(word))) {
+        return false;
+      }
       return true;
     });
   }, [menu, menuQuery, categoryFilter, unavailableItemIds]);
@@ -474,6 +458,26 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const pendingCount =
     activeSession?.lines.filter((line) => line.kotNumber === null).length ?? 0;
 
+  const activeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const line of activeSession?.lines ?? []) {
+      counts.set(line.itemId, (counts.get(line.itemId) ?? 0) + line.quantity);
+    }
+    return counts;
+  }, [activeSession]);
+
+  /** A filter changes what is listed; if the list starts above the screen, bring its top back. */
+  function revealMenuTop() {
+    const heading = document.getElementById("menu-heading");
+    if (heading && heading.getBoundingClientRect().top < 0) heading.scrollIntoView({ block: "start" });
+  }
+
+  /** On a phone the floor, menu and bill stack, so jump to where the next tap happens. */
+  function scrollToOnPhone(elementId: string) {
+    if (window.matchMedia("(min-width: 1024px)").matches) return;
+    document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   const seatedGuests =
     activeSession?.guests.filter((guest) => guest.seat <= activeSession.guestCount) ?? [];
   const leadGuest = seatedGuests.find((guest) => guest.seat === 1);
@@ -542,6 +546,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
       setSessions((previous) => [...previous, session]);
       setActiveTableId(session.tableId);
       setOpenTableForm(null);
+      scrollToOnPhone("menu-heading");
       const booking = seatHandoff ? ` · Booking ${seatHandoff.bookingId}` : "";
       setSeatHandoff(null);
       announce(`${session.tableId} opened for ${session.guestCount} guests.${booking}`);
@@ -670,7 +675,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
   return (
     <div className="min-h-screen bg-[#0A0D12] text-white">
-      <header className="pos-no-print sticky top-0 z-30 border-b border-white/10 bg-[#0A0D12]/95 backdrop-blur">
+      {/* Pinned only where it fits on one row; on a phone it wraps to a third of the screen. */}
+      <header className="pos-no-print z-30 border-b border-white/10 bg-[#0A0D12]/95 backdrop-blur xl:sticky xl:top-0">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3">
           <Link
             href="/"
@@ -782,9 +788,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         </p>
       )}
 
-      <main className="pos-no-print mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)_380px]">
+      <main className="pos-no-print mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)] gap-4 p-4 pb-28 lg:grid-cols-[260px_minmax(0,1fr)_380px] lg:pb-4">
         {/* Floor plan */}
-        <section aria-labelledby="floor-heading" className="space-y-4">
+        <section aria-labelledby="floor-heading" className="h-fit space-y-4 lg:sticky lg:top-4 xl:top-20">
           <h2 id="floor-heading" className="text-xs font-bold uppercase tracking-wider opacity-60">
             Floor Plan
           </h2>
@@ -792,7 +798,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           {ZONES.map((zone) => (
             <div key={zone} className="space-y-2">
               <h3 className="text-[11px] font-bold opacity-50">{zone}</h3>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-3">
                 {POS_TABLES.filter((table) => table.zone === zone).map((table) => {
                   const session = openSessions.find(
                     (candidate) => candidate.tableId === table.tableId
@@ -809,6 +815,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         setError(null);
                         if (session) {
                           setActiveTableId(table.tableId);
+                          scrollToOnPhone("menu-heading");
                         } else {
                           // A booking being seated already states its party size; don't overwrite it.
                           if (!seatHandoff) {
@@ -863,8 +870,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         {/* Menu */}
         <section aria-labelledby="menu-heading" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="menu-heading" className="text-xs font-bold uppercase tracking-wider opacity-60">
-              Menu — tap to add
+            <h2 id="menu-heading" className="scroll-mt-4 text-xs font-bold uppercase tracking-wider opacity-60 xl:scroll-mt-20">
+              {activeSession ? `Menu — adding to ${activeSession.tableId}` : "Menu — pick a table first"}
               {unavailableItemIds.length > 0 && (
                 <span className="ml-2 font-normal normal-case text-rose-400">
                   {unavailableItemIds.length} dish{unavailableItemIds.length === 1 ? "" : "es"} marked 86
@@ -881,17 +888,6 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 <Plus className="h-3.5 w-3.5" />
                 Custom / Off-Menu Dish
               </button>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
-                <input
-                  type="search"
-                  aria-label="Search menu"
-                  value={menuQuery}
-                  onChange={(event) => setMenuQuery(event.target.value)}
-                  placeholder="Search dishes..."
-                  className="w-56 rounded-xl border border-white/15 bg-[#121721] py-2 pl-9 pr-3 text-xs outline-none"
-                />
-              </div>
             </div>
           </div>
 
@@ -946,61 +942,62 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             </form>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setCategoryFilter(null)}
-              className={`rounded-xl border px-3 py-1.5 text-[11px] font-bold ${
-                categoryFilter === null
-                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
-                  : "border-white/10 bg-[#121721]"
-              }`}
-            >
-              All
-            </button>
-            {categories.map((category) => (
+          <div className="sticky top-0 z-20 -mx-4 space-y-2 bg-[#0A0D12]/95 px-4 py-2 backdrop-blur lg:mx-0 lg:px-0 xl:top-16">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
+              <input
+                type="search"
+                aria-label="Search menu"
+                value={menuQuery}
+                onChange={(event) => {
+                  setMenuQuery(event.target.value);
+                  revealMenuTop();
+                }}
+                placeholder="Search dishes, e.g. mutton fry"
+                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#121721] py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-400/60"
+              />
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
               <button
-                key={category}
                 type="button"
-                onClick={() => setCategoryFilter(category)}
-                className={`rounded-xl border px-3 py-1.5 text-[11px] font-bold ${
-                  categoryFilter === category
+                onClick={() => {
+                  setCategoryFilter(null);
+                  revealMenuTop();
+                }}
+                className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-bold ${
+                  categoryFilter === null
                     ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                     : "border-white/10 bg-[#121721]"
                 }`}
               >
-                {category}
+                All
               </button>
-            ))}
+              {categories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => {
+                    setCategoryFilter(category);
+                    revealMenuTop();
+                  }}
+                  className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-bold ${
+                    categoryFilter === category
+                      ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
+                      : "border-white/10 bg-[#121721]"
+                  }`}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleMenu.map((item) => (
-              <button
-                key={item.itemId}
-                type="button"
-                data-testid={`pos-menu-${item.itemId}`}
-                onClick={() => updateActiveSession((session) => addItemToSession(session, item))}
-                className="rounded-2xl border border-white/10 bg-[#121721] p-3 text-left transition hover:border-emerald-400/60 hover:bg-emerald-500/5"
-              >
-                <div className="flex items-start gap-2">
-                  <DietaryMark dietary={item.dietary} />
-                  <span className="text-xs font-bold leading-snug">{item.name}</span>
-                </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <span className="text-sm font-black text-emerald-400">₹{item.price}</span>
-                  {item.bestseller && (
-                    <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-black text-amber-400">
-                      BESTSELLER
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
-            {visibleMenu.length === 0 && (
-              <p className="text-xs opacity-60">No dishes match this search.</p>
-            )}
-          </div>
+          <PosMenuGrid
+            items={visibleMenu}
+            grouped={categoryFilter === null && !menuQuery.trim()}
+            countOf={(itemId) => activeCounts.get(itemId) ?? 0}
+            onAdd={(item) => updateActiveSession((session) => addItemToSession(session, item))}
+          />
         </section>
 
         {/* Running bill */}
@@ -1412,6 +1409,44 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           )}
         </section>
       </main>
+
+      {/* On a phone the bill sits below a long menu; this keeps the total and next step in reach. */}
+      {activeSession && bill && (
+        <div
+          data-testid="pos-phone-bar"
+          className="pos-no-print fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0A0D12]/95 px-4 py-3 backdrop-blur lg:hidden"
+        >
+          <div className="mx-auto flex max-w-xl items-center gap-2">
+            <button
+              type="button"
+              onClick={() => scrollToOnPhone("bill-heading")}
+              className="min-w-0 flex-1 text-left"
+            >
+              <div className="truncate text-[11px] opacity-70">
+                Table {activeSession.tableId} · {bill.itemCount} item{bill.itemCount === 1 ? "" : "s"}
+              </div>
+              <div className="text-lg font-black text-emerald-400">₹{bill.grandTotal}</div>
+            </button>
+            {pendingCount > 0 && (
+              <button
+                type="button"
+                onClick={handleSendToKitchen}
+                className="flex min-h-11 items-center gap-1.5 rounded-xl bg-amber-500 px-3 text-xs font-black text-black"
+              >
+                <ChefHat className="h-4 w-4" />
+                Kitchen ({pendingCount})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => scrollToOnPhone("bill-heading")}
+              className="min-h-11 rounded-xl border border-white/15 px-3 text-xs font-black"
+            >
+              View bill
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Seat guests */}
       {openTableForm && (

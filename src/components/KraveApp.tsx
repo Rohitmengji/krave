@@ -250,7 +250,6 @@ export function KraveApp({
   const [priceLock, setPriceLock] = useState<{ token: string; expiresAt: number } | null>(null);
 
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [offersOpen, setOffersOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(initialView === "signin");
   const [disputePending, setDisputePending] = useState(false);
   const disputeLock = useRef(false);
@@ -397,7 +396,14 @@ export function KraveApp({
     endAccountSession();
     dispatchAccount({ type: "SIGNED_OUT" });
     setActiveOrderId(null);
-    showToast("Signed out. This browser is back in local demo mode.");
+    // The offline copy of /pos lists the outlets and menus this account could bill.
+    if ("caches" in window) {
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.open(key).then((cache) => cache.delete("/pos")))))
+        .catch(() => undefined);
+    }
+    showToast("Signed out.");
   }
 
   const filteredRestaurants = useMemo(
@@ -895,12 +901,6 @@ export function KraveApp({
         theme={theme}
         isDark={isDark}
         onToggleDark={() => updateSession("isDark", (dark) => !dark)}
-        currentAddress={currentAddress}
-        addresses={SAVED_ADDRESSES}
-        onSelectAddress={(addr) => {
-          updateSession("addressId", addr.id);
-          showToast(`Switched Delivery Subzone to ${addr.displayTitle}`);
-        }}
         searchQuery={filters.query}
         onSearchChange={(query) => dispatchFilters({ type: "SET_QUERY", query })}
         restaurants={RESTAURANTS_DATA}
@@ -908,16 +908,10 @@ export function KraveApp({
           setSelectedRestaurant({ restaurant: res, initialTab: tab })
         }
         onQuickAddDish={(res, dish) => handleAddToCart(res, dish, 1)}
-        isGoldMember={isGoldMember}
-        onToggleGold={handleToggleGold}
-        cartCount={cartQuote.itemCount}
-        cartTotal={cartQuote.grandTotal}
-        onOpenCart={() => setCartOpen(true)}
         onOpenBrandStudio={() => setBrandStudioOpen(true)}
         hasActiveOrder={Boolean(activeCrystalOrder)}
         onOpenActiveOrder={() => setCrystalModalOpen(true)}
         activeOrderPillRef={activeOrderPillRef}
-        onOpenOffers={() => setOffersOpen(true)}
         onOpenInbox={() => {
           setInboxOpen(true);
           if (unreadNotificationCount === 0) return;
@@ -1464,79 +1458,6 @@ export function KraveApp({
           }
           isDark={isDark}
         />
-      )}
-
-      {offersOpen && (
-        <OverlayDialog
-          isOpen={offersOpen}
-          onClose={() => setOffersOpen(false)}
-          label="Coupons and partner offers"
-        >
-          <div
-            className={`space-y-4 rounded-3xl border p-6 ${
-              isDark ? "bg-[#121721] border-white/15 text-white" : "bg-white border-slate-200"
-            }`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-black">Coupons & Partner Offers</h2>
-                <p className="text-xs opacity-65">
-                  Applied at checkout against your cart total. All discounts are demo values.
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Close offers"
-                onClick={() => setOffersOpen(false)}
-                className="rounded-lg p-1 hover:bg-white/10"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {COUPON_OFFERS.length === 0 && (
-              <p data-testid="offers-empty" className="text-sm opacity-75">
-                No offers are running right now. Restaurants show any discount on their own menu.
-              </p>
-            )}
-            <ul className="space-y-2">
-              {COUPON_OFFERS.map((offer) => (
-                <li
-                  key={offer.code}
-                  data-testid={`offer-${offer.code}`}
-                  className={`rounded-2xl border p-3.5 ${
-                    isDark ? "bg-[#0E131D] border-white/10" : "bg-slate-50 border-slate-200"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-black text-sm" style={{ color: "var(--brand-ink)" }}>
-                      {offer.code}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateSession("couponCode", offer.code);
-                        setOffersOpen(false);
-                        setCartOpen(true);
-                        showToast(`${offer.code} selected. It applies if your cart qualifies.`);
-                      }}
-                      className="px-3 py-1.5 rounded-xl text-[11px] font-black text-white"
-                      style={{ backgroundColor: primaryFill(theme.primaryHex) }}
-                    >
-                      Use Code
-                    </button>
-                  </div>
-                  <p className="mt-1 text-xs font-bold">{offer.title}</p>
-                  <p className="text-[11px] opacity-70">{offer.description}</p>
-                  <p className="mt-1 text-[10px] opacity-60">
-                    {offer.bankOrPartner} · Minimum order ₹{offer.minOrder}
-                    {offer.discountType === "PERCENT" ? ` · Capped at ₹${offer.maxDiscount}` : ""}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </OverlayDialog>
       )}
 
       {inboxOpen && (

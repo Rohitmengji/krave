@@ -48,15 +48,8 @@ test.describe("Storefront", () => {
     }
   });
 
-  test("opens offers and the inbox, and closes both with Escape", async ({ page }) => {
+  test("opens the inbox and closes it with Escape", async ({ page }) => {
     await resetBrowser(page);
-
-    await page.getByTestId("navbar-offers").click();
-    const offers = page.getByRole("dialog", { name: "Coupons and partner offers" });
-    await expect(offers).toBeVisible();
-    await expect(offers.getByTestId("offers-empty")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(offers).toBeHidden();
 
     await page.getByTestId("navbar-inbox").click();
     const inbox = page.getByRole("dialog", { name: "Notifications" });
@@ -98,10 +91,19 @@ test.describe("Accounts", () => {
     await registerAccount(page, email, PASSWORD);
     await page.reload({ waitUntil: "networkidle" });
     await expect(page.getByTestId("navbar-account")).toContainText("E2E Guest");
+    await page.evaluate(async () =>
+      (await caches.open("krave-shell-v2")).put("/pos", new Response("signed-in floor"))
+    );
 
     await page.getByTestId("navbar-account").click();
     await page.getByTestId("account-sign-out").click();
     await expect(page.getByTestId("navbar-account")).toContainText("Sign in");
+    // The dialog has closed, so the page's own region speaks.
+    await expect(page.locator("#krave-announcer")).toHaveText("Signed out.");
+    // The offline terminal listed this account's outlets and menus.
+    await expect
+      .poll(() => page.evaluate(async () => Boolean(await caches.match("/pos"))))
+      .toBe(false);
 
     await page.getByTestId("navbar-account").click();
     await page.getByLabel("Email").fill(email);

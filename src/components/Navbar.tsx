@@ -1,56 +1,35 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import {
-  MapPin,
   Search,
-  ChevronDown,
-  Sparkles,
-  ShoppingBag,
   Palette,
-  Navigation,
   Sun,
   Moon,
   X,
   Bell,
   Bike,
-  CheckCircle2,
-  Tag,
   Utensils,
   UserRound,
   Receipt,
 } from "lucide-react";
-import {
-  BrandThemePreset,
-  DishItem,
-  LocationAddress,
-  RestaurantEntity,
-} from "@/types/krave";
+import { BrandThemePreset, DishItem, RestaurantEntity } from "@/types/krave";
 import { primaryFill } from "@/lib/themeContrast";
 
 interface NavbarProps {
   theme: BrandThemePreset;
   isDark: boolean;
   onToggleDark: () => void;
-  currentAddress: LocationAddress;
-  addresses: LocationAddress[];
-  onSelectAddress: (addr: LocationAddress) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   restaurants: RestaurantEntity[];
   onSelectRestaurant: (res: RestaurantEntity, initialTab?: "menu" | "book" | "reviews") => void;
   onQuickAddDish: (res: RestaurantEntity, dish: DishItem) => void;
-  isGoldMember: boolean;
-  onToggleGold: () => void;
-  cartCount: number;
-  cartTotal: number;
-  onOpenCart: () => void;
   onOpenBrandStudio: () => void;
   hasActiveOrder: boolean;
   onOpenActiveOrder: () => void;
   activeOrderPillRef?: React.Ref<HTMLButtonElement>;
-  onOpenOffers: () => void;
   onOpenInbox: () => void;
   unreadCount: number;
   accountName: string | null;
@@ -61,37 +40,21 @@ export function Navbar({
   theme,
   isDark,
   onToggleDark,
-  currentAddress,
-  addresses,
-  onSelectAddress,
   searchQuery,
   onSearchChange,
   restaurants,
   onSelectRestaurant,
   onQuickAddDish,
-  isGoldMember,
-  onToggleGold,
-  cartCount,
-  cartTotal,
-  onOpenCart,
   onOpenBrandStudio,
   hasActiveOrder,
   onOpenActiveOrder,
   activeOrderPillRef,
-  onOpenOffers,
   onOpenInbox,
   unreadCount,
   accountName,
   onOpenAccount,
 }: NavbarProps) {
-  const [locationOpen, setLocationOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
-  const [detectingGps, setDetectingGps] = useState(false);
-  // Both the lock against repeat taps and the handle to cancel on unmount.
-  const gpsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (gpsTimer.current !== null) clearTimeout(gpsTimer.current);
-  }, []);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const matchingRestaurants = normalizedQuery
@@ -122,17 +85,6 @@ export function Navbar({
       }
     }
   }
-
-  const handleDetectGps = () => {
-    if (gpsTimer.current !== null) return;
-    setDetectingGps(true);
-    gpsTimer.current = setTimeout(() => {
-      gpsTimer.current = null;
-      setDetectingGps(false);
-      onSelectAddress(addresses[0]);
-      setLocationOpen(false);
-    }, 550);
-  };
 
   return (
     <header
@@ -173,7 +125,7 @@ export function Navbar({
           </div>
         </div>
 
-        {/* Location Picker + Universal Search Container */}
+        {/* Universal Search Container */}
         <div className="basis-full xl:basis-auto xl:flex-1 xl:max-w-2xl order-last xl:order-none relative min-w-0">
           <div
             className={`flex items-center rounded-2xl border px-3 py-2 transition-all shadow-sm ${
@@ -182,32 +134,8 @@ export function Navbar({
                 : "bg-slate-100 border-slate-200 focus-within:border-slate-400"
             }`}
           >
-            {/* Location Picker Button */}
-            <button
-              type="button"
-              onClick={() => setLocationOpen((prev) => !prev)}
-              aria-expanded={locationOpen}
-              aria-haspopup="listbox"
-              data-testid="location-picker-button"
-              className="flex items-center gap-2 pr-3 border-r border-current/15 text-left shrink-0 max-w-[180px] sm:max-w-[220px] hover:opacity-85 transition"
-            >
-              <MapPin
-                className="w-4 h-4 shrink-0"
-                style={{ color: "var(--brand-ink)" }}
-              />
-              <div className="truncate">
-                <div className="text-xs font-bold truncate flex items-center gap-1">
-                  <span>{currentAddress.displayTitle}</span>
-                </div>
-                <div className="text-[10px] opacity-60 truncate">
-                  {currentAddress.alias} • {currentAddress.cityName}
-                </div>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 opacity-60 shrink-0" />
-            </button>
-
             {/* Universal Search Input */}
-            <div className="flex items-center gap-2 pl-3 flex-1">
+            <div className="flex items-center gap-2 flex-1">
               <Search className="w-4 h-4 opacity-50 shrink-0" />
               <input
                 type="search"
@@ -232,98 +160,6 @@ export function Navbar({
               )}
             </div>
           </div>
-
-          {/* Location Picker Popover */}
-          {locationOpen && (
-            <div
-              data-testid="location-dropdown"
-              className={`absolute left-0 mt-2 w-80 sm:w-96 rounded-2xl border p-4 shadow-2xl z-50 ${
-                isDark
-                  ? "bg-[#141A26] border-white/15 text-white"
-                  : "bg-white border-slate-200 text-slate-900"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider opacity-60">
-                  Select Delivery Location
-                </span>
-                <button
-                  type="button"
-                  aria-label="Close location selector"
-                  onClick={() => setLocationOpen(false)}
-                  className="p-1 rounded-lg hover:bg-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleDetectGps}
-                disabled={detectingGps}
-                aria-busy={detectingGps}
-                className="w-full flex items-center gap-3 p-3 rounded-xl border border-dashed mb-3 text-left transition hover:opacity-90 disabled:cursor-wait"
-                style={{
-                  borderColor: `${theme.primaryHex}66`,
-                  backgroundColor: `${theme.primaryHex}12`,
-                }}
-              >
-                <Navigation
-                  className={`w-4 h-4 ${detectingGps ? "animate-spin" : ""}`}
-                  style={{ color: "var(--brand-ink)" }}
-                />
-                <div>
-                  <div className="text-xs font-bold" style={{ color: "var(--brand-ink)" }}>
-                    {detectingGps
-                      ? "Detecting current location..."
-                      : "Use Current Location"}
-                  </div>
-                  <div className="text-[11px] opacity-65">
-                    Find nearby kitchens and accurate delivery ETAs
-                  </div>
-                </div>
-              </button>
-
-              <div className="space-y-1.5">
-                {addresses.map((addr) => {
-                  const selected = addr.id === currentAddress.id;
-                  return (
-                    <button
-                      key={addr.id}
-                      type="button"
-                      onClick={() => {
-                        onSelectAddress(addr);
-                        setLocationOpen(false);
-                      }}
-                      className={`w-full flex items-start justify-between p-2.5 rounded-xl border text-left transition ${
-                        selected
-                          ? "border-emerald-500/50 bg-emerald-500/10"
-                          : isDark
-                          ? "border-white/5 hover:bg-white/5"
-                          : "border-slate-100 hover:bg-slate-50"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold">{addr.displayTitle}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-semibold">
-                            {addr.alias}
-                          </span>
-                        </div>
-                        <p className="text-[11px] opacity-65 mt-0.5">{addr.displaySubtitle}</p>
-                      </div>
-                      {selected && (
-                        <CheckCircle2
-                          className="w-4 h-4 shrink-0 mt-0.5"
-                          style={{ color: "var(--brand-ink)" }}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* Universal Search Autosuggest Dropdown (layoutEntries-uniSearchDesContainer).
               With no catalog to suggest from, the query filters the restaurant list on the page. */}
@@ -423,7 +259,7 @@ export function Navbar({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 max-w-full">
           {/* Active Order Tracker Pill */}
           {hasActiveOrder && (
             <button
@@ -439,26 +275,6 @@ export function Navbar({
             </button>
           )}
 
-          {/* Gold / Luxe Membership Toggle */}
-          <button
-            type="button"
-            onClick={onToggleGold}
-            data-testid="gold-membership-toggle"
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition ${
-              isGoldMember
-                ? "bg-amber-500/20 border-amber-400/50 text-amber-400"
-                : isDark
-                ? "bg-white/5 border-white/10 text-white/70 hover:text-white"
-                : "bg-slate-100 border-slate-200 text-slate-700"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden lg:inline">{theme.membershipName}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-              {isGoldMember ? "ACTIVE" : "OFF"}
-            </span>
-          </button>
-
           {/* Brand & Theme Studio */}
           <button
             type="button"
@@ -473,22 +289,6 @@ export function Navbar({
           >
             <Palette className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
             <span className="hidden xl:inline">Brand Studio</span>
-          </button>
-
-          {/* Coupons & Partner Offers */}
-          <button
-            type="button"
-            onClick={onOpenOffers}
-            data-testid="navbar-offers"
-            title="Coupons and partner offers"
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition ${
-              isDark
-                ? "bg-white/5 border-white/10 hover:bg-white/10"
-                : "bg-slate-100 border-slate-200 hover:bg-slate-200"
-            }`}
-          >
-            <Tag className="w-4 h-4" style={{ color: "var(--brand-ink)" }} />
-            <span className="hidden xl:inline">Offers</span>
           </button>
 
           {/* Local Notification Inbox */}
@@ -528,7 +328,7 @@ export function Navbar({
             }`}
           >
             <Receipt className="w-4 h-4" />
-            <span className="hidden md:inline">Table POS</span>
+            <span>Table POS</span>
           </Link>
 
           <Link
@@ -542,7 +342,7 @@ export function Navbar({
             }`}
           >
             <Utensils className="w-4 h-4" />
-            <span className="hidden md:inline">Owner menu</span>
+            <span>Owner menu</span>
           </Link>
 
           {/* Dark / Light Surface Toggle */}
@@ -576,22 +376,6 @@ export function Navbar({
             {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          {/* Cart Button */}
-          <button
-            type="button"
-            onClick={onOpenCart}
-            data-testid="navbar-cart-button"
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-md transition hover:opacity-95"
-            style={{ backgroundColor: primaryFill(theme.primaryHex) }}
-          >
-            <ShoppingBag className="w-4 h-4" />
-            <span>{cartCount}</span>
-            {cartTotal > 0 && (
-              <span className="hidden sm:inline border-l border-white/30 pl-2">
-                ₹{cartTotal}
-              </span>
-            )}
-          </button>
         </div>
       </div>
     </header>

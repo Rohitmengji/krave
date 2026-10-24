@@ -115,10 +115,6 @@ export function AccountDialog({
                 <dt className="opacity-65">Email</dt>
                 <dd className="font-bold">{user.email}</dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="opacity-65">{theme.membershipName}</dt>
-                <dd className="font-bold">{user.isGoldMember ? "Active" : "Off"}</dd>
-              </div>
             </dl>
             {!user.emailVerified && (
               <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs leading-relaxed">
@@ -139,8 +135,9 @@ export function AccountDialog({
               type="button"
               data-testid="account-sign-out"
               onClick={async () => {
-                await onSignOut();
+                // Closing first lets the page, not a dialog on its way out, announce the result.
                 onClose();
+                await onSignOut();
               }}
               className="w-full rounded-2xl border border-current/20 py-2.5 text-xs font-black"
             >

@@ -3,9 +3,9 @@ import "./globals.css";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 
 export const metadata: Metadata = {
-  title: "KRAVE — Artisanal Delivery, Curated Dining & Midnight Lounge",
+  title: "KRAVE — Local restaurants, their own menus and prices",
   description:
-    "Independent food delivery and dining prototype informed by public website observations. Demo checkout and tracking.",
+    "Menus and prices published by local restaurants themselves. Order online where a restaurant has switched it on, or eat in and keep your bill.",
   appleWebApp: { capable: true, title: "KRAVE", statusBarStyle: "black-translucent" },
   icons: { icon: { url: "/icon.svg", type: "image/svg+xml" } },
 };

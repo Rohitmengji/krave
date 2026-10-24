@@ -12,7 +12,7 @@ export const BRAND_THEME_PRESETS: BrandThemePreset[] = [
     id: "krave-emerald",
     name: "Krave Emerald Obsidian",
     brandName: "KRAVE",
-    tagline: "Artisanal Delivery, Curated Dining & Midnight Lounge",
+    tagline: "Local restaurants, their own menus and prices",
     membershipName: "KRAVE LUXE",
     primaryHex: "#10B981",
     primaryHoverHex: "#059669",

@@ -54,14 +54,8 @@ test.describe("Storefront hygiene", () => {
     await expect(studio.getByRole("status")).toHaveText("Applied Aurum Saffron Reserve theme");
     await expect(toast).toHaveAttribute("aria-hidden", "true");
 
-    // With no modal open, the page's own region speaks.
     await page.keyboard.press("Escape");
     await expect(studio).toBeHidden();
-    await page.getByTestId("location-picker-button").click();
-    await page.getByRole("button", { name: /Indiranagar, Bengaluru/ }).click();
-    await expect(page.locator("#krave-announcer")).toHaveText(
-      "Switched Delivery Subzone to Indiranagar, Bengaluru"
-    );
   });
 
   test("reloads the storefront offline from the service worker", async ({ page, context }) => {

@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "KRAVE — Delivery, Dining & Dine-In Terminal",
+    name: "KRAVE — Restaurant menus and table billing",
     short_name: "KRAVE",
     description:
-      "Independent food delivery, dining and offline dine-in billing prototype. Demo checkout only.",
+      "Menus and prices published by local restaurants, online ordering where a restaurant allows it, and a table billing terminal that keeps working offline.",
     start_url: "/",
     scope: "/",
     display: "standalone",

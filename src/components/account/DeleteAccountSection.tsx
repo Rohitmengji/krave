@@ -72,7 +72,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
       >
         <div className="space-y-3">
           <label className="block space-y-1 text-xs">
-            <span className="text-white/75">Password</span>
+            <span className="text-white/75">PIN</span>
             <input
               type="password"
               autoComplete="current-password"

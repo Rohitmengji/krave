@@ -83,13 +83,13 @@ describe("reset link format", () => {
 
 describe("new password rules", () => {
   it.each([
-    ["", "", /at least 10/],
-    ["a".repeat(9), "a".repeat(9), /at least 10/],
-    ["a".repeat(10), "a".repeat(10), null],
-    ["a".repeat(200), "a".repeat(200), null],
-    ["a".repeat(201), "a".repeat(201), /200 characters or fewer/],
-    ["a".repeat(10), "a".repeat(10) + " ", /don't match/],
-    ["correct horse", "Correct horse", /don't match/],
+    ["", "", /6 to 8 digits/],
+    ["12345", "12345", /6 to 8 digits/],
+    ["123456", "123456", null],
+    ["12345678", "12345678", null],
+    ["123456789", "123456789", /6 to 8 digits/],
+    ["123456", "1234567", /don't match/],
+    ["123456", "123457", /don't match/],
   ])("%#: checks length before the match", (password, confirmation, expected) => {
     const problem = newPasswordProblem(password, confirmation);
     if (expected === null) expect(problem).toBeNull();
@@ -185,7 +185,7 @@ describe("reset email", () => {
   });
 });
 
-const ACCOUNT = { email: "forgot@krave.test", password: "original-password" };
+const ACCOUNT = { email: "forgot@krave.test", password: "246810" };
 const SITE = "https://krave.example";
 const SMTP_ENV = {
   SMTP_HOST: "smtp.example.test",
@@ -266,17 +266,17 @@ describe.skipIf(!hasTestDatabase)("password reset by email (Postgres)", () => {
     expect(sent[0].to).toBe(ACCOUNT.email);
     expect(sent[0].text).toContain(`${SITE}/reset-password#token=`);
 
-    const reset = await post("auth/reset", { token: tokenIn(sent[0]), password: "brand-new-password" });
+    const reset = await post("auth/reset", { token: tokenIn(sent[0]), password: "246813" });
     expect(reset.status).toBe(200);
     await expect(
-      verifyCredentials({ email: ACCOUNT.email, password: "brand-new-password" })
+      verifyCredentials({ email: ACCOUNT.email, password: "246813" })
     ).resolves.toMatchObject({ email: ACCOUNT.email });
 
     // The owner hears about it, so a reset they did not make is not silent.
     await runAfterTasks();
     expect(sent.map((message) => message.subject)).toEqual([
-      "Reset your KRAVE password",
-      "Your KRAVE password was changed",
+      "Reset your KRAVE PIN",
+      "Your KRAVE PIN was changed",
     ]);
     expect(sent[1].text).toContain(`${SITE}/signin`);
   });
@@ -406,17 +406,17 @@ describe.skipIf(!hasTestDatabase)("password reset by email (Postgres)", () => {
     await runAfterTasks();
     const token = tokenIn(sent[0]);
 
-    expect((await post("auth/reset", { token, password: "first-new-password" })).status).toBe(200);
-    const reused = await post("auth/reset", { token, password: "second-new-password" });
+    expect((await post("auth/reset", { token, password: "135796" })).status).toBe(200);
+    const reused = await post("auth/reset", { token, password: "246816" });
     expect(reused.status).toBe(410);
     expect((await reused.json()).message).toMatch(/expired or was already used/);
 
-    expect((await post("auth/reset", { token: "x", password: "second-new-password" })).status).toBe(410);
+    expect((await post("auth/reset", { token: "x", password: "246816" })).status).toBe(410);
     // A fixable problem stays a 400 and leaves a valid link usable.
     await post("auth/forgot", { email: ACCOUNT.email });
     await runAfterTasks();
     const fresh = tokenIn(sent.at(-1));
     expect((await post("auth/reset", { token: fresh, password: "short" })).status).toBe(400);
-    expect((await post("auth/reset", { token: fresh, password: "third-new-password" })).status).toBe(200);
+    expect((await post("auth/reset", { token: fresh, password: "135797" })).status).toBe(200);
   });
 });

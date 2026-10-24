@@ -16,6 +16,8 @@ export function emailLink(origin: string, token: string): string {
   return `${origin}${VERIFY_EMAIL_PATH}#token=${encodeURIComponent(token)}`;
 }
 
+import { pinProblem } from "@/lib/passwordReset";
+
 export function displayNameProblem(name: string): string | null {
   const trimmed = name.trim();
   if (trimmed.length < DISPLAY_NAME_MIN_LENGTH) {
@@ -63,6 +65,24 @@ export function normalizePhone(raw: string): PhoneResult {
   return /^[6-9]\d{9}$/.test(national)
     ? { ok: true, phone: `+91${national}` }
     : { ok: false, message: PHONE_PROBLEM };
+}
+
+/**
+ * What creating an account requires before anything is stored: a name, a mobile number,
+ * and a short numeric PIN. Email is checked separately because its error comes from the
+ * same normaliser sign-in uses.
+ */
+export function registrationProblem(input: {
+  displayName: string;
+  phone: string;
+  password: string;
+}): string | null {
+  const name = displayNameProblem(input.displayName);
+  if (name) return name;
+  const phone = normalizePhone(input.phone);
+  if (!phone.ok) return phone.message;
+  if (!phone.phone) return "Enter your mobile number.";
+  return pinProblem(input.password);
 }
 
 export function formatPhone(phone: string): string {

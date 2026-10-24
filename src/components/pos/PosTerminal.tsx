@@ -65,6 +65,7 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
+import { adoptRemoteFloor, FLOOR_POLL_MS, FLOOR_PUSH_MS } from "@/lib/pos/floorSync";
 import { displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
 import { SendBill } from "./SendBill";
 import { PosReceiptPaper } from "./PosReceiptPaper";
@@ -330,13 +331,17 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         const stored = restorePosSessions(JSON.stringify(state.sessions ?? [])).filter((session) =>
           isKnownOutlet(session.outletId)
         );
-        for (const session of stored) {
-          syncRevisions.current.set(session.sessionId, session.revision);
-          syncedSnapshots.current.set(session.sessionId, JSON.stringify(session));
-        }
         if (state.billNumbers) setBillNumbers(state.billNumbers);
         if (state.claimCodes) setClaimCodes((current) => ({ ...current, ...state.claimCodes }));
-        setSessions((current) => (current.length === 0 ? stored : current));
+        setSessions((current) => {
+          const adopted = adoptRemoteFloor(
+            current,
+            stored,
+            syncRevisions.current,
+            syncedSnapshots.current
+          );
+          return adopted.changed ? adopted.sessions : current;
+        });
         const storedShift = restorePosShift(JSON.stringify(state.shift ?? null));
         const adoptableShift = storedShift && isKnownOutlet(storedShift.outletId) ? storedShift : null;
         setActiveShift((current) => current ?? adoptableShift);
@@ -398,19 +403,97 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           // A conflict is recoverable by reloading; a rejection is not, so they read differently.
           const conflict = result.conflicts?.[0];
           const rejection = result.rejected?.[0];
+          if (conflict) {
+            // The other waiter moved first. Take their table instead of retrying a stale write.
+            const fresh = await fetch("/api/webroutes/pos/state", {
+              cache: "no-store",
+              signal: AbortSignal.timeout(8000),
+            });
+            if (fresh.ok) {
+              const state = await fresh.json();
+              const remote = restorePosSessions(JSON.stringify(state.sessions ?? []));
+              const forceIds = new Set<string>(
+                (result.conflicts ?? []).map((entry: { sessionId: string }) => entry.sessionId)
+              );
+              setSessions((current) => {
+                const adopted = adoptRemoteFloor(
+                  current,
+                  remote,
+                  syncRevisions.current,
+                  syncedSnapshots.current,
+                  forceIds
+                );
+                return adopted.changed ? adopted.sessions : current;
+              });
+              if (state.billNumbers) setBillNumbers((current) => ({ ...current, ...state.billNumbers }));
+            }
+          }
           setSyncMessage(
-            conflict?.reason ??
-              (rejection
+            conflict
+              ? `${conflict.reason} Showing the latest order.`
+              : rejection
                 ? `${result.rejected.length} table(s) could not be saved: ${rejection.reason}`
-                : null)
+                : null
           );
         })
         .catch(() => {
           setSyncState("failed");
         });
-    }, 1200);
+    }, FLOOR_PUSH_MS);
     return () => clearTimeout(timer);
   }, [sessions, activeShift, hydrated, syncAccount]);
+
+  // Other waiters write the same floor. Pull often, and immediately when this tab is visible again.
+  useEffect(() => {
+    if (!hydrated || !syncAccount) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pull = async () => {
+      try {
+        const response = await fetch("/api/webroutes/pos/state", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok || stopped) return;
+        const state = await response.json();
+        const remote = restorePosSessions(JSON.stringify(state.sessions ?? [])).filter((session) =>
+          isKnownOutlet(session.outletId)
+        );
+        if (state.billNumbers) setBillNumbers((current) => ({ ...current, ...state.billNumbers }));
+        if (state.claimCodes) setClaimCodes((current) => ({ ...current, ...state.claimCodes }));
+        setSessions((current) => {
+          const adopted = adoptRemoteFloor(
+            current,
+            remote,
+            syncRevisions.current,
+            syncedSnapshots.current
+          );
+          if (adopted.updatedTableIds.length > 0) {
+            const tables = [...new Set(adopted.updatedTableIds)].join(", ");
+            setNotice(`Another waiter updated table ${tables}.`);
+          }
+          return adopted.changed ? adopted.sessions : current;
+        });
+        setSyncState((current) => (current === "pending" ? current : "synced"));
+      } catch {
+        // A missed poll is not a failure: the next one, or the push, catches up.
+      }
+      if (!stopped && document.visibilityState === "visible") {
+        timer = setTimeout(() => void pull(), FLOOR_POLL_MS);
+      }
+    };
+    const onVisibility = () => {
+      clearTimeout(timer);
+      if (document.visibilityState === "visible") void pull();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void pull();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [hydrated, syncAccount]);
 
   const currentOutlet = outlets.find((outlet) => outlet.outletId === outletId) ?? outlets[0];
   const menu = currentOutlet.menu;
@@ -763,7 +846,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <p className="text-[11px] opacity-60" data-testid="pos-sync-status">
               {syncAccount
                 ? syncState === "synced"
-                  ? `Works offline · Saved to ${syncAccount}`
+                  ? `Live with the team · Saved to ${syncAccount}`
                   : syncState === "failed"
                   ? "Works offline · Saved on this device, waiting to sync"
                   : "Works offline · Syncing..."

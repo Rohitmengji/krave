@@ -90,7 +90,7 @@ describe.skipIf(!hasTestDatabase)("seeding a restaurant and loading it at the te
   afterAll(stopTestDatabase);
   beforeEach(resetTestDatabase);
 
-  const OWNER = { email: "owner@jagadamba.test", password: "correct-horse-battery" };
+  const OWNER = { email: "owner@jagadamba.test", password: "135790" };
   const seed = (options: { ownerEmail: string; publish?: boolean }) =>
     transaction((client) => seedJagadamba(client, options));
   const count = async (table: string) =>

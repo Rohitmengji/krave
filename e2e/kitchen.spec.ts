@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { registerAccount, resetBrowser, uniqueEmail } from "./helpers";
 
-const PASSWORD = "e2e-demo-password";
+const PASSWORD = "135790";
 const OUTLET_ID = 19677790;
 
 // Delivery tickets and refund claims belong to the retired sample-catalog checkout, so only

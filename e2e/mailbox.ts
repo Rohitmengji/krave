@@ -42,7 +42,7 @@ export function subjectsFor(address: string): string[] {
 
 export function latestResetLink(address: string): string | null {
   const mail = mailTo(address)
-    .filter((candidate) => /^Subject: Reset your KRAVE password/m.test(candidate.raw))
+    .filter((candidate) => /^Subject: Reset your KRAVE PIN/m.test(candidate.raw))
     .at(-1);
   if (!mail) return null;
   return (

@@ -250,7 +250,7 @@ test.describe.serial("Restaurant ordering", () => {
   test("orders are private to the restaurant and the order API refuses forgeries", async ({ browser, page }) => {
     const intruderContext = await browser.newContext();
     const intruder = await intruderContext.newPage();
-    await registerAccount(intruder, uniqueEmail("order-intruder"), "intruder-password");
+    await registerAccount(intruder, uniqueEmail("order-intruder"), "135798");
     expect((await intruder.request.get(`/api/owner/${restaurantId}/orders`)).status()).toBe(403);
     expect(
       (

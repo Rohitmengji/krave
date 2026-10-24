@@ -27,7 +27,7 @@ describe.skipIf(!hasTestDatabase)("restaurant owner workflow", () => {
   async function createOwner(email = "owner@jagadamba.test") {
     return registerUser({
       email,
-      password: "correct-horse-battery",
+      password: "135790",
     });
   }
 

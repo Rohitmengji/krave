@@ -116,7 +116,7 @@ function ChangeEmailForm({ currentEmail, primaryHex }: { currentEmail: string; p
     if (inFlight.current || state.status !== "editing") return;
     const address = newEmail.trim();
     if (!address || !password) {
-      dispatch({ type: "REFUSED", message: "Enter the new address and your current password." });
+      dispatch({ type: "REFUSED", message: "Enter the new address and your current PIN." });
       return;
     }
     if (address.toLowerCase() === currentEmail) {
@@ -176,7 +176,7 @@ function ChangeEmailForm({ currentEmail, primaryHex }: { currentEmail: string; p
         />
       </label>
       <label className="block space-y-1 text-xs">
-        <span className="text-white/75">Current password</span>
+        <span className="text-white/75">Current PIN</span>
         <input
           type="password"
           autoComplete="current-password"

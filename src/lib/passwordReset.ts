@@ -3,8 +3,21 @@
  * touches the server, so client components may import it.
  */
 
-export const PASSWORD_MIN_LENGTH = 10;
-export const PASSWORD_MAX_LENGTH = 200;
+/** A staff or customer credential is a short numeric PIN, not a long password. */
+export const PIN_MIN_DIGITS = 6;
+export const PIN_MAX_DIGITS = 8;
+export const PASSWORD_MIN_LENGTH = PIN_MIN_DIGITS;
+export const PASSWORD_MAX_LENGTH = PIN_MAX_DIGITS;
+
+const PIN_PATTERN = /^\d{6,8}$/;
+
+/** Same rule the server enforces: 6 to 8 digits, nothing else. */
+export function pinProblem(password: string): string | null {
+  if (!PIN_PATTERN.test(password)) {
+    return "Use a PIN of 6 to 8 digits, not a long password.";
+  }
+  return null;
+}
 export const RESET_LINK_MINUTES = 30;
 export const RESET_PAGE_PATH = "/reset-password";
 export const SIGN_IN_PATH = "/signin";
@@ -24,13 +37,9 @@ export function readResetToken(hash: string): string | null {
 
 /** Same limits the server enforces, checked first so a typo costs no round trip. */
 export function newPasswordProblem(password: string, confirmation: string): string | null {
-  if (password.length < PASSWORD_MIN_LENGTH) {
-    return `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
-  }
-  if (password.length > PASSWORD_MAX_LENGTH) {
-    return `Use ${PASSWORD_MAX_LENGTH} characters or fewer.`;
-  }
-  if (password !== confirmation) return "The two passwords don't match.";
+  const problem = pinProblem(password);
+  if (problem) return problem;
+  if (password !== confirmation) return "The two PINs don't match.";
   return null;
 }
 

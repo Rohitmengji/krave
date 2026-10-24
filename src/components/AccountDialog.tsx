@@ -8,7 +8,8 @@ import { ForgotPasswordPanel } from "./ForgotPasswordPanel";
 import { requestJson } from "@/lib/requestJson";
 import type { BrandThemePreset } from "@/types/krave";
 import { primaryFill } from "@/lib/themeContrast";
-import { ACCOUNT_PATH } from "@/lib/accountRules";
+import { ACCOUNT_PATH, normalizePhone, registrationProblem } from "@/lib/accountRules";
+import { pinProblem } from "@/lib/passwordReset";
 
 export interface AccountUser {
   id: string;
@@ -27,6 +28,7 @@ export function AccountDialog({
   user,
   onAuthenticated,
   onSignOut,
+  required = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -35,16 +37,22 @@ export function AccountDialog({
   user: AccountUser | null;
   onAuthenticated: (payload: unknown) => void;
   onSignOut: () => Promise<void>;
+  /** Signed-out visitors cannot dismiss this; the app stays behind the account. */
+  required?: boolean;
 }) {
   const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Whoever opens the dialog next came to sign in, not to finish a reset they walked away from.
+  const locked = required && !user;
+
   function close() {
+    if (locked) return;
     if (mode === "forgot") setMode("login");
     onClose();
   }
@@ -52,12 +60,26 @@ export function AccountDialog({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (pending || mode === "forgot") return;
+    const problem =
+      mode === "register"
+        ? registrationProblem({ displayName, phone, password })
+        : pinProblem(password);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    const normalised = mode === "register" ? normalizePhone(phone) : null;
     setPending(true);
     setError(null);
     try {
       const result = await requestJson(`/api/webroutes/auth/${mode}`, {
         method: "POST",
-        body: { email, password, displayName },
+        body: {
+          email,
+          password,
+          displayName,
+          phone: normalised && normalised.ok ? normalised.phone : undefined,
+        },
         timeoutMs: 10000,
         fallbackMessage: "Could not sign you in.",
       });
@@ -84,24 +106,26 @@ export function AccountDialog({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-black">
-              {user ? "Your account" : mode === "forgot" ? "Reset your password" : "Sign in to KRAVE"}
+              {user ? "Your account" : mode === "forgot" ? "Reset your PIN" : "Sign in to KRAVE"}
             </h2>
             <p className="text-xs opacity-65">
               {user
                 ? "Orders, bookings and bookmarks are saved to this account."
                 : mode === "forgot"
-                  ? "We'll email you a link to choose a new one."
-                  : "Optional. Without an account everything stays in this browser."}
+                  ? "We'll email you a link to choose a new PIN."
+                  : "Create an account or sign in with your email and a 6-digit PIN. The app stays closed until you do."}
             </p>
           </div>
-          <button
-            type="button"
-            aria-label="Close account"
-            onClick={close}
-            className="rounded-lg p-1 hover:bg-white/10"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {!locked && (
+            <button
+              type="button"
+              aria-label="Close account"
+              onClick={close}
+              className="rounded-lg p-1 hover:bg-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {user ? (
@@ -184,15 +208,31 @@ export function AccountDialog({
             </div>
 
             {mode === "register" && (
-              <label className="block space-y-1 text-xs">
-                <span className="opacity-70">Name</span>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  className={`w-full rounded-xl border px-3 py-2 ${field}`}
-                />
-              </label>
+              <>
+                <label className="block space-y-1 text-xs">
+                  <span className="opacity-70">Name</span>
+                  <input
+                    type="text"
+                    required
+                    autoComplete="name"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    className={`w-full rounded-xl border px-3 py-2 ${field}`}
+                  />
+                </label>
+                <label className="block space-y-1 text-xs">
+                  <span className="opacity-70">Mobile number</span>
+                  <input
+                    type="tel"
+                    required
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    className={`w-full rounded-xl border px-3 py-2 ${field}`}
+                  />
+                </label>
+              </>
             )}
 
             <label className="block space-y-1 text-xs">
@@ -208,14 +248,17 @@ export function AccountDialog({
             </label>
 
             <label className="block space-y-1 text-xs">
-              <span className="opacity-70">Password (minimum 10 characters)</span>
+              <span className="opacity-70">PIN (6 to 8 digits)</span>
               <input
                 type="password"
                 required
-                minLength={10}
+                inputMode="numeric"
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
+                minLength={6}
+                maxLength={8}
+                pattern="\d{6,8}"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => setPassword(event.target.value.replace(/\D/g, "").slice(0, 8))}
                 className={`w-full rounded-xl border px-3 py-2 ${field}`}
               />
             </label>
@@ -232,7 +275,7 @@ export function AccountDialog({
                   className="inline-flex min-h-11 items-center px-1 text-xs font-bold underline-offset-2 hover:underline"
                   style={{ color: "var(--brand-ink)" }}
                 >
-                  Forgot password?
+                  Forgot PIN?
                 </button>
               </div>
             )}
@@ -244,7 +287,7 @@ export function AccountDialog({
             )}
 
             <p className="text-[10px] opacity-60">
-              Demo accounts only. Don&apos;t reuse a password you use anywhere else.
+              Use a numeric PIN of at least 6 digits. Don&apos;t reuse a PIN you use anywhere else.
             </p>
 
             <button

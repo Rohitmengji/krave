@@ -177,7 +177,7 @@ test.describe.serial("Owner menu workflow", () => {
     const context = await browser.newContext();
     const intruder = await context.newPage();
     await resetBrowser(intruder);
-    await registerAccount(intruder, uniqueEmail("intruder"), "e2e-intruder-password");
+    await registerAccount(intruder, uniqueEmail("intruder"), "246818");
 
     const reads = [
       intruder.request.get(`/api/owner/${id}`),

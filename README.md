@@ -340,8 +340,8 @@ API requests must come from the site's own origin.
   a gateway and every message is sent by a person tapping Send.
 - Installable offline shell, so `/` and `/pos` reload without a network after one visit.
 - Account settings at `/account`: name and mobile number, email change confirmed by a link
-  to the new address (the old one is told), password change that signs other devices out,
-  sign-out everywhere, and account deletion behind the password and a typed confirmation.
+  to the new address (the old one is told), PIN change that signs other devices out,
+  sign-out everywhere, and account deletion behind the PIN and a typed confirmation.
 - Owner workspace at `/owner` for managed restaurant details, menu CRUD, private menu/photo
   uploads, explicitly triggered and rate-limited AI extraction, human review, and draft-only
   import. Dishes can be searched, filtered by status, marked unavailable in one tap and
@@ -395,14 +395,15 @@ a terminal editing an older copy is rejected and told to reload, so a second dev
 silently overwrite a service in progress. There is still no automatic merge — the rejected
 terminal reloads and redoes its change.
 
-Accounts are a demo. They live in Postgres, created by `npm run db:setup`. Passwords are
-salted and hashed with scrypt and never stored in plain text. Sign-in is throttled per
+The main app asks you to sign in or create an account (name, email, mobile number, and a
+6 to 8 digit PIN) before you use it. Accounts live in Postgres, created by `npm run db:setup`.
+PINs are salted and hashed with scrypt and never stored in plain text. Sign-in is throttled per
 account and per client, a reset token can recover a locked account, and a reset signs out
-every device. "Forgot password?" emails a single-use link valid for 30 minutes; the token
+every device. "Forgot PIN?" emails a single-use link valid for 30 minutes; the token
 rides in the URL fragment, so it never reaches a server log or a Referer header, and the
-owner is emailed when the password changes. New accounts get a link to confirm their
+owner is emailed when the PIN changes. New accounts get a link to confirm their
 address; staff access granted by email does not check that confirmation yet. Do not reuse
-a real password.
+a PIN you use elsewhere.
 
 ## Next Milestones
 

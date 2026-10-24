@@ -62,22 +62,23 @@ function repriceSession(
 /** Read before any table is rewritten, so lines moved by a merge or transfer keep their price. */
 async function capturedPrices(
   client: Queryable,
-  userId: string,
+  outletIds: number[],
   sessions: PosTableSession[]
 ): Promise<CapturedPrices> {
   const lineIds = sessions.flatMap((session) => session.lines.map((line) => line.lineId));
   const sessionIds = sessions.map((session) => session.sessionId);
-  if (sessionIds.length === 0) return { lines: new Map(), taxRates: new Map() };
+  if (sessionIds.length === 0 || outletIds.length === 0) return { lines: new Map(), taxRates: new Map() };
   // One transaction client runs one query at a time, so these go in turn.
+  // Prices are shared by the outlet, not by the waiter who first rang the dish.
   const lines = await client.query<Record<string, unknown>>(
     `SELECT l.line_id, l.item_id, l.unit_price FROM pos_lines l
      JOIN pos_sessions s ON s.id = l.session_id
-     WHERE s.user_id = $1 AND l.line_id = ANY($2::text[])`,
-    [userId, lineIds]
+     WHERE s.outlet_id = ANY($1::int[]) AND l.line_id = ANY($2::text[])`,
+    [outletIds, lineIds]
   );
   const tables = await client.query<Record<string, unknown>>(
-    "SELECT id, tax_rate_bps FROM pos_sessions WHERE user_id = $1 AND id = ANY($2::text[])",
-    [userId, sessionIds]
+    "SELECT id, tax_rate_bps FROM pos_sessions WHERE outlet_id = ANY($1::int[]) AND id = ANY($2::text[])",
+    [outletIds, sessionIds]
   );
   return {
     lines: new Map(
@@ -96,16 +97,25 @@ class StaleRevisionError extends Error {}
 async function writeSession(
   client: Queryable,
   userId: string,
-  session: PosTableSession
+  session: PosTableSession,
+  allowedOutlets: ReadonlySet<number>
 ): Promise<void> {
   // FOR UPDATE: the revision is read and then written against, so the row must stay put
-  // for the rest of this transaction.
+  // for the rest of this transaction. The row is the outlet's, not one waiter's: any
+  // teammate who can bill this outlet may add to it.
   const existing = (
     await client.query(
-      "SELECT revision, bill_number FROM pos_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE",
-      [session.sessionId, userId]
+      "SELECT revision, bill_number, user_id, outlet_id FROM pos_sessions WHERE id = $1 FOR UPDATE",
+      [session.sessionId]
     )
   ).rows[0] as Record<string, unknown> | undefined;
+
+  if (existing && !allowedOutlets.has(Number(existing.outlet_id))) {
+    throw new Error(`This account cannot bill for ${session.outletName}.`);
+  }
+  if (existing && Number(existing.outlet_id) !== session.outletId) {
+    throw new Error(`Table ${session.tableId} belongs to another outlet.`);
+  }
 
   // Optimistic concurrency: the device must have based its edit on what the server holds.
   const storedRevision = existing ? Number(existing.revision) : 0;
@@ -130,10 +140,7 @@ async function writeSession(
   const grandTotal = session.status === "SETTLED" ? calculatePosBill(session).grandTotal : null;
 
   // Lines, tickets and voids cascade from the session row, so this clears them too.
-  await client.query("DELETE FROM pos_sessions WHERE id = $1 AND user_id = $2", [
-    session.sessionId,
-    userId,
-  ]);
+  await client.query("DELETE FROM pos_sessions WHERE id = $1", [session.sessionId]);
   await client.query(
     `INSERT INTO pos_sessions (id, user_id, shift_id, outlet_id, outlet_name, table_id, guest_count,
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
@@ -143,7 +150,7 @@ async function writeSession(
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
     [
       session.sessionId,
-      userId,
+      existing ? String(existing.user_id) : userId,
       session.shiftId,
       session.outletId,
       session.outletName,
@@ -226,8 +233,8 @@ export interface PosSyncResult {
 }
 
 /**
- * Push a terminal's offline queue. The device is the only writer, so this is a full replace of
- * the sessions it sent; sessions it no longer knows about are left alone rather than deleted.
+ * Push a terminal's offline queue. Each table is shared by the outlet, so this replaces only
+ * the sessions it sent; tables another waiter owns are left alone rather than deleted.
  */
 export async function syncPosState(userId: string, payload: unknown): Promise<PosSyncResult> {
   const body = (payload ?? {}) as Record<string, unknown>;
@@ -258,13 +265,14 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
       );
     }
 
-    const captured = await capturedPrices(client, userId, incoming);
+    const allowedOutlets = new Set(prices.outlets.keys());
+    const captured = await capturedPrices(client, [...allowedOutlets], incoming);
     for (const session of incoming) {
       // Each table is all-or-nothing on its own: a failure after writeSession has deleted
       // the old rows must not commit a half-written table alongside the accepted ones.
       await client.query("SAVEPOINT pos_table");
       try {
-        await writeSession(client, userId, repriceSession(session, prices, captured));
+        await writeSession(client, userId, repriceSession(session, prices, captured), allowedOutlets);
         await client.query("RELEASE SAVEPOINT pos_table");
       } catch (error) {
         await client.query("ROLLBACK TO SAVEPOINT pos_table");
@@ -405,17 +413,23 @@ export async function loadPosState(
   conflicts: PosSyncResult["conflicts"] = [],
   sentIds: string[] = []
 ): Promise<PosSyncResult> {
-  // Every open table and every table the device just sent (it needs their new revisions),
-  // plus recent closed bills; older history is read through listSalesHistory instead.
-  const sessionRows = await rows<Record<string, unknown>>(
-    `SELECT * FROM (
-       SELECT * FROM pos_sessions WHERE user_id = $1 AND (status = 'OPEN' OR id = ANY($2::text[]))
-       UNION
-       (SELECT * FROM pos_sessions WHERE user_id = $1 AND status <> 'OPEN'
-        ORDER BY COALESCE(payment_settled_at, opened_at) DESC LIMIT 100)
-     ) AS floor ORDER BY opened_at`,
-    [userId, sentIds]
-  );
+  // Open tables belong to the outlet, so every waiter who can bill it sees the same floor.
+  // A device still needs the tables it just sent, even once they are no longer open.
+  const outletIds = [...(await loadPosPriceBook(userId)).outlets.keys()];
+  const sessionRows =
+    outletIds.length === 0
+      ? []
+      : await rows<Record<string, unknown>>(
+          `SELECT * FROM (
+             SELECT * FROM pos_sessions
+             WHERE outlet_id = ANY($1::int[]) AND (status = 'OPEN' OR id = ANY($2::text[]))
+             UNION
+             (SELECT * FROM pos_sessions
+              WHERE outlet_id = ANY($1::int[]) AND status <> 'OPEN'
+              ORDER BY COALESCE(payment_settled_at, opened_at) DESC LIMIT 100)
+           ) AS floor ORDER BY opened_at`,
+          [outletIds, sentIds]
+        );
   const sessions = await hydrateSessions(sessionRows);
   const shiftRow = await one<Record<string, unknown>>(
     "SELECT * FROM pos_shifts WHERE user_id = $1 LIMIT 1",

@@ -65,9 +65,12 @@ record, which the terminal consumes and clears immediately so a refresh cannot r
 ## Terminal Sync
 
 `localStorage` remains the terminal's working copy, so a service can be billed with no network
-at all. When an account is signed in, changes are pushed to the database after they settle;
-a failed push leaves the queue on the device and the header says it is waiting to sync. A
-device with no local floor adopts the account's stored one on load.
+at all. When an account is signed in, changes are pushed to the database shortly after they
+settle, and the terminal polls the outlet floor about every 1.5 seconds so another waiter sees
+a new item without waiting for a refresh. A failed push leaves the queue on the device and
+the header says it is waiting to sync. Open tables belong to the outlet, not to the waiter
+who opened them: anyone who can bill that outlet loads and may add to the same floor. A
+device with no local floor adopts the outlet's stored one on load.
 
 The payload is never trusted for money. A line the server already holds keeps the price it
 was captured at; a new line is priced from the restaurant's menu in the database, including
@@ -127,10 +130,12 @@ exists.
 
 ## Accounts and Storage
 
-Signing in is optional. Without an account every feature runs from `localStorage`; with one,
-orders, reservations, bookmarks and membership move to a SQLite file under `.data/` and the
+The main app asks for an account before it can be used. Creating one needs a name, an email,
+a mobile number and a 6 to 8 digit PIN (not a long password). If the account check cannot
+reach the server, the local demo stays usable so an offline visit is not a blank screen.
+With an account, orders, reservations, bookmarks and membership move to Postgres and the
 browser copies of order and reservation history are removed so there is a single source of
-truth. Passwords are hashed with scrypt over a per-user salt and compared in constant time;
+truth. PINs are hashed with scrypt over a per-user salt and compared in constant time;
 an unknown email still performs a hash so a missing account is not faster to probe. Session
 tokens are random, stored only as a SHA-256 digest, and sent in an HttpOnly, SameSite=Lax
 cookie that is Secure in production.

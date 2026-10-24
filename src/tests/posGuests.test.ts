@@ -197,7 +197,7 @@ describe.skipIf(!hasTestDatabase)("guests and tax through terminal sync", () => 
   beforeEach(resetTestDatabase);
 
   async function ownerWithOutlet() {
-    const owner = await registerUser({ email: "owner@guests.test", password: "correct-horse-battery" });
+    const owner = await registerUser({ email: "owner@guests.test", password: "135790" });
     const outlet = await seedPosOutlet(owner);
     return { owner, outlet };
   }

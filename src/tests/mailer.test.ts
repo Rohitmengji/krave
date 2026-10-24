@@ -5,7 +5,7 @@ import { MailConfigError, readMailConfig, sendMail, type MailMessage } from "@/l
 
 const MESSAGE: MailMessage = {
   to: "guest@krave.test",
-  subject: "Reset your KRAVE password",
+  subject: "Reset your KRAVE PIN",
   text: "plain body",
   html: "<p>html body</p>",
 };
@@ -106,7 +106,7 @@ describe("sendMail over real SMTP", () => {
     expect(sink.received).toHaveLength(1);
     expect(sink.received[0].to).toEqual(["guest@krave.test"]);
     expect(sink.received[0].from).toBe("no-reply@krave.test");
-    expect(sink.received[0].raw).toContain("Subject: Reset your KRAVE password");
+    expect(sink.received[0].raw).toContain("Subject: Reset your KRAVE PIN");
   });
 
   it("never sends a login to a server that cannot encrypt the connection", async () => {

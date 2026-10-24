@@ -7,6 +7,7 @@ export const POS_SEAT_HANDOFF_KEY = "krave.pos-seat-handoff.v1";
 export const POS_MAX_QUANTITY = 99;
 export const POS_MAX_GUESTS = 50;
 export const POS_MAX_NOTE_LENGTH = 120;
+export const POS_MAX_GUEST_NAME_LENGTH = 40;
 /** Ceiling for any cash figure the cashier types (float, count, tendered), in rupees. */
 export const POS_MAX_CASH = 10000000;
 /** Off-menu dishes carry this prefix so sync knows to keep the operator's price. */
@@ -14,9 +15,10 @@ export const POS_CUSTOM_ITEM_PREFIX = "custom_";
 /** Every open table is always kept; settled history fills the rest, newest first. */
 export const POS_MAX_STORED_SESSIONS = 200;
 
-/** Indian restaurant GST is split into equal CGST and SGST halves on the taxable value. */
-export const POS_CGST_RATE = 0.025;
-export const POS_SGST_RATE = 0.025;
+/** Upper bound for a restaurant's tax rate, in basis points, matching the owner settings. */
+export const POS_MAX_TAX_BPS = 10000;
+/** Tables saved before the rate was per restaurant were all billed at 5% GST. */
+const LEGACY_TAX_BPS = 500;
 
 /** Service charge is discretionary in India, so it defaults to zero and stays operator-controlled. */
 export const POS_MAX_SERVICE_CHARGE_PERCENT = 20;
@@ -58,6 +60,8 @@ export interface PosOutlet {
   outletId: number;
   name: string;
   locality: string;
+  /** GST the restaurant charges, in basis points; 0 when it charges none. */
+  taxRateBps: number;
   menu: PosMenuItem[];
 }
 
@@ -103,6 +107,15 @@ export interface PosPayment {
   settledAt: string;
 }
 
+/** Who sits at a seat, so the bill or their share can be texted to them. */
+export interface PosGuest {
+  /** 1-based, matching "Guest N" in the split. */
+  seat: number;
+  name: string;
+  /** `+91` and ten digits, or null when only a name was taken. */
+  phone: string | null;
+}
+
 export interface PosTableSession {
   sessionId: string;
   outletId: number;
@@ -110,6 +123,10 @@ export interface PosTableSession {
   tableId: string;
   guestCount: number;
   serverName: string;
+  /** Sorted by seat. A seat above the guest count is kept but not used. */
+  guests: PosGuest[];
+  /** Captured when the table opens, like line prices, so a settings change never alters an open bill. */
+  taxRateBps: number;
   openedAt: string;
   status: PosSessionStatus;
   lines: PosOrderLine[];
@@ -134,6 +151,9 @@ export interface PosBill {
   serviceCharge: number;
   cgst: number;
   sgst: number;
+  /** Half of the table's rate each, as charged within one state. */
+  cgstRateBps: number;
+  sgstRateBps: number;
   taxTotal: number;
   roundOff: number;
   grandTotal: number;
@@ -197,8 +217,9 @@ export interface PosGuestSplitShare {
   payableAmount: number;
 }
 
-const CGST_BASIS_POINTS = Math.round(POS_CGST_RATE * 10000);
-const SGST_BASIS_POINTS = Math.round(POS_SGST_RATE * 10000);
+function isTaxRate(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= POS_MAX_TAX_BPS;
+}
 
 /**
  * Non-negative integer division rounded half up. Bill math runs in integer paise through this,
@@ -299,7 +320,9 @@ export function openTableSession(
     tableId: string;
     guestCount: number;
     serverName: string;
+    taxRateBps: number;
     shiftId?: string | null;
+    leadGuest?: { name: string; phone: string };
   },
   floor: readonly PosTableSession[] = []
 ): PosTableSession {
@@ -321,6 +344,9 @@ export function openTableSession(
   if (serverName.length < 2 || serverName.length > 40) {
     throw new Error("Enter the steward or server name.");
   }
+  if (!isTaxRate(input.taxRateBps)) {
+    throw new Error("This restaurant's tax rate is not usable.");
+  }
   const occupied = floor.some(
     (candidate) =>
       candidate.status === "OPEN" &&
@@ -338,6 +364,8 @@ export function openTableSession(
     tableId: input.tableId,
     guestCount: input.guestCount,
     serverName,
+    guests: input.leadGuest ? guestList([], 1, input.leadGuest) : [],
+    taxRateBps: input.taxRateBps,
     openedAt: new Date().toISOString(),
     status: "OPEN",
     lines: [],
@@ -351,6 +379,51 @@ export function openTableSession(
     mergedIntoSessionId: null,
     revision: 0,
   };
+}
+
+/**
+ * An Indian mobile number as `+91XXXXXXXXXX`, from how people actually say it: with or without
+ * +91, 91 or a leading 0, and with spaces or dashes. Landlines and short numbers give null.
+ */
+export function normalizeIndianMobile(raw: string): string | null {
+  const compact = raw.trim().replace(/[\s\-().]/g, "");
+  const match = /^(?:\+91|91|0)?([6-9]\d{9})$/.exec(compact);
+  return match ? `+91${match[1]}` : null;
+}
+
+function guestList(
+  guests: readonly PosGuest[],
+  seat: number,
+  input: { name: string; phone: string }
+): PosGuest[] {
+  const name = input.name.trim().replace(/\s+/g, " ");
+  if (name.length > POS_MAX_GUEST_NAME_LENGTH) {
+    throw new Error(`Keep the guest name under ${POS_MAX_GUEST_NAME_LENGTH} characters.`);
+  }
+  const rawPhone = input.phone.trim();
+  const phone = rawPhone ? normalizeIndianMobile(rawPhone) : null;
+  if (rawPhone && !phone) {
+    throw new Error("Enter a 10-digit Indian mobile number.");
+  }
+  const others = guests.filter((guest) => guest.seat !== seat);
+  // Clearing both fields forgets the guest rather than keeping an empty record.
+  if (!name && !phone) return others;
+  return [...others, { seat, name, phone }].sort((a, b) => a.seat - b.seat);
+}
+
+/** Record or clear the name and mobile number of the guest in one seat. */
+export function setTableGuest(
+  session: PosTableSession,
+  seat: number,
+  input: { name: string; phone: string }
+): PosTableSession {
+  if (session.status !== "OPEN" && session.status !== "SETTLED") {
+    throw new Error("This table is no longer on the floor.");
+  }
+  if (!Number.isSafeInteger(seat) || seat < 1 || seat > session.guestCount) {
+    throw new Error(`Pick a guest between 1 and ${session.guestCount}.`);
+  }
+  return { ...session, guests: guestList(session.guests, seat, input) };
 }
 
 export function addItemToSession(
@@ -582,6 +655,13 @@ export function mergeTableSessions(
   const mergedTarget: PosTableSession = {
     ...target,
     guestCount: Math.min(target.guestCount + source.guestCount, POS_MAX_GUESTS),
+    // The source party takes the seats after the destination's own guests.
+    guests: [
+      ...target.guests.filter((guest) => guest.seat <= target.guestCount),
+      ...source.guests
+        .map((guest) => ({ ...guest, seat: guest.seat + target.guestCount }))
+        .filter((guest) => guest.seat <= POS_MAX_GUESTS),
+    ].sort((a, b) => a.seat - b.seat),
     lines: [...target.lines, ...movedLines],
     voids: [...target.voids, ...source.voids],
     tickets: [...target.tickets, ...movedTickets],
@@ -591,6 +671,7 @@ export function mergeTableSessions(
   const mergedSource: PosTableSession = {
     ...source,
     status: "MERGED",
+    guests: [],
     lines: [],
     voids: [],
     tickets: [],
@@ -637,7 +718,8 @@ export function calculateItemizedSplit(
 
   return weights.map((_, index) => ({
     guestIndex: index + 1,
-    guestLabel: `Guest ${index + 1}`,
+    guestLabel:
+      session.guests.find((guest) => guest.seat === index + 1)?.name || `Guest ${index + 1}`,
     itemsSubtotal: paiseToRupees(itemsPaise[index]),
     taxAndChargesShare: paiseToRupees(payableRupees[index] * 100 - itemsPaise[index]),
     payableAmount: payableRupees[index],
@@ -795,11 +877,23 @@ function computeBillPaise(session: PosTableSession) {
   const discountedBase = Math.max(0, subtotal - discountAmount);
   const serviceCharge = divideRounded(discountedBase * session.serviceChargePercent, 100);
   const taxableValue = discountedBase + serviceCharge;
-  const cgst = divideRounded(taxableValue * CGST_BASIS_POINTS, 10000);
-  const sgst = divideRounded(taxableValue * SGST_BASIS_POINTS, 10000);
+  const cgstRateBps = Math.floor(session.taxRateBps / 2);
+  const sgstRateBps = session.taxRateBps - cgstRateBps;
+  const cgst = divideRounded(taxableValue * cgstRateBps, 10000);
+  const sgst = divideRounded(taxableValue * sgstRateBps, 10000);
   const payable = taxableValue + cgst + sgst;
   const grandTotalRupees = divideRounded(payable, 100);
-  return { subtotal, discountAmount, serviceCharge, cgst, sgst, payable, grandTotalRupees };
+  return {
+    subtotal,
+    discountAmount,
+    serviceCharge,
+    cgst,
+    sgst,
+    cgstRateBps,
+    sgstRateBps,
+    payable,
+    grandTotalRupees,
+  };
 }
 
 /** Compute the printable bill. Tax applies after discount and on any service charge. */
@@ -815,6 +909,8 @@ export function calculatePosBill(session: PosTableSession): PosBill {
     serviceCharge: paiseToRupees(paise.serviceCharge),
     cgst: paiseToRupees(paise.cgst),
     sgst: paiseToRupees(paise.sgst),
+    cgstRateBps: paise.cgstRateBps,
+    sgstRateBps: paise.sgstRateBps,
     taxTotal: paiseToRupees(paise.cgst + paise.sgst),
     roundOff: paiseToRupees(grandTotal * 100 - paise.payable),
     grandTotal,
@@ -1062,6 +1158,26 @@ function keepOpenAndNewest(sessions: PosTableSession[]): PosTableSession[] {
   return sessions.filter((session) => session.status === "OPEN" || keptClosed.has(session));
 }
 
+/** Malformed entries are dropped one by one, so a bad phone never costs the table its bill. */
+function restoreGuests(raw: unknown): PosGuest[] {
+  if (!Array.isArray(raw)) return [];
+  const bySeat = new Map<number, PosGuest>();
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const { seat, name, phone } = entry;
+    if (!Number.isSafeInteger(seat) || (seat as number) < 1 || (seat as number) > POS_MAX_GUESTS) {
+      continue;
+    }
+    if (bySeat.has(seat as number)) continue;
+    const cleanName =
+      typeof name === "string" ? name.trim().slice(0, POS_MAX_GUEST_NAME_LENGTH) : "";
+    const cleanPhone = typeof phone === "string" ? normalizeIndianMobile(phone) : null;
+    if (!cleanName && !cleanPhone) continue;
+    bySeat.set(seat as number, { seat: seat as number, name: cleanName, phone: cleanPhone });
+  }
+  return [...bySeat.values()].sort((a, b) => a.seat - b.seat);
+}
+
 function restorePosSession(entry: unknown): PosTableSession[] {
   if (!isRecord(entry)) return [];
   const {
@@ -1071,6 +1187,8 @@ function restorePosSession(entry: unknown): PosTableSession[] {
     tableId,
     guestCount,
     serverName,
+    guests,
+    taxRateBps,
     openedAt,
     status,
     lines,
@@ -1198,6 +1316,8 @@ function restorePosSession(entry: unknown): PosTableSession[] {
       tableId,
       guestCount: Math.min(Math.max(guestCount as number, 1), POS_MAX_GUESTS),
       serverName,
+      guests: restoreGuests(guests),
+      taxRateBps: isTaxRate(taxRateBps) ? taxRateBps : LEGACY_TAX_BPS,
       openedAt,
       status,
       lines: restoredLines,

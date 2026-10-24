@@ -107,10 +107,11 @@ async function loadDishes(restaurantIds: string[]): Promise<CatalogDish[]> {
 
 async function billableRestaurants(
   userId: string
-): Promise<{ id: string; outletId: number; name: string; city: string }[]> {
+): Promise<{ id: string; outletId: number; name: string; city: string; taxRateBps: number }[]> {
   // A suspended restaurant cannot bill; drafts can, so dine-in can start before going online.
   const found = await rows<Row>(
-    `SELECT r.id, r.pos_outlet_id, r.name, r.city FROM managed_restaurants r
+    `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps
+     FROM managed_restaurants r
      WHERE r.status <> 'suspended'
        AND ($2::boolean OR EXISTS (
          SELECT 1 FROM restaurant_memberships m WHERE m.restaurant_id = r.id AND m.user_id = $1))
@@ -122,6 +123,8 @@ async function billableRestaurants(
     outletId: Number(row.pos_outlet_id),
     name: String(row.name),
     city: String(row.city),
+    // The same setting online orders use, so a table and an online order cost the same.
+    taxRateBps: Number(row.tax_enabled) === 1 ? Number(row.tax_rate_bps) : 0,
   }));
 }
 
@@ -133,6 +136,7 @@ export async function listPosOutlets(userId: string): Promise<PosOutlet[]> {
     outletId: restaurant.outletId,
     name: restaurant.name,
     locality: restaurant.city,
+    taxRateBps: restaurant.taxRateBps,
     menu: dishes
       .filter((dish) => dish.orderable && dish.restaurantId === restaurant.id)
       .map((dish) => dish.item),
@@ -144,6 +148,8 @@ export interface PosPriceBook {
   outlets: Map<number, string>;
   /** Current whole-rupee price per outlet and terminal item id, orderable or not. */
   priceOf(outletId: number, itemId: string): number | null;
+  /** The restaurant's tax rate now, for tables the server has not seen before. */
+  taxRateOf(outletId: number): number;
 }
 
 /**
@@ -157,8 +163,10 @@ export async function loadPosPriceBook(userId: string): Promise<PosPriceBook> {
   for (const dish of await loadDishes([...outletOf.keys()])) {
     prices.set(`${outletOf.get(dish.restaurantId)}:${dish.item.itemId}`, dish.item.price);
   }
+  const taxRates = new Map(restaurants.map((restaurant) => [restaurant.outletId, restaurant.taxRateBps]));
   return {
     outlets: new Map(restaurants.map((restaurant) => [restaurant.outletId, restaurant.name])),
     priceOf: (outletId, itemId) => prices.get(`${outletId}:${itemId}`) ?? null,
+    taxRateOf: (outletId) => taxRates.get(outletId) ?? 0,
   };
 }

@@ -148,6 +148,10 @@ CREATE TABLE IF NOT EXISTS pos_sessions (
   revision INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS pos_sessions_user_idx ON pos_sessions(user_id, opened_at DESC);
+-- Names and mobile numbers guests gave at the table, so their bill can be texted to them.
+ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS guests_json TEXT NOT NULL DEFAULT '[]';
+-- Rows from before the rate was per restaurant were all billed at 5% GST.
+ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS tax_rate_bps INTEGER NOT NULL DEFAULT 500;
 
 CREATE TABLE IF NOT EXISTS pos_lines (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

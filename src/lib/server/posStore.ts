@@ -12,13 +12,17 @@ import { getClaimCode, recordSettledBills } from "./dineInStore";
 const CUSTOM_ITEM_PREFIX = "custom_";
 const MAX_CUSTOM_PRICE = 100000;
 
-type CapturedPrices = Map<string, { itemId: string; unitPrice: number }>;
+interface CapturedPrices {
+  lines: Map<string, { itemId: string; unitPrice: number }>;
+  taxRates: Map<string, number>;
+}
 
 /**
  * A terminal may have been offline for a whole service, so its payload is never trusted for
  * money. A line the server already holds keeps the price it was captured at, so a menu edit
  * mid-meal never changes an open bill; a new line takes the restaurant's current price. Only
  * genuinely off-menu items keep the operator's price, within the range the terminal allows.
+ * The tax rate follows the same rule per table.
  */
 function repriceSession(
   session: PosTableSession,
@@ -31,6 +35,7 @@ function repriceSession(
   }
   return {
     ...session,
+    taxRateBps: captured.taxRates.get(session.sessionId) ?? prices.taxRateOf(session.outletId),
     // Receipts and claimed bills show this, so it comes from the restaurant, not the device.
     outletName,
     lines: session.lines.map((line) => {
@@ -41,7 +46,7 @@ function repriceSession(
         }
         return { ...line, unitPrice: price };
       }
-      const stored = captured.get(line.lineId);
+      const stored = captured.lines.get(line.lineId);
       if (stored && stored.itemId === line.itemId) {
         return { ...line, unitPrice: stored.unitPrice };
       }
@@ -55,24 +60,34 @@ function repriceSession(
 }
 
 /** Read before any table is rewritten, so lines moved by a merge or transfer keep their price. */
-async function capturedLinePrices(
+async function capturedPrices(
   client: Queryable,
   userId: string,
-  lineIds: string[]
+  sessions: PosTableSession[]
 ): Promise<CapturedPrices> {
-  if (lineIds.length === 0) return new Map();
-  const found = await client.query<Record<string, unknown>>(
+  const lineIds = sessions.flatMap((session) => session.lines.map((line) => line.lineId));
+  const sessionIds = sessions.map((session) => session.sessionId);
+  if (sessionIds.length === 0) return { lines: new Map(), taxRates: new Map() };
+  // One transaction client runs one query at a time, so these go in turn.
+  const lines = await client.query<Record<string, unknown>>(
     `SELECT l.line_id, l.item_id, l.unit_price FROM pos_lines l
      JOIN pos_sessions s ON s.id = l.session_id
      WHERE s.user_id = $1 AND l.line_id = ANY($2::text[])`,
     [userId, lineIds]
   );
-  return new Map(
-    found.rows.map((row) => [
-      String(row.line_id),
-      { itemId: String(row.item_id), unitPrice: Number(row.unit_price) },
-    ])
+  const tables = await client.query<Record<string, unknown>>(
+    "SELECT id, tax_rate_bps FROM pos_sessions WHERE user_id = $1 AND id = ANY($2::text[])",
+    [userId, sessionIds]
   );
+  return {
+    lines: new Map(
+      lines.rows.map((row) => [
+        String(row.line_id),
+        { itemId: String(row.item_id), unitPrice: Number(row.unit_price) },
+      ])
+    ),
+    taxRates: new Map(tables.rows.map((row) => [String(row.id), Number(row.tax_rate_bps)])),
+  };
 }
 
 /** Thrown when a device edited a table that moved on underneath it; reloading resolves it. */
@@ -110,8 +125,8 @@ async function writeSession(
     `INSERT INTO pos_sessions (id, user_id, shift_id, outlet_id, outlet_name, table_id, guest_count,
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
        merged_into_session_id, payment_method, payment_amount_tendered, payment_change_due,
-       payment_settled_at, synced_at, revision)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+       payment_settled_at, synced_at, revision, guests_json, tax_rate_bps)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
     [
       session.sessionId,
       userId,
@@ -133,6 +148,8 @@ async function writeSession(
       session.payment?.settledAt ?? null,
       new Date().toISOString(),
       revision,
+      JSON.stringify(session.guests),
+      session.taxRateBps,
     ]
   );
 
@@ -222,11 +239,7 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
       );
     }
 
-    const captured = await capturedLinePrices(
-      client,
-      userId,
-      incoming.flatMap((session) => session.lines.map((line) => line.lineId))
-    );
+    const captured = await capturedPrices(client, userId, incoming);
     for (const session of incoming) {
       // Each table is all-or-nothing on its own: a failure after writeSession has deleted
       // the old rows must not commit a half-written table alongside the accepted ones.
@@ -256,6 +269,15 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
     if (code) state.claimCodes[session.sessionId] = code;
   }
   return state;
+}
+
+/** The column is validated again by restorePosSessions; this only has to survive bad JSON. */
+function parseGuests(value: unknown): unknown {
+  try {
+    return JSON.parse(String(value ?? "[]"));
+  } catch {
+    return [];
+  }
 }
 
 export async function loadPosState(
@@ -308,6 +330,8 @@ export async function loadPosState(
     tableId: String(row.table_id),
     guestCount: Number(row.guest_count),
     serverName: String(row.server_name),
+    guests: parseGuests(row.guests_json),
+    taxRateBps: Number(row.tax_rate_bps),
     openedAt: String(row.opened_at),
     status: String(row.status),
     discountPercent: Number(row.discount_percent),

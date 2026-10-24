@@ -1095,7 +1095,7 @@ function RestaurantFields({
           ["deliveryEnabled", "Delivery"],
           ["takeawayEnabled", "Takeaway"],
           ["dineInEnabled", "Dine-in"],
-          ["taxEnabled", "Apply configured tax"],
+          ["taxEnabled", "Add this tax to online orders and table bills"],
         ] as const).map(([key, label]) => (
           <label key={key} className="flex items-center gap-2">
             <input type="checkbox" checked={form[key]} onChange={(event) => update(key, event.target.checked)} />

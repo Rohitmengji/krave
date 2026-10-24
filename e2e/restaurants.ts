@@ -8,8 +8,8 @@ export interface E2eRestaurant {
 }
 
 /**
- * The menu every e2e restaurant gets. Bills are whole rupees plus 5% GST, so Paneer Tikka
- * alone is ₹252 and Paneer Tikka with Chicken Kari (Full) is ₹378.
+ * The menu every e2e restaurant gets. The restaurant charges 5% GST (a restaurant's own setting;
+ * new ones charge none), so Paneer Tikka alone is ₹252 and with Chicken Kari (Full) is ₹378.
  */
 const MENU = [
   { name: "Paneer Tikka", pricePaise: 24_000, dietaryTags: ["vegetarian"] },
@@ -44,7 +44,14 @@ export async function createRestaurant(
     return response.json();
   };
 
-  const { restaurant } = await post("/api/owner", { name, slug, city: "Wadi", state: "Karnataka" });
+  const { restaurant } = await post("/api/owner", {
+    name,
+    slug,
+    city: "Wadi",
+    state: "Karnataka",
+    taxEnabled: true,
+    taxRateBps: 500,
+  });
   const { category } = await post(`/api/owner/${restaurant.id}/menu`, { type: "category", name: "Mains" });
   for (const item of MENU) {
     await post(`/api/owner/${restaurant.id}/menu`, {

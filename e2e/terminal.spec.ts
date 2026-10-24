@@ -91,6 +91,53 @@ test.describe("Dine-in terminal", () => {
     await expect(ticket).toContainText("Paneer Tikka");
   });
 
+  test("takes guests' names and numbers and texts each one their share", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Guests");
+    await page.getByTestId("pos-table-T3").click();
+    await page.getByLabel("Number of guests").fill("2");
+    await page.getByTestId("pos-lead-guest-name").fill("Ramesh");
+    await page.getByTestId("pos-lead-guest-phone").fill("12345");
+    await page.getByTestId("pos-confirm-open-table").click();
+    // A number that cannot be texted is refused before the table opens.
+    await expect(page.getByRole("dialog", { name: "Seat guests" })).toContainText("10-digit");
+    await page.getByTestId("pos-lead-guest-phone").fill("+91 98765-43210");
+    await page.getByTestId("pos-confirm-open-table").click();
+    await expect(page.getByTestId("pos-lead-guest")).toHaveText("Guest: Ramesh · 98765 43210");
+
+    await addDishAndFire(page, PANEER);
+    await addDishAndFire(page, KARI_FULL);
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
+    const whole = page.getByTestId("pos-sms-bill");
+    await expect(whole).toContainText("1 SMS");
+    expect(decodeURIComponent((await whole.getAttribute("href")) ?? "")).toBe(
+      `sms:+919876543210?&body=${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378. Thank you!`
+    );
+
+    await page.getByTestId("pos-open-split").click();
+    const split = page.getByRole("dialog", { name: "Split bill by guest" });
+    await split.getByLabel("Assign Paneer Tikka").selectOption({ label: "Ramesh only" });
+    await expect(split.getByTestId("pos-split-guest-1")).toContainText("₹315");
+    await expect(split.getByTestId("pos-split-guest-2")).toContainText("₹63");
+
+    await split.getByTestId("pos-guest-name-2").fill("Sunita");
+    await split.getByTestId("pos-guest-phone-2").fill("91234 56789");
+    await split.getByTestId("pos-guest-save-2").click();
+    const share = split.getByTestId("pos-guest-sms-2");
+    await expect(share).toContainText("SMS ₹63");
+    expect(decodeURIComponent((await share.getAttribute("href")) ?? "")).toContain(
+      "Hi Sunita, the bill for table T3 is Rs.378 for 2 guests. Your share is Rs.63."
+    );
+    await split.getByTestId("pos-close-split").click();
+
+    // The guests are part of the table, so they come back after a reload.
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByLabel("Outlet").selectOption({ label: restaurant.name });
+    await page.getByTestId("pos-table-T3").click();
+    await expect(page.getByTestId("pos-lead-guest")).toContainText("Ramesh");
+    await page.getByTestId("pos-open-split").click();
+    await expect(page.getByTestId("pos-guest-name-2")).toHaveValue("Sunita");
+  });
+
   test("merges one table into another and frees the source", async ({ page }) => {
     await freshTerminal(page, "Merge");
     await openTable(page, "T1");

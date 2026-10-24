@@ -9,6 +9,8 @@ export const TEST_OUTLETS: PosOutlet[] = RESTAURANTS_DATA.map((restaurant) => ({
   outletId: restaurant.resId,
   name: restaurant.name,
   locality: restaurant.locality,
+  // 5% GST, so the engine tests keep exercising tax and its rounding.
+  taxRateBps: 500,
   menu: restaurant.menus.flatMap((menu) =>
     menu.categories.flatMap((category) =>
       category.items.map(
@@ -26,8 +28,12 @@ export const TEST_OUTLETS: PosOutlet[] = RESTAURANTS_DATA.map((restaurant) => ({
 }));
 
 /** The outlet fields openTableSession and openShift take. */
-export function outletInput(outlet: PosOutlet): { outletId: number; outletName: string } {
-  return { outletId: outlet.outletId, outletName: outlet.name };
+export function outletInput(outlet: PosOutlet): {
+  outletId: number;
+  outletName: string;
+  taxRateBps: number;
+} {
+  return { outletId: outlet.outletId, outletName: outlet.name, taxRateBps: outlet.taxRateBps };
 }
 
 export const OUTLET = outletInput(TEST_OUTLETS[0]);

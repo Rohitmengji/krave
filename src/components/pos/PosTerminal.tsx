@@ -43,6 +43,7 @@ import {
   setLineNote,
   setLineQuantity,
   setSessionCharges,
+  setTableGuest,
   settleSession,
   summarizeShift,
   transferTableSession,
@@ -57,6 +58,8 @@ import {
 } from "@/lib/pos/posEngine";
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
+import { billSmsText } from "@/lib/pos/billSms";
+import { BillSmsLink, displayMobile, PosGuestCard } from "./PosGuestCard";
 
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
 
@@ -193,6 +196,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const [openTableForm, setOpenTableForm] = useState<{ tableId: string } | null>(null);
   const [guestCount, setGuestCount] = useState(2);
   const [serverName, setServerName] = useState("Front Desk");
+  const [leadGuestName, setLeadGuestName] = useState("");
+  const [leadGuestPhone, setLeadGuestPhone] = useState("");
 
   const [voidTarget, setVoidTarget] = useState<{ lineId: string; name: string } | null>(null);
   const [voidReason, setVoidReason] = useState("");
@@ -267,7 +272,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           setSeatHandoff(handoff);
           setOutletId(handoff.resId);
           setGuestCount(handoff.guests);
-          setServerName(handoff.guestName);
+          setLeadGuestName(handoff.guestName);
         }
       }
     } catch {
@@ -443,6 +448,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     [receiptSession]
   );
 
+  const receiptSmsGuests = (receiptSession?.guests ?? []).flatMap((guest) =>
+    guest.phone && receiptSession && guest.seat <= receiptSession.guestCount
+      ? [{ seat: guest.seat, name: guest.name, phone: guest.phone }]
+      : []
+  );
+
   const shift = useMemo(
     () => summarizeShift(sessions.filter((session) => session.outletId === outletId)),
     [sessions, outletId]
@@ -462,6 +473,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
   const pendingCount =
     activeSession?.lines.filter((line) => line.kotNumber === null).length ?? 0;
+
+  const seatedGuests =
+    activeSession?.guests.filter((guest) => guest.seat <= activeSession.guestCount) ?? [];
+  const leadGuest = seatedGuests.find((guest) => guest.seat === 1);
+  // The whole bill goes to whoever is paying; the lead guest first, else anyone with a number.
+  const smsGuest = seatedGuests.find((guest) => guest.phone) ?? null;
 
   function run(action: () => void) {
     try {
@@ -490,6 +507,24 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     setTimeout(() => setNotice((current) => (current === message ? null : current)), 2600);
   }
 
+  function saveGuest(
+    sessionId: string,
+    seat: number,
+    input: { name: string; phone: string }
+  ): string | null {
+    const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+    if (!session) return "This table is no longer on the floor.";
+    try {
+      const next = setTableGuest(session, seat, input);
+      setSessions((previous) =>
+        previous.map((candidate) => (candidate.sessionId === sessionId ? next : candidate))
+      );
+      return null;
+    } catch (caught) {
+      return caught instanceof Error ? caught.message : "Could not save this guest.";
+    }
+  }
+
   function handleOpenTable(event: React.FormEvent) {
     event.preventDefault();
     if (!openTableForm) return;
@@ -500,6 +535,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         tableId: openTableForm.tableId,
         guestCount,
         serverName,
+        taxRateBps: currentOutlet.taxRateBps,
+        leadGuest: { name: leadGuestName, phone: leadGuestPhone },
         shiftId: activeShift?.shiftId ?? null,
       });
       setSessions((previous) => [...previous, session]);
@@ -774,7 +811,11 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                           setActiveTableId(table.tableId);
                         } else {
                           // A booking being seated already states its party size; don't overwrite it.
-                          if (!seatHandoff) setGuestCount(Math.min(table.seats, 4));
+                          if (!seatHandoff) {
+                            setGuestCount(Math.min(table.seats, 4));
+                            setLeadGuestName("");
+                          }
+                          setLeadGuestPhone("");
                           setOpenTableForm({ tableId: table.tableId });
                         }
                       }}
@@ -798,6 +839,11 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                           <div className="text-[11px] font-bold text-emerald-300">
                             ₹{runningTotal}
                           </div>
+                          {session.guests[0]?.name && (
+                            <div className="truncate text-[10px] opacity-75">
+                              {session.guests[0].name}
+                            </div>
+                          )}
                           <div className="flex items-center gap-1 text-[10px] opacity-60">
                             <Clock className="h-3 w-3" />
                             {formatElapsed(session.openedAt, now)}
@@ -970,6 +1016,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <span className="text-[11px] opacity-60">{activeSession.serverName}</span>
             )}
           </div>
+          {leadGuest && (
+            <p data-testid="pos-lead-guest" className="text-[11px] opacity-75">
+              Guest: {leadGuest.name || "Unnamed"}
+              {leadGuest.phone ? ` · ${displayMobile(leadGuest.phone)}` : ""}
+            </p>
+          )}
 
           {error && (
             <p role="alert" className="rounded-xl bg-rose-500/15 px-3 py-2 text-xs text-rose-300">
@@ -1216,14 +1268,18 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     <dd>₹{formatMoney(bill.serviceCharge)}</dd>
                   </div>
                 )}
-                <div className="flex justify-between opacity-75">
-                  <dt>CGST 2.5%</dt>
-                  <dd>₹{formatMoney(bill.cgst)}</dd>
-                </div>
-                <div className="flex justify-between opacity-75">
-                  <dt>SGST 2.5%</dt>
-                  <dd>₹{formatMoney(bill.sgst)}</dd>
-                </div>
+                {bill.cgstRateBps + bill.sgstRateBps > 0 && (
+                  <>
+                    <div className="flex justify-between opacity-75">
+                      <dt>CGST {bill.cgstRateBps / 100}%</dt>
+                      <dd>₹{formatMoney(bill.cgst)}</dd>
+                    </div>
+                    <div className="flex justify-between opacity-75">
+                      <dt>SGST {bill.sgstRateBps / 100}%</dt>
+                      <dd>₹{formatMoney(bill.sgst)}</dd>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between opacity-60">
                   <dt>Round off</dt>
                   <dd>₹{formatMoney(bill.roundOff)}</dd>
@@ -1288,6 +1344,28 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     Settle
                   </button>
                 </div>
+
+                {smsGuest?.phone && activeSession.lines.length > 0 && (
+                  <BillSmsLink
+                    phone={smsGuest.phone}
+                    testId="pos-sms-bill"
+                    label={`SMS bill ₹${bill.grandTotal} to ${smsGuest.name || displayMobile(smsGuest.phone)}`}
+                    text={billSmsText({
+                      outletName: activeSession.outletName,
+                      tableId: activeSession.tableId,
+                      guestName: smsGuest.name,
+                      total: bill.grandTotal,
+                      guestCount: activeSession.guestCount,
+                      share: null,
+                      paid: false,
+                    })}
+                  />
+                )}
+                {activeSession.guestCount > 1 && activeSession.lines.length > 0 && (
+                  <p className="text-[11px] opacity-60">
+                    Paying separately? Split Bill shows each guest's share and texts it to them.
+                  </p>
+                )}
               </div>
 
               {activeSession.tickets.length > 0 && (
@@ -1382,6 +1460,38 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
               />
             </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block space-y-1 text-xs">
+                <span className="opacity-70">Guest name (optional)</span>
+                <input
+                  type="text"
+                  data-testid="pos-lead-guest-name"
+                  maxLength={40}
+                  autoComplete="off"
+                  value={leadGuestName}
+                  onChange={(event) => setLeadGuestName(event.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                />
+              </label>
+              <label className="block space-y-1 text-xs">
+                <span className="opacity-70">Mobile (optional)</span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  data-testid="pos-lead-guest-phone"
+                  maxLength={16}
+                  autoComplete="off"
+                  value={leadGuestPhone}
+                  onChange={(event) => setLeadGuestPhone(event.target.value)}
+                  placeholder="10 digits"
+                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                />
+              </label>
+            </div>
+            <p className="text-[11px] opacity-60">
+              Ask first. The number is used only to text this table its bill.
+            </p>
 
             {error && (
               <p role="alert" className="text-xs text-rose-400">
@@ -1585,7 +1695,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               >
                 Done
               </button>
-            </div>          </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1600,7 +1711,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           <div className="pos-receipt my-auto w-full max-w-xs rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
             <div className="text-center">
               <div className="text-sm font-black">{receiptSession.outletName}</div>
-              <div>{receiptSession.status === "SETTLED" ? "TAX INVOICE" : "BILL"}</div>
+              <div>{receiptSession.status === "SETTLED" ? "BILL · PAID" : "BILL"}</div>
               <div>
                 Table {receiptSession.tableId} · {receiptSession.guestCount} guests
               </div>
@@ -1650,20 +1761,113 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   <span>{formatMoney(receiptBill.serviceCharge)}</span>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span>CGST 2.5%</span>
-                <span>{formatMoney(receiptBill.cgst)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>SGST 2.5%</span>
-                <span>{formatMoney(receiptBill.sgst)}</span>
-              </div>
+              {receiptBill.cgstRateBps + receiptBill.sgstRateBps > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span>CGST {receiptBill.cgstRateBps / 100}%</span>
+                    <span>{formatMoney(receiptBill.cgst)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>SGST {receiptBill.sgstRateBps / 100}%</span>
+                    <span>{formatMoney(receiptBill.sgst)}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
                 <span>Round off</span>
                 <span>{formatMoney(receiptBill.roundOff)}</span>
               </div>
               <div className="flex justify-between border-t border-black/40 pt-1 text-sm font-black">
-        
+                <span>TOTAL</span>
+                <span>₹{receiptBill.grandTotal}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Per guest</span>
+                <span>₹{receiptBill.perGuest}</span>
+              </div>
+            </div>
+
+            {receiptSession.payment && (
+              <>
+                <hr className="my-2 border-dashed border-black/40" />
+                <div className="space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>Paid by</span>
+                    <span>{receiptSession.payment.method}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Tendered</span>
+                    <span>₹{receiptSession.payment.amountTendered}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Change</span>
+                    <span>₹{receiptSession.payment.changeDue}</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <p className="mt-3 text-center">Thank you! Please visit again.</p>
+            {receiptSession.status === "SETTLED" && claimCodes[receiptSession.sessionId] && (
+              <div className="mt-3 border-t border-dashed border-black/40 pt-2 text-center">
+                <div className="text-[9px] uppercase tracking-wide">Add this bill to your Krave account</div>
+                <div
+                  data-testid="pos-receipt-claim-code"
+                  className="text-base font-black tracking-[0.2em]"
+                >
+                  {claimCodes[receiptSession.sessionId]}
+                </div>
+                <div className="text-[9px]">Enter it under Your Orders. Valid for 30 days.</div>
+              </div>
+            )}
+            {receiptBill.taxTotal > 0 && (
+              <p className="mt-1 text-center text-[9px]">
+                Not a GST tax invoice: no GSTIN is on record for this restaurant.
+              </p>
+            )}
+
+            {receiptSmsGuests.length > 0 && (
+              <div className="pos-no-print mt-4 space-y-2">
+                {receiptSmsGuests.map((guest) => (
+                  <BillSmsLink
+                    key={guest.seat}
+                    phone={guest.phone}
+                    testId={`pos-receipt-sms-${guest.seat}`}
+                    label={`SMS bill to ${guest.name || displayMobile(guest.phone)}`}
+                    text={billSmsText({
+                      outletName: receiptSession.outletName,
+                      tableId: receiptSession.tableId,
+                      guestName: guest.name,
+                      total: receiptBill.grandTotal,
+                      guestCount: receiptSession.guestCount,
+                      share: null,
+                      paid: receiptSession.status === "SETTLED",
+                    })}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="pos-no-print mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center justify-center gap-1 rounded-lg border border-black/20 py-2 font-bold"
+              >
+                <Printer className="h-3.5 w-3.5" /> Print
+              </button>
+              <button
+                type="button"
+                data-testid="pos-close-receipt"
+                onClick={() => setReceiptSessionId(null)}
+                className="flex items-center justify-center gap-1 rounded-lg bg-black py-2 font-bold text-white"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Interactive Guest Bill Splitter Modal */}
       {splitModalOpen && activeSession && bill && (
@@ -1680,7 +1884,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   Split Bill — Table {activeSession.tableId} ({activeSession.guestCount} Guests)
                 </h2>
                 <p className="text-xs opacity-65">
-                  Assign dishes to individual guests or keep them shared equally across the table
+                  Give each dish to one guest or share it. Add a guest&apos;s mobile number to text
+                  them their share from this phone.
                 </p>
               </div>
               <button
@@ -1719,9 +1924,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     className="rounded-lg border border-white/15 bg-[#121721] px-2.5 py-1.5 text-xs font-bold"
                   >
                     <option value={0}>Shared Equally (All Guests)</option>
-                    {Array.from({ length: activeSession.guestCount }, (_, idx) => (
-                      <option key={idx + 1} value={idx + 1}>
-                        Guest {idx + 1} Only
+                    {guestSplitShares.map((share) => (
+                      <option key={share.guestIndex} value={share.guestIndex}>
+                        {share.guestLabel} only
                       </option>
                     ))}
                   </select>
@@ -1729,23 +1934,18 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {guestSplitShares.map((share) => (
-                <div
-                  key={share.guestIndex}
-                  data-testid={`pos-split-guest-${share.guestIndex}`}
-                  className="rounded-xl border border-emerald-400/30 bg-[#0E131D] p-3"
-                >
-                  <div className="text-xs font-bold opacity-75">{share.guestLabel}</div>
-                  <div className="mt-1 text-lg font-black text-emerald-400">
-                    ₹{share.payableAmount}
-                  </div>
-                  <div className="mt-0.5 text-[10px] opacity-60">
-                    Food ₹{formatMoney(share.itemsSubtotal)} · Tax/Adj{" "}
-                    {share.taxAndChargesShare >= 0 ? "+" : ""}₹
-                    {formatMoney(share.taxAndChargesShare)}
-                  </div>
-                </div>
+                <PosGuestCard
+                  key={`${activeSession.sessionId}-${share.guestIndex}`}
+                  share={share}
+                  guest={activeSession.guests.find((guest) => guest.seat === share.guestIndex)}
+                  outletName={activeSession.outletName}
+                  tableId={activeSession.tableId}
+                  guestCount={activeSession.guestCount}
+                  total={bill.grandTotal}
+                  onSave={(input) => saveGuest(activeSession.sessionId, share.guestIndex, input)}
+                />
               ))}
             </div>
 
@@ -1841,71 +2041,6 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 );
               })}
             </ul>
-          </div>
-        </div>
-      )}        <span>TOTAL</span>
-                <span>₹{receiptBill.grandTotal}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Per guest</span>
-                <span>₹{receiptBill.perGuest}</span>
-              </div>
-            </div>
-
-            {receiptSession.payment && (
-              <>
-                <hr className="my-2 border-dashed border-black/40" />
-                <div className="space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>Paid by</span>
-                    <span>{receiptSession.payment.method}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Tendered</span>
-                    <span>₹{receiptSession.payment.amountTendered}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Change</span>
-                    <span>₹{receiptSession.payment.changeDue}</span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <p className="mt-3 text-center">Thank you! Please visit again.</p>
-            {receiptSession.status === "SETTLED" && claimCodes[receiptSession.sessionId] && (
-              <div className="mt-3 border-t border-dashed border-black/40 pt-2 text-center">
-                <div className="text-[9px] uppercase tracking-wide">Add this bill to your Krave account</div>
-                <div
-                  data-testid="pos-receipt-claim-code"
-                  className="text-base font-black tracking-[0.2em]"
-                >
-                  {claimCodes[receiptSession.sessionId]}
-                </div>
-                <div className="text-[9px]">Enter it under Your Orders. Valid for 30 days.</div>
-              </div>
-            )}
-            <p className="mt-1 text-center text-[9px]">
-              Offline demo terminal — not a government-registered tax invoice.
-            </p>
-
-            <div className="pos-no-print mt-4 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="flex items-center justify-center gap-1 rounded-lg border border-black/20 py-2 font-bold"
-              >
-                <Printer className="h-3.5 w-3.5" /> Print
-              </button>
-              <button
-                type="button"
-                data-testid="pos-close-receipt"
-                onClick={() => setReceiptSessionId(null)}
-                className="flex items-center justify-center gap-1 rounded-lg bg-black py-2 font-bold text-white"
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" /> Close
-              </button>
-            </div>
           </div>
         </div>
       )}

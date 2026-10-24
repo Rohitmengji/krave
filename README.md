@@ -333,6 +333,11 @@ API requests must come from the site's own origin.
   this browser; offline, it keeps billing from the device and syncs later. The server
   prices every line from the restaurant's menu, keeps the price a line was rung up at if the
   menu changes mid-meal, and refuses tables for a restaurant the account does not run.
+  Tax follows the restaurant's own setting in the owner workspace (the same one online orders
+  use; off by default), captured when the table opens. Staff can take each guest's name and
+  mobile number and text them the bill or their share of a split from the phone's own SIM:
+  an `sms:` link opens the messaging app with the text filled in, so nothing is sent through
+  a gateway and every message is sent by a person tapping Send.
 - Installable offline shell, so `/` and `/pos` reload without a network after one visit.
 - Account settings at `/account`: name and mobile number, email change confirmed by a link
   to the new address (the old one is told), password change that signs other devices out,

@@ -66,11 +66,21 @@ record, which the terminal consumes and clears immediately so a refresh cannot r
 
 `localStorage` remains the terminal's working copy, so a service can be billed with no network
 at all. When an account is signed in, changes are pushed to the database shortly after they
-settle, and the terminal polls the outlet floor about every 1.5 seconds so another waiter sees
-a new item without waiting for a refresh. A failed push leaves the queue on the device and
-the header says it is waiting to sync. Open tables belong to the outlet, not to the waiter
-who opened them: anyone who can bill that outlet loads and may add to the same floor. A
-device with no local floor adopts the outlet's stored one on load.
+settle, one push at a time (a second push in flight would be based on the revision the first
+is replacing, and be refused). The reply carries only the tables that were sent. A failed push
+leaves the queue on the device, the header says it is waiting to sync, and it retries every
+few seconds. Open tables belong to the outlet, not to the waiter who opened them: anyone who
+can bill that outlet loads and may add to the same floor.
+
+Each visible terminal polls `/api/webroutes/pos/floor`: every 2 seconds while anything on the
+floor changed in the last minute, every 10 seconds when it is quiet, and not at all while the
+screen is hidden. The poll returns one fingerprint row while nothing changed; when it moved, it
+returns each open table's revision and the terminal fetches only the tables it is behind on.
+Every poll is a function call and a database read, and the free Vercel and Neon plans have a
+monthly allowance, so the poll must stay small. A table this device has not pushed yet is never
+overwritten by a poll. When the server refuses a write (another phone changed the table at the
+same moment, or a dish was deleted), the terminal shows the server's table and lists the items
+that were not saved.
 
 The payload is never trusted for money. A line the server already holds keeps the price it
 was captured at; a new line is priced from the restaurant's menu in the database, including

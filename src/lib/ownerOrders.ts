@@ -47,6 +47,11 @@ export interface OwnerOrdersState {
   pending: string[];
   /** Text for the live region: new arrivals and the result of the owner's last change. */
   announcement: string;
+  /**
+   * Orders the owner just moved out of this view, with the `updatedAt` of that change. A poll
+   * that read the row before the change must not put the order back on screen.
+   */
+  departed: Record<string, string>;
 }
 
 export type OwnerOrdersAction =
@@ -71,6 +76,7 @@ export const initialOwnerOrders: OwnerOrdersState = {
   loadingMore: false,
   pending: [],
   announcement: "",
+  departed: {},
 };
 
 export function belongsToView(status: RestaurantOrderStatus, view: OwnerOrderView): boolean {
@@ -88,12 +94,15 @@ export function ownerOrdersReducer(state: OwnerOrdersState, action: OwnerOrdersA
       return { ...state, request: state.request + 1 };
     case "loaded": {
       if (action.request !== state.request) return state;
+      const isStale = (order: OwnerOrder) =>
+        state.departed[order.id] !== undefined && order.updatedAt <= state.departed[order.id];
+      const current = action.orders.filter((order) => !isStale(order));
       const known = new Set(state.orders.map((order) => order.id));
       const arrived = action.poll
-        ? action.orders.filter((order) => !known.has(order.id) && order.status === "placed").map((order) => order.orderNumber)
+        ? current.filter((order) => !known.has(order.id) && order.status === "placed").map((order) => order.orderNumber)
         : [];
       // A change in flight wins over a poll that read the row before the change landed.
-      const orders = action.orders.map((order) => {
+      const orders = current.map((order) => {
         const local = state.orders.find((existing) => existing.id === order.id);
         return local && local.updatedAt > order.updatedAt ? local : order;
       });
@@ -102,7 +111,11 @@ export function ownerOrdersReducer(state: OwnerOrdersState, action: OwnerOrdersA
           ? `New order #${arrived[0]}.`
           : `${arrived.length} new orders: ${arrived.map((number) => `#${number}`).join(", ")}.`
         : state.announcement;
-      return { ...state, load: "ready", error: null, orders, nextCursor: action.nextCursor, announcement };
+      // Remembered only while the server still returns the older row.
+      const departed = Object.fromEntries(
+        Object.entries(state.departed).filter(([id]) => action.orders.some((order) => order.id === id && isStale(order)))
+      );
+      return { ...state, load: "ready", error: null, orders, nextCursor: action.nextCursor, announcement, departed };
     }
     case "loadFailed":
       if (action.request !== state.request) return state;
@@ -126,15 +139,18 @@ export function ownerOrdersReducer(state: OwnerOrdersState, action: OwnerOrdersA
       return action.request !== state.request ? state : { ...state, loadingMore: false, error: action.message };
     case "changing":
       return state.pending.includes(action.id) ? state : { ...state, pending: [...state.pending, action.id], error: null };
-    case "changed":
+    case "changed": {
+      const stays = belongsToView(action.order.status, state.view);
       return {
         ...state,
         announcement: `Order #${action.order.orderNumber}: ${ORDER_STATUS_LABELS[action.order.status]}.`,
         pending: state.pending.filter((id) => id !== action.order.id),
-        orders: belongsToView(action.order.status, state.view)
+        orders: stays
           ? state.orders.map((order) => (order.id === action.order.id ? action.order : order))
           : state.orders.filter((order) => order.id !== action.order.id),
+        departed: stays ? state.departed : { ...state.departed, [action.order.id]: action.order.updatedAt },
       };
+    }
     case "changeFailed":
       return { ...state, pending: state.pending.filter((id) => id !== action.id), error: action.message };
   }

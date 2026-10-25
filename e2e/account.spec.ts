@@ -62,7 +62,7 @@ test.describe("Account settings", () => {
     await section.getByLabel("Current PIN").fill(PASSWORD);
     await section.getByLabel("New PIN", { exact: true }).fill("246811");
     await section.getByLabel("Type the new PIN again").fill("246811");
-    await section.getByRole("button", { name: "Change password" }).click();
+    await section.getByRole("button", { name: "Change PIN" }).click();
     await expect(section.getByRole("status")).toContainText("PIN changed");
     await expect.poll(() => subjectsFor(email)).toContain("Your KRAVE PIN was changed");
 

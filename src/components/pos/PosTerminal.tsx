@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -65,7 +65,7 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
-import { adoptRemoteFloor, FLOOR_POLL_MS, FLOOR_PUSH_MS } from "@/lib/pos/floorSync";
+import { usePosFloorSync } from "./usePosFloorSync";
 import { displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
 import { SendBill } from "./SendBill";
 import { PosReceiptPaper } from "./PosReceiptPaper";
@@ -214,18 +214,21 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const [seatHandoff, setSeatHandoff] = useState<SeatHandoff | null>(null);
   const [unavailableItemIds, setUnavailableItemIds] = useState<string[]>([]);
 
-  // localStorage stays the working copy; the server is the durable one when signed in.
-  const [syncAccount, setSyncAccount] = useState<string | null>(null);
-  const [syncState, setSyncState] = useState<"local" | "pending" | "synced" | "failed">("local");
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const syncRevisions = useRef(new Map<string, number>());
-  // What the server last accepted per table, so each sync sends only tables that changed;
-  // resending a whole day's bills on every tap made syncing slower as the day went on.
-  const syncedSnapshots = useRef(new Map<string, string>());
-  const syncedShift = useRef<string | null>(null);
-
   const [claimCodes, setClaimCodes] = useState<Record<string, string>>({});
   const [billNumbers, setBillNumbers] = useState<Record<string, number>>({});
+  // localStorage stays the working copy; the server is the durable one when signed in.
+  const { syncAccount, syncState, syncMessage } = usePosFloorSync({
+    hydrated,
+    outlets,
+    sessions,
+    setSessions,
+    activeShift,
+    setActiveShift,
+    setBillNumbers,
+    setClaimCodes,
+    setUnavailableItemIds,
+    announce,
+  });
   /** `sessionId:seat` of the guest whose name and mobile are being corrected. */
   const [editingGuest, setEditingGuest] = useState<string | null>(null);
   const [editingServerFor, setEditingServerFor] = useState<string | null>(null);
@@ -306,194 +309,6 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     const timer = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(timer);
   }, []);
-
-  // Adopt the account's stored floor when this device has nothing of its own yet.
-  useEffect(() => {
-    if (!hydrated) return;
-    let cancelled = false;
-    fetch("/api/webroutes/account/me", { signal: AbortSignal.timeout(8000) })
-      .then((response) => (response.ok ? response.json() : null))
-      .then(async (account) => {
-        if (cancelled || !account) return;
-        // The 86 list is outlet-wide, so the counter adopts it whether signed in or not.
-        if (Array.isArray(account.unavailableItemIds)) {
-          setUnavailableItemIds(
-            account.unavailableItemIds.filter((id: unknown): id is string => typeof id === "string")
-          );
-        }
-        if (!account.user) return;
-        setSyncAccount(account.user.displayName);
-        const response = await fetch("/api/webroutes/pos/state", {
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!response.ok || cancelled) return;
-        const state = await response.json();
-        const stored = restorePosSessions(JSON.stringify(state.sessions ?? [])).filter((session) =>
-          isKnownOutlet(session.outletId)
-        );
-        if (state.billNumbers) setBillNumbers(state.billNumbers);
-        if (state.claimCodes) setClaimCodes((current) => ({ ...current, ...state.claimCodes }));
-        setSessions((current) => {
-          const adopted = adoptRemoteFloor(
-            current,
-            stored,
-            syncRevisions.current,
-            syncedSnapshots.current
-          );
-          return adopted.changed ? adopted.sessions : current;
-        });
-        const storedShift = restorePosShift(JSON.stringify(state.shift ?? null));
-        const adoptableShift = storedShift && isKnownOutlet(storedShift.outletId) ? storedShift : null;
-        setActiveShift((current) => current ?? adoptableShift);
-        setSyncState("synced");
-      })
-      .catch(() => {
-        // Offline or signed out: the terminal keeps running from this device.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hydrated]);
-
-  // Push the queue after changes settle, so a burst of taps is one request.
-  useEffect(() => {
-    if (!hydrated || !syncAccount) return;
-    const changed = sessions.filter(
-      (session) => syncedSnapshots.current.get(session.sessionId) !== JSON.stringify(session)
-    );
-    const shiftJson = JSON.stringify(activeShift);
-    if (changed.length === 0 && shiftJson === syncedShift.current) return;
-    setSyncState("pending");
-    const timer = setTimeout(() => {
-      const payload = changed.map((session) => ({
-        ...session,
-        revision: syncRevisions.current.get(session.sessionId) ?? 0,
-      }));
-      fetch("/api/webroutes/pos/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ sessions: payload, shift: activeShift }),
-      })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Sync rejected.");
-          const result = await response.json();
-          // Revisions live outside React state so adopting them cannot retrigger this effect.
-          for (const stored of restorePosSessions(JSON.stringify(result.sessions ?? []))) {
-            syncRevisions.current.set(stored.sessionId, stored.revision);
-          }
-          const refused = new Set(
-            [...(result.conflicts ?? []), ...(result.rejected ?? [])].map(
-              (entry: { sessionId: string }) => entry.sessionId
-            )
-          );
-          for (const session of changed) {
-            if (!refused.has(session.sessionId)) {
-              syncedSnapshots.current.set(session.sessionId, JSON.stringify(session));
-            }
-          }
-          syncedShift.current = shiftJson;
-          setSyncState("synced");
-          if (result.claimCodes) {
-            setClaimCodes((current) => ({ ...current, ...result.claimCodes }));
-          }
-          if (result.billNumbers) {
-            setBillNumbers((current) => ({ ...current, ...result.billNumbers }));
-          }
-          // A conflict is recoverable by reloading; a rejection is not, so they read differently.
-          const conflict = result.conflicts?.[0];
-          const rejection = result.rejected?.[0];
-          if (conflict) {
-            // The other waiter moved first. Take their table instead of retrying a stale write.
-            const fresh = await fetch("/api/webroutes/pos/state", {
-              cache: "no-store",
-              signal: AbortSignal.timeout(8000),
-            });
-            if (fresh.ok) {
-              const state = await fresh.json();
-              const remote = restorePosSessions(JSON.stringify(state.sessions ?? []));
-              const forceIds = new Set<string>(
-                (result.conflicts ?? []).map((entry: { sessionId: string }) => entry.sessionId)
-              );
-              setSessions((current) => {
-                const adopted = adoptRemoteFloor(
-                  current,
-                  remote,
-                  syncRevisions.current,
-                  syncedSnapshots.current,
-                  forceIds
-                );
-                return adopted.changed ? adopted.sessions : current;
-              });
-              if (state.billNumbers) setBillNumbers((current) => ({ ...current, ...state.billNumbers }));
-            }
-          }
-          setSyncMessage(
-            conflict
-              ? `${conflict.reason} Showing the latest order.`
-              : rejection
-                ? `${result.rejected.length} table(s) could not be saved: ${rejection.reason}`
-                : null
-          );
-        })
-        .catch(() => {
-          setSyncState("failed");
-        });
-    }, FLOOR_PUSH_MS);
-    return () => clearTimeout(timer);
-  }, [sessions, activeShift, hydrated, syncAccount]);
-
-  // Other waiters write the same floor. Pull often, and immediately when this tab is visible again.
-  useEffect(() => {
-    if (!hydrated || !syncAccount) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const pull = async () => {
-      try {
-        const response = await fetch("/api/webroutes/pos/state", {
-          cache: "no-store",
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!response.ok || stopped) return;
-        const state = await response.json();
-        const remote = restorePosSessions(JSON.stringify(state.sessions ?? [])).filter((session) =>
-          isKnownOutlet(session.outletId)
-        );
-        if (state.billNumbers) setBillNumbers((current) => ({ ...current, ...state.billNumbers }));
-        if (state.claimCodes) setClaimCodes((current) => ({ ...current, ...state.claimCodes }));
-        setSessions((current) => {
-          const adopted = adoptRemoteFloor(
-            current,
-            remote,
-            syncRevisions.current,
-            syncedSnapshots.current
-          );
-          if (adopted.updatedTableIds.length > 0) {
-            const tables = [...new Set(adopted.updatedTableIds)].join(", ");
-            setNotice(`Another waiter updated table ${tables}.`);
-          }
-          return adopted.changed ? adopted.sessions : current;
-        });
-        setSyncState((current) => (current === "pending" ? current : "synced"));
-      } catch {
-        // A missed poll is not a failure: the next one, or the push, catches up.
-      }
-      if (!stopped && document.visibilityState === "visible") {
-        timer = setTimeout(() => void pull(), FLOOR_POLL_MS);
-      }
-    };
-    const onVisibility = () => {
-      clearTimeout(timer);
-      if (document.visibilityState === "visible") void pull();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    void pull();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [hydrated, syncAccount]);
 
   const currentOutlet = outlets.find((outlet) => outlet.outletId === outletId) ?? outlets[0];
   const menu = currentOutlet.menu;

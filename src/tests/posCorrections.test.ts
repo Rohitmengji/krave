@@ -130,7 +130,7 @@ describe.skipIf(!hasTestDatabase)("owner PIN and corrected bills on the server",
     );
     await expect(
       setPosOwnerPin(user.id, restaurantId, { pin: "4321", password: "wrong-password" }, "test")
-    ).rejects.toThrow(/password is incorrect/);
+    ).rejects.toThrow(/current PIN is incorrect/);
     await setPosOwnerPin(user.id, restaurantId, { pin: "4321", password: PASSWORD }, "test");
 
     await expect(confirmPosOwnerPin(user.id, { outletId: outlet.outletId, pin: "1234" })).rejects.toThrow(

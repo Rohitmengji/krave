@@ -197,8 +197,8 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
       await expect(
         verifyCredentials({ email: OWNER.email, password: "246813" }, "10.9.9.2")
       ).resolves.toMatchObject({ id: user.id });
-      // A reset link sent before the change cannot undo it.
-      await expect(resetPassword(earlierReset!.token, "someone-elses-pick")).rejects.toThrow(
+      // A reset link sent before the change cannot undo it, even with a valid PIN.
+      await expect(resetPassword(earlierReset!.token, "975310")).rejects.toThrow(
         /expired|already used/
       );
 
@@ -368,15 +368,18 @@ describe.skipIf(!hasTestDatabase)("account management (Postgres)", () => {
   describe("email confirmation", () => {
     it("emails a new account its confirmation link at sign-up", async () => {
       stubProductionMail();
+      // Sign-up asks for a name and a mobile number as well as the email and PIN.
       const response = await post("auth/register", {
         email: "fresh@krave.test",
         password: "246814",
+        displayName: "Fresh Owner",
+        phone: "98765 43210",
       });
       expect(response.status).toBe(201);
       expect((await response.json()).user).toMatchObject({
         email: "fresh@krave.test",
         emailVerified: false,
-        phone: null,
+        phone: "+919876543210",
       });
 
       await runAfterTasks();

@@ -84,7 +84,7 @@ import {
   markNotificationsRead,
   sweepScheduledOrders,
 } from "@/lib/server/accountStore";
-import { loadPosState, syncPosState } from "@/lib/server/posStore";
+import { loadFloorTables, loadFloorVersion, loadPosState, syncPosState } from "@/lib/server/posStore";
 import { listUnavailableItems, setDishAvailability } from "@/lib/server/menuStore";
 import {
   advanceDeliveryTicket,
@@ -363,6 +363,25 @@ export async function GET(
     const user = await currentUser(request);
     if (!user) return failed(null, "Sign in to sync this terminal.", 401);
     return NextResponse.json({ status: "success", ...(await loadPosState(user.id)) });
+  }
+
+  // Polled by every open terminal, so the common answer ("nothing changed") is one tiny row.
+  if (routePath === "/webroutes/pos/floor") {
+    const user = await currentUser(request);
+    if (!user) return failed(null, "Sign in to sync this terminal.", 401);
+    const idsParam = searchParams.get("ids");
+    if (idsParam !== null) {
+      const ids = idsParam
+        .split(",")
+        .filter((id) => /^[\w-]{1,80}$/.test(id))
+        .slice(0, 200);
+      return NextResponse.json({ status: "success", ...(await loadFloorTables(user, ids)) });
+    }
+    const since = searchParams.get("since");
+    return NextResponse.json({
+      status: "success",
+      ...(await loadFloorVersion(user, since && /^[0-9a-f]{32}$/.test(since) ? since : null)),
+    });
   }
 
   return NextResponse.json({ status: "error", message: "Endpoint not implemented." }, { status: 404 });

@@ -1,5 +1,11 @@
 import { one, rows, transaction, type Queryable } from "./pg";
-import { loadPosPriceBook, type PosPriceBook } from "./posCatalog";
+import {
+  BILLABLE_RESTAURANT_SQL,
+  billableOutletIds,
+  loadPosPriceBook,
+  type PosPriceBook,
+} from "./posCatalog";
+import { isRestaurantAdminEmail } from "./restaurantStore";
 import {
   calculatePosBill,
   restorePosSessions,
@@ -7,7 +13,7 @@ import {
   type PosShift,
   type PosTableSession,
 } from "@/lib/pos/posEngine";
-import { getClaimCode, recordSettledBills } from "./dineInStore";
+import { getClaimCodes, recordSettledBills } from "./dineInStore";
 
 const CUSTOM_ITEM_PREFIX = "custom_";
 const MAX_CUSTOM_PRICE = 100000;
@@ -287,20 +293,28 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
     }
   });
 
-  const state = await loadPosState(
-    userId,
-    rejected,
-    conflicts,
+  const outletIds = [...prices.outlets.keys()];
+  // The reply is the tables this push sent, as stored now: accepted ones carry their new
+  // revision, and a conflict carries the other terminal's version to show instead.
+  const sent = await loadTables(
+    outletIds,
     incoming.map((session) => session.sessionId)
   );
-  // Only tables the server actually accepted become claimable bills.
-  await recordSettledBills(state.sessions);
-  for (const session of state.sessions) {
-    if (session.status !== "SETTLED") continue;
-    const code = await getClaimCode(session.sessionId);
-    if (code) state.claimCodes[session.sessionId] = code;
-  }
-  return state;
+  // Only tables the server accepted from this push become claimable bills.
+  const refused = new Set([...rejected, ...conflicts].map((entry) => entry.sessionId));
+  const accepted = sent.sessions.filter((session) => !refused.has(session.sessionId));
+  await recordSettledBills(accepted);
+  return {
+    sessions: sent.sessions,
+    shift: await loadShift(userId),
+    settledTotal: settledTotal(sent.sessions),
+    rejected,
+    conflicts,
+    claimCodes: await getClaimCodes(
+      accepted.filter((session) => session.status === "SETTLED").map((session) => session.sessionId)
+    ),
+    billNumbers: sent.billNumbers,
+  };
 }
 
 /** JSON columns are validated again by restorePosSessions; this only has to survive bad JSON. */
@@ -407,59 +421,140 @@ export async function hydrateSessions(
   return restorePosSessions(JSON.stringify(rebuilt));
 }
 
-export async function loadPosState(
-  userId: string,
-  rejected: PosSyncResult["rejected"] = [],
-  conflicts: PosSyncResult["conflicts"] = [],
-  sentIds: string[] = []
-): Promise<PosSyncResult> {
+function billNumbersOf(sessionRows: Record<string, unknown>[]): Record<string, number> {
+  return Object.fromEntries(
+    sessionRows
+      .filter((row) => row.bill_number != null)
+      .map((row) => [String(row.id), Number(row.bill_number)])
+  );
+}
+
+function settledTotal(sessions: PosTableSession[]): number {
+  return sessions
+    .filter((session) => session.status === "SETTLED")
+    .reduce((total, session) => total + calculatePosBill(session).grandTotal, 0);
+}
+
+async function loadShift(userId: string): Promise<PosShift | null> {
+  const shiftRow = await one<Record<string, unknown>>(
+    "SELECT * FROM pos_shifts WHERE user_id = $1 LIMIT 1",
+    [userId]
+  );
+  return shiftRow
+    ? restorePosShift(
+        JSON.stringify({
+          shiftId: String(shiftRow.id),
+          outletId: Number(shiftRow.outlet_id),
+          outletName: String(shiftRow.outlet_name),
+          openedBy: String(shiftRow.opened_by),
+          openedAt: String(shiftRow.opened_at),
+          openingCash: Number(shiftRow.opening_cash),
+        })
+      )
+    : null;
+}
+
+async function loadTables(
+  outletIds: number[],
+  ids: string[]
+): Promise<{ sessions: PosTableSession[]; billNumbers: Record<string, number> }> {
+  if (outletIds.length === 0 || ids.length === 0) return { sessions: [], billNumbers: {} };
+  const sessionRows = await rows<Record<string, unknown>>(
+    `SELECT * FROM pos_sessions
+     WHERE outlet_id = ANY($1::int[]) AND id = ANY($2::text[])
+     ORDER BY opened_at`,
+    [outletIds, ids]
+  );
+  return { sessions: await hydrateSessions(sessionRows), billNumbers: billNumbersOf(sessionRows) };
+}
+
+/** Everything a terminal needs when it starts: the shared floor, recent bills and its shift. */
+export async function loadPosState(userId: string): Promise<PosSyncResult> {
   // Open tables belong to the outlet, so every waiter who can bill it sees the same floor.
-  // A device still needs the tables it just sent, even once they are no longer open.
-  const outletIds = [...(await loadPosPriceBook(userId)).outlets.keys()];
+  // Older closed bills are read through listSalesHistory instead.
+  const outletIds = await billableOutletIds(userId);
   const sessionRows =
     outletIds.length === 0
       ? []
       : await rows<Record<string, unknown>>(
           `SELECT * FROM (
              SELECT * FROM pos_sessions
-             WHERE outlet_id = ANY($1::int[]) AND (status = 'OPEN' OR id = ANY($2::text[]))
+             WHERE outlet_id = ANY($1::int[]) AND status = 'OPEN'
              UNION
              (SELECT * FROM pos_sessions
               WHERE outlet_id = ANY($1::int[]) AND status <> 'OPEN'
               ORDER BY COALESCE(payment_settled_at, opened_at) DESC LIMIT 100)
            ) AS floor ORDER BY opened_at`,
-          [outletIds, sentIds]
+          [outletIds]
         );
   const sessions = await hydrateSessions(sessionRows);
-  const shiftRow = await one<Record<string, unknown>>(
-    "SELECT * FROM pos_shifts WHERE user_id = $1 LIMIT 1",
-    [userId]
-  );
 
   return {
     sessions,
-    shift: shiftRow
-      ? restorePosShift(
-          JSON.stringify({
-            shiftId: String(shiftRow.id),
-            outletId: Number(shiftRow.outlet_id),
-            outletName: String(shiftRow.outlet_name),
-            openedBy: String(shiftRow.opened_by),
-            openedAt: String(shiftRow.opened_at),
-            openingCash: Number(shiftRow.opening_cash),
-          })
-        )
-      : null,
-    settledTotal: sessions
-      .filter((session) => session.status === "SETTLED")
-      .reduce((total, session) => total + calculatePosBill(session).grandTotal, 0),
-    rejected,
-    conflicts,
+    shift: await loadShift(userId),
+    settledTotal: settledTotal(sessions),
+    rejected: [],
+    conflicts: [],
     claimCodes: {},
-    billNumbers: Object.fromEntries(
-      sessionRows
-        .filter((row) => row.bill_number != null)
-        .map((row) => [String(row.id), Number(row.bill_number)])
+    billNumbers: billNumbersOf(sessionRows),
+  };
+}
+
+/** The open tables of every outlet this account bills for, as `pos_sessions s`. */
+const SHARED_OPEN_TABLES_SQL = `pos_sessions s
+  WHERE s.status = 'OPEN'
+    AND s.outlet_id IN (SELECT r.pos_outlet_id FROM managed_restaurants r WHERE ${BILLABLE_RESTAURANT_SQL})`;
+
+export interface FloorVersion {
+  /** Changes whenever any shared table is opened, edited or closed. */
+  version: string;
+  /** `[sessionId, revision]` of every open table; only sent when `version` moved. */
+  heads?: [string, number][];
+}
+
+/**
+ * What a terminal polls every few seconds, so it costs one small row while nothing changes,
+ * however many tables or bills the restaurant has. When the version moved, the open tables'
+ * revisions come back too, and the terminal fetches only the tables it is behind on.
+ */
+export async function loadFloorVersion(
+  user: { id: string; email: string },
+  since: string | null
+): Promise<FloorVersion> {
+  const row = await one<{ version: string; heads: unknown }>(
+    `SELECT floor.version, CASE WHEN floor.version IS DISTINCT FROM $3::text THEN floor.heads END AS heads
+     FROM (
+       SELECT md5(COALESCE(string_agg(s.id || ':' || s.revision, ',' ORDER BY s.id), '')) AS version,
+              COALESCE(json_agg(json_build_array(s.id, s.revision) ORDER BY s.id), '[]'::json) AS heads
+       FROM ${SHARED_OPEN_TABLES_SQL}
+     ) AS floor`,
+    [user.id, isRestaurantAdminEmail(user.email), since]
+  );
+  const version = String(row?.version ?? "");
+  const heads = row?.heads;
+  if (!Array.isArray(heads)) return { version };
+  return {
+    version,
+    heads: heads.flatMap((head: unknown): [string, number][] =>
+      Array.isArray(head) && typeof head[0] === "string" && Number.isSafeInteger(head[1])
+        ? [[head[0], head[1] as number]]
+        : []
     ),
   };
+}
+
+/** Shared tables by id, for a terminal that is behind on them; any status, any waiter. */
+export async function loadFloorTables(
+  user: { id: string; email: string },
+  ids: string[]
+): Promise<{ sessions: PosTableSession[]; billNumbers: Record<string, number> }> {
+  if (ids.length === 0) return { sessions: [], billNumbers: {} };
+  const sessionRows = await rows<Record<string, unknown>>(
+    `SELECT s.* FROM pos_sessions s
+     WHERE s.id = ANY($3::text[])
+       AND s.outlet_id IN (SELECT r.pos_outlet_id FROM managed_restaurants r WHERE ${BILLABLE_RESTAURANT_SQL})
+     ORDER BY s.opened_at`,
+    [user.id, isRestaurantAdminEmail(user.email), ids]
+  );
+  return { sessions: await hydrateSessions(sessionRows), billNumbers: billNumbersOf(sessionRows) };
 }

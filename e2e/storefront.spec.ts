@@ -101,14 +101,15 @@ test.describe("Accounts", () => {
     await page.getByTestId("navbar-account").click();
     await page.getByTestId("account-sign-out").click();
     await expect(page.getByTestId("navbar-account")).toContainText("Sign in");
-    await expect(page.locator("#krave-announcer")).toHaveText("Signed out.");
+    // The sign-in dialog stays open after signing out, so the message is read out from inside it.
+    const dialog = page.locator("dialog[open]");
+    await expect(dialog.getByRole("status").last()).toHaveText("Signed out.");
     // The offline terminal listed this account's outlets and menus.
     await expect
       .poll(() => page.evaluate(async () => Boolean(await caches.match("/pos"))))
       .toBe(false);
 
     // Signing out leaves the required sign-in dialog open, so the page behind it is locked.
-    const dialog = page.locator("dialog[open]");
     await expect(dialog).toBeVisible();
     await page.getByLabel("Email").fill(email);
     await page.getByLabel(/PIN/).fill(PASSWORD);

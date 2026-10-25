@@ -222,6 +222,8 @@ test.describe("Dine-in terminal", () => {
   });
 
   test("keeps every paid bill in Sales, searchable, and reopens any of them as a receipt", async ({ page }) => {
+    // Two bills are rung up and paid over the network before Sales opens.
+    test.slow();
     const restaurant = await freshTerminal(page, "Sales");
     await page.getByTestId("pos-table-T1").click();
     await page.getByTestId("pos-lead-guest-name").fill("Ramesh");
@@ -410,6 +412,64 @@ test.describe("Dine-in terminal", () => {
     expect(stored.lines[0].unitPrice).toBe(240);
     // The bill carries the restaurant's own name, not the device's.
     expect(stored.outletName).toBe(restaurant.name);
+  });
+
+  test("keeps every tap when the next one lands while the last is still saving", async ({ page }) => {
+    const restaurant = await freshTerminal(page, "Fast Taps");
+    await expect(page.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
+    // A slow network: the server stores each push at once, but its answer takes a while.
+    await page.route("**/api/webroutes/pos/sync", async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await route.fulfill({ response });
+    });
+
+    const firstPush = page.waitForRequest("**/api/webroutes/pos/sync");
+    await openTable(page, "T4");
+    await page.getByRole("button", { name: PANEER }).click();
+    await firstPush;
+    // The waiter carries on while that first save is still on its way back.
+    await page.getByRole("button", { name: KARI_FULL }).click();
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
+
+    await expect.poll(async () => {
+      const state = await (await page.request.get("/api/webroutes/pos/state")).json();
+      const table = state.sessions.find(
+        (session: { outletName: string; tableId: string; status: string }) =>
+          session.outletName === restaurant.name && session.tableId === "T4" && session.status === "OPEN"
+      );
+      return table?.lines.map((line: { name: string; quantity: number }) => `${line.quantity} ${line.name}`);
+    }, { timeout: 20_000 }).toEqual(["1 Paneer Tikka", "1 Chicken Kari (Full)"]);
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
+    // Neither a conflict with itself nor anything left unsaved.
+    await expect(page.getByText(/at the same time|Not saved|could not be saved|another terminal/)).toHaveCount(0);
+  });
+
+  test("shows one phone's table on another within seconds, both ways", async ({ page, browser }) => {
+    const restaurant = await freshTerminal(page, "Two Phones");
+    const otherContext = await browser.newContext();
+    try {
+      const other = await otherContext.newPage();
+      await openTerminal(other, restaurant);
+      await expect(page.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
+      await expect(other.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
+
+      await openTable(page, "T5");
+      await addDishAndFire(page, PANEER);
+      await expect(page.getByTestId("pos-grand-total")).toHaveText("₹252");
+      // The other phone never reloads; its floor poll brings the table over.
+      await expect(other.getByTestId("pos-table-T5")).toContainText("₹252", { timeout: 20_000 });
+
+      await other.getByTestId("pos-table-T5").click();
+      await addDishAndFire(other, KARI_FULL);
+      await expect(other.getByTestId("pos-grand-total")).toHaveText("₹378");
+      await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378", { timeout: 20_000 });
+      for (const phone of [page, other]) {
+        await expect(phone.getByText(/at the same time|Not saved|could not be saved|another terminal/)).toHaveCount(0);
+      }
+    } finally {
+      await otherContext.close();
+    }
   });
 });
 

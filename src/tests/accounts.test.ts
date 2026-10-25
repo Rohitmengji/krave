@@ -76,7 +76,12 @@ import {
   pruneUnknownAvailability,
   setDishAvailability,
 } from "@/lib/server/menuStore";
-import { loadPosState, syncPosState } from "@/lib/server/posStore";
+import {
+  loadFloorTables,
+  loadFloorVersion,
+  loadPosState,
+  syncPosState,
+} from "@/lib/server/posStore";
 import {
   addCustomItemToSession,
   addItemToSession,
@@ -373,7 +378,8 @@ describe("Accounts and durable orders", () => {
       verifyCredentials({ email: CREDENTIALS.email, password: "135794" })
     ).resolves.toMatchObject({ id: user.id });
 
-    await expect(resetPassword(reset.token, "yet-an135793")).rejects.toThrow();
+    // Single use: a second try with a perfectly good PIN is still refused.
+    await expect(resetPassword(reset.token, "135793")).rejects.toThrow(/expired|already used/i);
   });
 
   it("refuses an expired, unknown or weak reset", async () => {
@@ -660,6 +666,69 @@ describe("Dine-in terminal sync", () => {
     expect(third.sessions[0].revision).toBe(2);
     expect(third.sessions[0].lines).toHaveLength(2);
     expect(third.sessions[0].lines.some((line) => line.quantity === 5)).toBe(false);
+  });
+
+  it("answers a sync with only the tables it sent, not the whole floor and its bills", async () => {
+    await syncPosState(user.id, {
+      sessions: [settleSession(firedTable("T1"), "CASH", 100000), firedTable("T2")],
+      shift: null,
+    });
+
+    const third = firedTable("T3");
+    const result = await syncPosState(user.id, { sessions: [third], shift: null });
+    expect(result.sessions.map((session) => session.tableId)).toEqual(["T3"]);
+    // The paid T1 is neither sent back nor recorded again.
+    expect(result.claimCodes).toEqual({});
+    expect(result.billNumbers).toEqual({});
+  });
+
+  it("polls a shared floor as one small version until something changes", async () => {
+    const waiter = await registerUser({ email: "waiter@krave.test", password: CREDENTIALS.password });
+    const restaurant = await one<{ id: string }>(
+      "SELECT id FROM managed_restaurants WHERE pos_outlet_id = $1",
+      [outlet.outletId]
+    );
+    await run(
+      `INSERT INTO restaurant_memberships (restaurant_id, user_id, role, granted_at, granted_by)
+       VALUES ($1, $2, 'staff', $3, $4)`,
+      [restaurant?.id, waiter.id, new Date().toISOString(), user.id]
+    );
+
+    const empty = await loadFloorVersion(waiter, null);
+    expect(empty.heads).toEqual([]);
+    expect(await loadFloorVersion(waiter, empty.version)).toEqual({ version: empty.version });
+
+    // The owner opens a table: the waiter's next poll sees the version move, with its revision.
+    const [opened] = (await syncPosState(user.id, { sessions: [firedTable()], shift: null })).sessions;
+    const moved = await loadFloorVersion(waiter, empty.version);
+    expect(moved.version).not.toBe(empty.version);
+    expect(moved.heads).toEqual([[opened.sessionId, 1]]);
+    expect(await loadFloorVersion(waiter, moved.version)).toEqual({ version: moved.version });
+
+    // The waiter fetches just that table, adds to it, and the owner's floor moves again.
+    const [shared] = (await loadFloorTables(waiter, [opened.sessionId])).sessions;
+    expect(shared.lines.map((line) => line.quantity)).toEqual([2]);
+    const added = sendPendingToKitchen(addItemToSession(shared, MENU[0], 1)).session;
+    expect((await syncPosState(waiter.id, { sessions: [added], shift: null })).conflicts).toEqual([]);
+    const afterAdd = await loadFloorVersion(user, moved.version);
+    expect(afterAdd.heads).toEqual([[opened.sessionId, 2]]);
+
+    // Paying the bill closes it on every terminal: it leaves the open floor.
+    const [latest] = (await loadFloorTables(user, [opened.sessionId])).sessions;
+    await syncPosState(user.id, { sessions: [settleSession(latest, "UPI", 0)], shift: null });
+    const paid = await loadFloorVersion(waiter, afterAdd.version);
+    expect(paid.heads).toEqual([]);
+    const [closed] = (await loadFloorTables(waiter, [opened.sessionId])).sessions;
+    expect(closed.status).toBe("SETTLED");
+  });
+
+  it("never shows another restaurant's tables, even when asked for them by id", async () => {
+    const [opened] = (await syncPosState(user.id, { sessions: [firedTable()], shift: null })).sessions;
+    const stranger = await registerUser({ email: "stranger@krave.test", password: CREDENTIALS.password });
+
+    const floor = await loadFloorVersion(stranger, null);
+    expect(floor.heads).toEqual([]);
+    expect((await loadFloorTables(stranger, [opened.sessionId])).sessions).toEqual([]);
   });
 });
 

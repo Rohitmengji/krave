@@ -104,7 +104,8 @@ async function writeSession(
   client: Queryable,
   userId: string,
   session: PosTableSession,
-  allowedOutlets: ReadonlySet<number>
+  allowedOutlets: ReadonlySet<number>,
+  deviceId: string | null
 ): Promise<void> {
   // The row is deleted and re-inserted below, so a FOR UPDATE alone would let a second phone's
   // waiting save find no row once the first commits, skip the revision check and overwrite it.
@@ -114,7 +115,7 @@ async function writeSession(
   // teammate who can bill this outlet may add to it.
   const existing = (
     await client.query(
-      "SELECT revision, bill_number, user_id, outlet_id FROM pos_sessions WHERE id = $1 FOR UPDATE",
+      "SELECT revision, bill_number, user_id, outlet_id, last_device_id FROM pos_sessions WHERE id = $1 FOR UPDATE",
       [session.sessionId]
     )
   ).rows[0] as Record<string, unknown> | undefined;
@@ -127,8 +128,12 @@ async function writeSession(
   }
 
   // Optimistic concurrency: the device must have based its edit on what the server holds.
+  // The one exception is this same phone retrying after its last answer was lost: nobody else
+  // has written since, so its newer copy loses nothing.
   const storedRevision = existing ? Number(existing.revision) : 0;
-  if (existing && storedRevision !== session.revision) {
+  const ownLastWrite =
+    deviceId !== null && existing?.last_device_id === deviceId && session.revision < storedRevision;
+  if (existing && storedRevision !== session.revision && !ownLastWrite) {
     throw new StaleRevisionError(
       `Table ${session.tableId} changed on another terminal. Reload before editing it again.`
     );
@@ -155,8 +160,8 @@ async function writeSession(
        server_name, opened_at, status, discount_percent, service_charge_percent, next_kot_number,
        merged_into_session_id, payment_method, payment_amount_tendered, payment_change_due,
        payment_settled_at, synced_at, revision, guests_json, tax_rate_bps, corrections_json,
-       bill_number, grand_total)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+       bill_number, grand_total, last_device_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
     [
       session.sessionId,
       existing ? String(existing.user_id) : userId,
@@ -183,6 +188,7 @@ async function writeSession(
       JSON.stringify(session.corrections),
       billNumber,
       grandTotal,
+      deviceId,
     ]
   );
 
@@ -249,6 +255,8 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
   const body = (payload ?? {}) as Record<string, unknown>;
   const incoming = restorePosSessions(JSON.stringify(body.sessions ?? []));
   const shift = restorePosShift(JSON.stringify(body.shift ?? null));
+  const deviceId =
+    typeof body.device === "string" && /^[A-Za-z0-9-]{8,64}$/.test(body.device) ? body.device : null;
 
   const rejected: PosSyncResult["rejected"] = [];
   const conflicts: PosSyncResult["conflicts"] = [];
@@ -281,7 +289,7 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
       // the old rows must not commit a half-written table alongside the accepted ones.
       await client.query("SAVEPOINT pos_table");
       try {
-        await writeSession(client, userId, repriceSession(session, prices, captured), allowedOutlets);
+        await writeSession(client, userId, repriceSession(session, prices, captured), allowedOutlets, deviceId);
         await client.query("RELEASE SAVEPOINT pos_table");
       } catch (error) {
         await client.query("ROLLBACK TO SAVEPOINT pos_table");

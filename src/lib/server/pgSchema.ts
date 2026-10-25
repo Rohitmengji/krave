@@ -162,6 +162,8 @@ CREATE INDEX IF NOT EXISTS pos_sessions_sales_idx
   ON pos_sessions(outlet_id, payment_settled_at DESC, id DESC) WHERE status = 'SETTLED';
 -- Every open terminal polls the open tables of its outlets every few seconds.
 CREATE INDEX IF NOT EXISTS pos_sessions_open_idx ON pos_sessions(outlet_id) WHERE status = 'OPEN';
+-- The phone that saved a table last, so its retry after a lost reply is not a conflict.
+ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS last_device_id TEXT;
 
 CREATE TABLE IF NOT EXISTS pos_lines (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

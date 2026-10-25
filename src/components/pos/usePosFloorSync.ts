@@ -22,6 +22,29 @@ export type PosSyncState = "local" | "pending" | "synced" | "failed";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const PUSH_TIMEOUT_MS = 10_000;
+const DEVICE_KEY = "krave.pos.device.v1";
+let unstoredDeviceId: string | null = null;
+
+function newDeviceId(): string {
+  // getRandomValues, unlike randomUUID, also works on a plain-http LAN address.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+/** This phone's id, so the server can tell its retry after a lost answer from another phone. */
+function deviceId(): string {
+  try {
+    const known = localStorage.getItem(DEVICE_KEY);
+    if (known && /^[A-Za-z0-9-]{8,64}$/.test(known)) return known;
+    const fresh = newDeviceId();
+    localStorage.setItem(DEVICE_KEY, fresh);
+    return fresh;
+  } catch {
+    unstoredDeviceId ??= newDeviceId();
+    return unstoredDeviceId;
+  }
+}
 
 /** A GET that gives up after a few seconds, or as soon as `stop` fires. */
 async function getJson(url: string, stop: AbortSignal): Promise<Record<string, unknown>> {
@@ -308,7 +331,7 @@ export function usePosFloorSync({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
-        body: JSON.stringify({ sessions: payload, shift: activeShift }),
+        body: JSON.stringify({ sessions: payload, shift: activeShift, device: deviceId() }),
       })
         .then(async (response) => {
           if (!response.ok) throw new Error("Sync rejected.");

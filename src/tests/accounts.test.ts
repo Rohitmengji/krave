@@ -756,6 +756,31 @@ describe("Dine-in terminal sync", () => {
     expect(stored.revision).toBe(opened.revision + 1);
     expect(stored.lines).toHaveLength(2);
   });
+
+  it("takes a phone's retry after its answer was lost, but not another phone's stale copy", async () => {
+    const phone = "phone-a-0123456789";
+    const [opened] = (
+      await syncPosState(user.id, { sessions: [firedTable()], shift: null, device: phone })
+    ).sessions;
+    // The phone's next save reaches the server, but its answer never comes back.
+    const lost = addItemToSession(opened, MENU[1], 1);
+    await syncPosState(user.id, { sessions: [lost], shift: null, device: phone });
+
+    // So it retries from the revision it still knows, with one more tap on top.
+    const retry = addItemToSession(lost, MENU[2], 1);
+    const retried = await syncPosState(user.id, { sessions: [retry], shift: null, device: phone });
+    expect(retried.conflicts).toEqual([]);
+    expect(retried.sessions[0].lines).toHaveLength(3);
+
+    // Another phone, or a save that names no phone, still has to be on the latest revision.
+    for (const device of ["phone-b-0123456789", undefined]) {
+      const stale = addItemToSession(opened, MENU[3], 1);
+      const refused = await syncPosState(user.id, { sessions: [stale], shift: null, device });
+      expect(refused.conflicts).toHaveLength(1);
+    }
+    const [stored] = (await loadFloorTables(user, [opened.sessionId])).sessions;
+    expect(stored.lines).toHaveLength(3);
+  });
 });
 
 describe("Outlet-wide availability", () => {

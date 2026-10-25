@@ -108,16 +108,22 @@ async function loadDishes(restaurantIds: string[]): Promise<CatalogDish[]> {
   });
 }
 
+/**
+ * The restaurants (`r`) an account may bill for: `$1` is the account, `$2` whether it is a
+ * platform admin. A suspended restaurant cannot bill; drafts can, so dine-in can start before
+ * going online.
+ */
+export const BILLABLE_RESTAURANT_SQL = `r.status <> 'suspended'
+  AND ($2::boolean OR EXISTS (
+    SELECT 1 FROM restaurant_memberships m WHERE m.restaurant_id = r.id AND m.user_id = $1))`;
+
 async function billableRestaurants(
   userId: string
 ): Promise<{ id: string; outletId: number; name: string; city: string; taxRateBps: number }[]> {
-  // A suspended restaurant cannot bill; drafts can, so dine-in can start before going online.
   const found = await rows<Row>(
     `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps
      FROM managed_restaurants r
-     WHERE r.status <> 'suspended'
-       AND ($2::boolean OR EXISTS (
-         SELECT 1 FROM restaurant_memberships m WHERE m.restaurant_id = r.id AND m.user_id = $1))
+     WHERE ${BILLABLE_RESTAURANT_SQL}
      ORDER BY r.name, r.id`,
     [userId, await isRestaurantAdmin(userId)]
   );
@@ -129,6 +135,11 @@ async function billableRestaurants(
     // The same setting online orders use, so a table and an online order cost the same.
     taxRateBps: Number(row.tax_enabled) === 1 ? Number(row.tax_rate_bps) : 0,
   }));
+}
+
+/** The outlets whose floor this account shares, without loading any menu. */
+export async function billableOutletIds(userId: string): Promise<number[]> {
+  return (await billableRestaurants(userId)).map((restaurant) => restaurant.outletId);
 }
 
 /** The restaurant's name when this account may bill (and so see the bills of) an outlet. */

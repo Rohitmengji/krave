@@ -252,7 +252,8 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
 
       const newer = createPasswordReset({ email: CREDENTIALS.email });
       await lockWaiters(1);
-      inFlight = resetPassword(token, "attacker-chosen-password");
+      // A valid PIN, so the request gets past validation and is caught by the token race.
+      inFlight = resetPassword(token, "864201");
       // Keeps a rejection from going unhandled before it is awaited below.
       inFlight.catch(() => undefined);
       await lockWaiters(2);
@@ -296,7 +297,8 @@ describe.skipIf(!hasTestDatabase)("auth under concurrency", () => {
     const used: string[] = [];
     for (const [i, token] of tokens.entries()) {
       try {
-        await resetPassword(token, `new-password-number-${i}`);
+        // A valid PIN each time, so only the link itself can be refused.
+        await resetPassword(token, `86420${i}`);
         used.push(token);
       } catch (error) {
         expect(String(error)).toMatch(/expired|already used/i);

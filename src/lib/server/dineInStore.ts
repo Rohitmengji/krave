@@ -88,11 +88,17 @@ export async function recordSettledBills(sessions: PosTableSession[]): Promise<v
 
 /** The counter needs the code to print it; nobody else ever receives it. */
 export async function getClaimCode(sessionId: string): Promise<string | null> {
-  const row = await one<Record<string, unknown>>(
-    "SELECT claim_code FROM dine_in_bills WHERE session_id = $1",
-    [sessionId]
+  return (await getClaimCodes([sessionId]))[sessionId] ?? null;
+}
+
+/** Codes for the bills a terminal just settled, in one query however many there are. */
+export async function getClaimCodes(sessionIds: string[]): Promise<Record<string, string>> {
+  if (sessionIds.length === 0) return {};
+  const found = await rows<Record<string, unknown>>(
+    "SELECT session_id, claim_code FROM dine_in_bills WHERE session_id = ANY($1::text[])",
+    [sessionIds]
   );
-  return row ? String(row.claim_code) : null;
+  return Object.fromEntries(found.map((row) => [String(row.session_id), String(row.claim_code)]));
 }
 
 export async function claimDineInBill(userId: string, input: unknown): Promise<DineInBill> {

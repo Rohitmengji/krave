@@ -318,9 +318,9 @@ export function KraveApp({
       if (refreshController.current !== controller) return;
       if (!payload) return;
       adoptServerState(dispatchAccount, INITIAL_ACCOUNT_STATE.epoch, payload);
-      const signedIn = Boolean((payload as { user?: unknown }).user);
-      setNeedsAccount(!signedIn);
-      if (signedIn) setAccountOpen(false);
+      // Signed in, the gate lifts by itself. A dialog the visitor opened while this check was
+      // in flight stays open: closing it here made the account button seem to do nothing.
+      setNeedsAccount(!(payload as { user?: unknown }).user);
     });
     return () => controller.abort();
   }, []);

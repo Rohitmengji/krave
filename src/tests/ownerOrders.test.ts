@@ -56,6 +56,18 @@ describe("ownerOrdersReducer", () => {
     expect(completed.orders.map((entry) => entry.orderNumber)).toEqual([2]);
   });
 
+  it("does not let a poll that read the order before it was completed put it back", () => {
+    const first = loaded(initialOwnerOrders, [order(1, "ready", "2025-06-02T06:50:00.000Z"), order(2)]);
+    const completed = ownerOrdersReducer(first, { type: "changed", order: order(1, "completed", "2025-06-02T07:00:00.000Z") });
+    // The poll left before the change landed, so it still lists the order as ready.
+    const stalePoll = loaded(completed, [order(1, "ready", "2025-06-02T06:50:00.000Z"), order(2)], true);
+    expect(stalePoll.orders.map((entry) => entry.orderNumber)).toEqual([2]);
+    // Once the server agrees, nothing is left to remember.
+    const freshPoll = loaded(stalePoll, [order(2)], true);
+    expect(freshPoll.orders.map((entry) => entry.orderNumber)).toEqual([2]);
+    expect(freshPoll.departed).toEqual({});
+  });
+
   it("keeps the list when a background refresh fails", () => {
     const first = loaded(initialOwnerOrders, [order(1)]);
     const failed = ownerOrdersReducer(first, { type: "loadFailed", request: first.request, message: "Offline", poll: true });

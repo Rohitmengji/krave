@@ -154,7 +154,11 @@ describe.skipIf(!hasTestDatabase)("launch hardening (Postgres)", () => {
   it("caps new accounts per network address, and forgets attempts once they age out", async () => {
     await seedAttempts("signup:203.0.113.7", MAX_SIGNUPS_PER_CLIENT);
     const from = (ip: string, email: string) =>
-      post("auth/register", { email, password: CREDENTIALS.password }, { "x-forwarded-for": ip });
+      post(
+        "auth/register",
+        { email, password: CREDENTIALS.password, displayName: "Guest", phone: "9876543210" },
+        { "x-forwarded-for": ip }
+      );
 
     const refused = await from("203.0.113.7", "flood@krave.test");
     expect(refused.status).toBe(400);

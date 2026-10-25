@@ -348,6 +348,11 @@ API requests must come from the site's own origin.
   deleted after confirmation. Each dish carries a revision, so an edit made on a second
   device against an older copy is refused and reloaded instead of overwriting. Published
   managed menus can be shared at `/r/<slug>`.
+- Team access under *Team* in `/owner`: an owner adds people by the email of the KRAVE
+  account they already created, as Waiter (table POS only), Manager (also the menu, orders and
+  settings) or Owner (also the team), changes their role, or removes them. Nobody changes their
+  own access, a restaurant always keeps an owner, and every change is audited. Waiters sign in
+  on their own phones, and the owner's PIN works there too.
 - Online ordering from a managed menu, switched on by the owner: portions and add-ons,
   takeaway, dine-in or delivery within listed areas, server-side pricing, duplicate-safe
   checkout, a live status page for the customer, and an order queue in `/owner` with
@@ -386,9 +391,10 @@ A scheduled order starts when its window arrives, but there is no background sch
 the sweep runs on the next request after the due time, not at the minute itself, and it
 uses the server's local clock. Signed out, the inbox is still browser-only.
 
-Staff access is per outlet (see [Who may act as staff](#who-may-act-as-staff)), not a role
-system. A ticket deliberately carries no customer name, address or phone — a counter has
-no use for them.
+The retired marketplace's staff access is per outlet (see
+[Who may act as staff](#who-may-act-as-staff)), not a role system; managed restaurants use
+Team roles instead. A ticket deliberately carries no customer name, address or phone — a
+counter has no use for them.
 
 Terminal sync detects a stale write rather than applying it. Each table carries a revision;
 a terminal editing an older copy is rejected and told to reload, so a second device cannot
@@ -402,8 +408,8 @@ account and per client, a reset token can recover a locked account, and a reset 
 every device. "Forgot PIN?" emails a single-use link valid for 30 minutes; the token
 rides in the URL fragment, so it never reaches a server log or a Referer header, and the
 owner is emailed when the PIN changes. New accounts get a link to confirm their
-address; staff access granted by email does not check that confirmation yet. Do not reuse
-a PIN you use elsewhere.
+address; access granted by email (`KRAVE_STAFF_EMAILS`, or Team in `/owner`) does not check
+that confirmation yet. Do not reuse a PIN you use elsewhere.
 
 ## Next Milestones
 

@@ -5,6 +5,7 @@ import {
   verifyAccountPassword,
 } from "./auth";
 import { one, run } from "./pg";
+import { billableOutletName } from "./posCatalog";
 import { assertCanManageRestaurant } from "./restaurantStore";
 
 const PIN_PATTERN = /^\d{4,6}$/;
@@ -48,19 +49,21 @@ export async function setPosOwnerPin(
 
 /**
  * The owner's approval at the counter for changing a paid bill. The change itself is made by
- * the terminal; this only answers whether the person holding it knows the owner's PIN.
+ * the terminal; this only answers whether the person holding it knows the owner's PIN. The
+ * owner types it on whichever phone holds the bill, so any account that bills the outlet may
+ * ask, a waiter's included.
  */
 export async function confirmPosOwnerPin(userId: string, input: unknown): Promise<void> {
   const body = (input ?? {}) as Record<string, unknown>;
   const outletId = Number(body.outletId);
-  const restaurant = Number.isSafeInteger(outletId)
-    ? await one<{ id: string; pos_pin_hash: string | null }>(
-        "SELECT id, pos_pin_hash FROM managed_restaurants WHERE pos_outlet_id = $1",
-        [outletId]
-      )
-    : null;
+  const restaurant =
+    Number.isSafeInteger(outletId) && (await billableOutletName(userId, outletId)) !== null
+      ? await one<{ id: string; pos_pin_hash: string | null }>(
+          "SELECT id, pos_pin_hash FROM managed_restaurants WHERE pos_outlet_id = $1",
+          [outletId]
+        )
+      : null;
   if (!restaurant) throw new Error("You do not have access to this restaurant.");
-  await assertCanManageRestaurant(userId, restaurant.id);
   if (!restaurant.pos_pin_hash) throw new Error(POS_PIN_MISSING);
 
   const pin = typeof body.pin === "string" ? body.pin.trim() : "";

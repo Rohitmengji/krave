@@ -218,6 +218,7 @@ export async function assertCanManageRestaurant(
   throw new Error("You do not have access to this restaurant.");
 }
 
+/** The restaurants this account runs. Waiters (staff) bill from the table POS instead. */
 export async function listManagedRestaurants(userId: string): Promise<ManagedRestaurant[]> {
   const rowsFound = (await isRestaurantAdmin(userId))
     ? await rows<RestaurantRow>(
@@ -226,7 +227,8 @@ export async function listManagedRestaurants(userId: string): Promise<ManagedRes
     : await rows<RestaurantRow>(
         `SELECT r.* FROM managed_restaurants r
          JOIN restaurant_memberships m ON m.restaurant_id = r.id
-         WHERE m.user_id = $1 ORDER BY r.updated_at DESC, r.name`,
+         WHERE m.user_id = $1 AND m.role IN ('owner', 'admin', 'manager')
+         ORDER BY r.updated_at DESC, r.name`,
         [userId]
       );
   return rowsFound.map(mapRestaurant);

@@ -4,6 +4,7 @@ import { one } from "@/lib/server/pg";
 import { claimDineInBill, getClaimCode } from "@/lib/server/dineInStore";
 import { confirmPosOwnerPin, POS_PIN_MISSING, setPosOwnerPin } from "@/lib/server/posOwnerPin";
 import { syncPosState } from "@/lib/server/posStore";
+import { grantTeamAccess } from "@/lib/server/restaurantTeam";
 import {
   addItemToSession,
   calculatePosBill,
@@ -160,6 +161,18 @@ describe.skipIf(!hasTestDatabase)("owner PIN and corrected bills on the server",
     await expect(confirmPosOwnerPin(stranger.id, { outletId: outlet.outletId, pin: "4321" })).rejects.toThrow(
       /do not have access/
     );
+  });
+
+  it("accepts the owner's PIN typed on a waiter's own phone", async () => {
+    const { user, outlet, restaurantId } = await owner();
+    await setPosOwnerPin(user.id, restaurantId, { pin: "4321", password: PASSWORD }, "test");
+    const waiter = await registerUser({ email: "waiter@pin.test", password: PASSWORD });
+    await grantTeamAccess(user.id, restaurantId, { email: waiter.email, role: "staff" });
+
+    await expect(confirmPosOwnerPin(waiter.id, { outletId: outlet.outletId, pin: "0000" })).rejects.toThrow(
+      /Wrong owner PIN/
+    );
+    await expect(confirmPosOwnerPin(waiter.id, { outletId: outlet.outletId, pin: "4321" })).resolves.toBeUndefined();
   });
 
   it("updates a saved dine-in bill when the owner corrects how it was paid", async () => {

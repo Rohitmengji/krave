@@ -62,6 +62,26 @@ outlet and settlement time. Closing a shift does not settle open tables.
 A confirmed reservation can be handed to the terminal through a single-use storage
 record, which the terminal consumes and clears immediately so a refresh cannot reseat it.
 
+## Restaurant Team
+
+Access to a restaurant is a membership row with a role. A waiter (`staff`) bills on the table
+POS. A manager also runs the menu, online orders and settings. An owner also changes the team,
+from Team in the owner workspace. Platform administrators (`KRAVE_STAFF_EMAILS`) act as owners
+of every restaurant. The workspace lists only the restaurants an account runs, so a waiter
+who opens it is pointed to the POS.
+
+People are added by the email of an account they have already created, so the owner sees
+their name before granting anything. No address is an owner just by being written into the
+code: whoever signed up with it first would own every restaurant, and its PIN reset mail would
+go to whoever runs that mail domain. Each change locks the restaurant row, so two owners removing
+each other at the same moment cannot leave it with none. Nobody changes their own access, the
+last owner cannot be removed or demoted, and every change is written to `restaurant_audit`.
+
+A stored table keeps the account that opened it, and rows are deleted with their account. So
+when a waiter deletes their account, the tables and bills they opened first pass to the
+restaurant's owner of record, who cannot be deleted. The owner's PIN for changing a paid bill
+can be typed on any phone that bills the outlet, a waiter's included.
+
 ## Terminal Sync
 
 `localStorage` remains the terminal's working copy, so a service can be billed with no network

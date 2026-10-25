@@ -141,7 +141,7 @@ export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
         }
       : {
           title: "No restaurant on this account yet",
-          body: "Set up your restaurant and its menu in the owner workspace, or ask the owner to add you to the team.",
+          body: "Ask the restaurant's owner to add this account's email under Team in their owner workspace. Then reload this page.",
           href: "/owner",
           action: "Open owner workspace",
         };

@@ -106,6 +106,9 @@ async function writeSession(
   session: PosTableSession,
   allowedOutlets: ReadonlySet<number>
 ): Promise<void> {
+  // The row is deleted and re-inserted below, so a FOR UPDATE alone would let a second phone's
+  // waiting save find no row once the first commits, skip the revision check and overwrite it.
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`pos-session:${session.sessionId}`]);
   // FOR UPDATE: the revision is read and then written against, so the row must stay put
   // for the rest of this transaction. The row is the outlet's, not one waiter's: any
   // teammate who can bill this outlet may add to it.

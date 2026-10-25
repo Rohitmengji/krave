@@ -730,6 +730,32 @@ describe("Dine-in terminal sync", () => {
     expect(floor.heads).toEqual([]);
     expect((await loadFloorTables(stranger, [opened.sessionId])).sessions).toEqual([]);
   });
+
+  it("lets only one of two phones that save the same table at the same moment through", async () => {
+    const waiter = await registerUser({ email: "waiter@krave.test", password: CREDENTIALS.password });
+    const restaurant = await one<{ id: string }>(
+      "SELECT id FROM managed_restaurants WHERE pos_outlet_id = $1",
+      [outlet.outletId]
+    );
+    await run(
+      `INSERT INTO restaurant_memberships (restaurant_id, user_id, role, granted_at, granted_by)
+       VALUES ($1, $2, 'staff', $3, $4)`,
+      [restaurant?.id, waiter.id, new Date().toISOString(), user.id]
+    );
+    const [opened] = (await syncPosState(user.id, { sessions: [firedTable()], shift: null })).sessions;
+
+    // Open every pooled connection first, or one save waits on a new connection and they never overlap.
+    await Promise.all(Array.from({ length: 4 }, () => one("SELECT pg_sleep(0.2)")));
+    const [mine, theirs] = await Promise.all([
+      syncPosState(user.id, { sessions: [addItemToSession(opened, MENU[1], 1)], shift: null }),
+      syncPosState(waiter.id, { sessions: [addItemToSession(opened, MENU[2], 1)], shift: null }),
+    ]);
+
+    expect([mine.conflicts.length, theirs.conflicts.length].sort()).toEqual([0, 1]);
+    const [stored] = (await loadFloorTables(user, [opened.sessionId])).sessions;
+    expect(stored.revision).toBe(opened.revision + 1);
+    expect(stored.lines).toHaveLength(2);
+  });
 });
 
 describe("Outlet-wide availability", () => {

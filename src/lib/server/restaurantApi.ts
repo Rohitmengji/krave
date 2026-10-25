@@ -4,6 +4,7 @@ import { DatabaseFault } from "./pg";
 import { logServerError } from "./log";
 import { MENU_ITEM_CONFLICT } from "./restaurantStore";
 import { OrderRequestError, orderErrorStatus } from "./restaurantOrderStore";
+import { TEAM_OWNER_ONLY } from "./restaurantTeam";
 
 /** Best-effort client identity for throttling; Vercel sets x-forwarded-for itself. */
 export function requestClientKey(request: NextRequest): string {
@@ -38,6 +39,9 @@ export function restaurantApiError(error: unknown): NextResponse {
   // Quota refusals from reserveClientQuota; "Too many variants…" is a 400 validation error.
   if (error instanceof Error && /^Too many .*\btry again in\b/i.test(error.message)) {
     return NextResponse.json({ status: "error", message: error.message }, { status: 429 });
+  }
+  if (error instanceof Error && error.message === TEAM_OWNER_ONLY) {
+    return NextResponse.json({ status: "error", message: error.message }, { status: 403 });
   }
   if (error instanceof Error && /administrator must approve/i.test(error.message)) {
     return NextResponse.json({ status: "error", message: error.message }, { status: 403 });

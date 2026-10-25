@@ -559,7 +559,17 @@ export async function deleteAccount(
   // Staff marks (sold-out dishes, shifts) belong to the outlet, and would go with the account.
   if (await hasAssignedStaffAccess(user)) throw new Error(DELETE_BLOCKED_BY_STAFF_ACCESS);
   try {
-    await run("DELETE FROM users WHERE id = $1", [userId]);
+    await transaction(async (client) => {
+      // A restaurant's tables and bills outlive the waiter who opened them. They pass to the
+      // restaurant's owner of record, who cannot be deleted, instead of going with the account.
+      await client.query(
+        `UPDATE pos_sessions s SET user_id = r.owner_user_id
+         FROM managed_restaurants r
+         WHERE s.user_id = $1 AND s.outlet_id = r.pos_outlet_id AND r.owner_user_id <> $1`,
+        [userId]
+      );
+      await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    });
   } catch (error) {
     // A table that must keep its user (a restaurant's owner) refuses the delete: RESTRICT
     // reports 23001, the default NO ACTION 23503.

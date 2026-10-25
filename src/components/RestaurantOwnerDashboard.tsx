@@ -6,6 +6,7 @@ import { OverlayDialog } from "@/components/OverlayDialog";
 import { RestaurantOrderingSettings } from "@/components/RestaurantOrderingSettings";
 import { PosPinSettings } from "@/components/PosPinSettings";
 import { RestaurantOrdersPanel } from "@/components/RestaurantOrdersPanel";
+import { RestaurantTeamPanel } from "@/components/RestaurantTeamPanel";
 import type { OpeningHours } from "@/lib/managedOrders";
 import { announce } from "@/lib/announcer";
 import type {
@@ -805,7 +806,11 @@ export function RestaurantOwnerDashboard() {
               ) : (
                 <section className="rounded-2xl border border-white/10 bg-[#121721] p-6">
                   <h2 className="text-xl font-bold">No restaurant is connected to this account</h2>
-                  <p className="mt-2 text-slate-300">Sign in with an approved owner/admin account or ask an administrator to grant your account an owner membership.</p>
+                  <p className="mt-2 text-slate-300">
+                    Ask the restaurant&apos;s owner to add <strong className="text-white">{state.user.email}</strong> under
+                    Team in their workspace. Waiters then take orders on the table POS.
+                  </p>
+                  <a className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-emerald-600 px-4 font-bold" href="/pos">Open table POS</a>
                 </section>
               )
             ) : state.restaurant ? (
@@ -852,6 +857,8 @@ export function RestaurantOwnerDashboard() {
                 />
 
                 <PosPinSettings key={`pin-${state.restaurant.id}`} restaurantId={state.restaurant.id} />
+
+                <RestaurantTeamPanel key={`team-${state.restaurant.id}`} restaurantId={state.restaurant.id} />
 
                 <section className="space-y-5 rounded-2xl border border-white/10 bg-[#121721] p-6">
                   <div>

@@ -184,6 +184,7 @@ test.describe.serial("Owner menu workflow", () => {
       intruder.request.get(`/api/owner/${id}/menu`),
       intruder.request.get(`/api/owner/${id}/imports`),
       intruder.request.get(`/api/owner/${id}/assets?assetId=anything`),
+      intruder.request.get(`/api/owner/${id}/team`),
     ];
     for (const response of await Promise.all(reads)) expect(response.status()).toBe(403);
 
@@ -194,6 +195,9 @@ test.describe.serial("Owner menu workflow", () => {
       intruder.request.delete(`/api/owner/${id}/menu?categoryId=anything`),
       intruder.request.patch(`/api/owner/${id}/menu`, { data: { type: "itemAvailability", id: "x", available: false, revision: 1 } }),
       intruder.request.post("/api/owner", { data: { name: "Rogue", slug: "rogue-restaurant" } }),
+      // Nobody adds themselves to a restaurant's team, or removes its owner.
+      intruder.request.post(`/api/owner/${id}/team`, { data: { email: "intruder@krave.test", role: "owner" } }),
+      intruder.request.delete(`/api/owner/${id}/team`, { data: { userId: "anything" } }),
     ];
     for (const response of await Promise.all(writes)) expect(response.status()).toBe(403);
 

@@ -27,6 +27,7 @@ import {
 import {
   addCustomItemToSession,
   addItemToSession,
+  billFingerprint,
   calculateItemizedSplit,
   calculatePosBill,
   changeSettledPayment,
@@ -443,10 +444,15 @@ function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled:
   // The whole bill goes to whoever is paying; the lead guest first, else anyone with a number.
   const smsGuest = seatedGuests.find((guest) => guest.phone) ?? null;
   const signedIn = syncAccount !== null;
-  const receiptLink = useBillLink(receiptSessionId, signedIn);
+  // The guest's link is given only for the bill on screen, once this phone's saves have landed.
+  const savedHere = syncState === "synced";
+  const receiptFingerprint = receiptSession ? billFingerprint(receiptSession) : null;
+  const receiptLink = useBillLink(receiptSessionId, signedIn, receiptFingerprint, savedHere);
   const tableLink = useBillLink(
     smsGuest?.phone && activeSession && activeSession.lines.length > 0 ? activeSession.sessionId : null,
-    signedIn
+    signedIn,
+    activeSession ? billFingerprint(activeSession) : null,
+    savedHere
   );
 
   function run(action: () => void) {
@@ -1971,6 +1977,7 @@ function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled:
               )}
               <BillEmailAndPdf
                 sessionId={receiptSession.sessionId}
+                fingerprint={receiptFingerprint}
                 link={receiptLink}
                 signedIn={signedIn}
                 mailEnabled={mailEnabled}

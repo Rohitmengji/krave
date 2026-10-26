@@ -274,6 +274,57 @@ describe.skipIf(!hasTestDatabase)("sales history", () => {
       expect(ownerFloor.sessions.map((session) => session.tableId).sort()).toEqual(["T1", "T2"]);
     });
 
+    it("keeps one open bill per table when two phones seat it at the same moment", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      const seat = (serverName: string) =>
+        openTableSession({
+          outletId: outlet.outletId,
+          outletName: outlet.name,
+          taxRateBps: outlet.taxRateBps,
+          tableId: "T3",
+          guestCount: 2,
+          serverName,
+        });
+      // Warm two connections so both saves really overlap.
+      await Promise.all([one("SELECT pg_sleep(0.2)"), one("SELECT pg_sleep(0.2)")]);
+      const [ownerPush, waiterPush] = await Promise.all([
+        syncPosState(user.id, { sessions: [seat("Owner")] }),
+        syncPosState(waiter.id, { sessions: [addItemToSession(seat("Hemant"), outlet.menu[0], 1)] }),
+      ]);
+      const taken = [...ownerPush.taken, ...waiterPush.taken];
+      expect(taken).toHaveLength(1);
+      // The phone that lost is sent the bill that is open, so it can add its order to it.
+      const loser = ownerPush.taken.length > 0 ? ownerPush : waiterPush;
+      expect(loser.sessions.map((session) => session.sessionId)).toContain(taken[0].openSessionId);
+      const open = (await loadPosState(user.id)).sessions.filter(
+        (session) => session.status === "OPEN" && session.tableId === "T3"
+      );
+      expect(open.map((session) => session.sessionId)).toEqual([taken[0].openSessionId]);
+    });
+
+    it("refuses moving a bill onto a table that is already open, without merging the two", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      const seat = (tableId: string) =>
+        openTableSession({
+          outletId: outlet.outletId,
+          outletName: outlet.name,
+          taxRateBps: outlet.taxRateBps,
+          tableId,
+          guestCount: 2,
+          serverName: "Asha",
+        });
+      const t1 = seat("T1");
+      await syncPosState(user.id, { sessions: [t1, seat("T2")] });
+      const moved = { ...t1, tableId: "T2", revision: 1 };
+      const push = await syncPosState(waiter.id, { sessions: [moved] });
+      expect(push.taken).toEqual([]);
+      expect(push.rejected).toEqual([
+        { sessionId: t1.sessionId, reason: "Table T2 is already open on another phone." },
+      ]);
+      // The bill stays where it was.
+      expect(push.sessions.find((session) => session.sessionId === t1.sessionId)?.tableId).toBe("T1");
+    });
+
     it("still sees every open table, because the floor is shared", async () => {
       const { user, waiter, outlet } = await restaurantWithWaiter();
       const open = openTableSession({

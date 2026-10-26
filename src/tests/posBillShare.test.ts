@@ -27,6 +27,7 @@ import {
 import { syncPosState } from "@/lib/server/posStore";
 import {
   addItemToSession,
+  billFingerprint,
   openTableSession,
   sendPendingToKitchen,
   settleSession,
@@ -77,6 +78,29 @@ describe.skipIf(!hasTestDatabase)("sending a bill as a PDF", () => {
     await expect(billLinkToken(stranger.id, saved.sessionId)).rejects.toThrow(BILL_NOT_SAVED);
     await expect(billLinkToken(owner.id, "POS-only-on-the-phone")).rejects.toThrow(BILL_NOT_SAVED);
     await expect(billLinkToken(owner.id, "../../etc")).rejects.toThrow("Choose a bill to send.");
+  });
+
+  it("gives the guest a link or an email only once the server holds the bill on screen", async () => {
+    const { owner, saved } = await savedTable();
+    // Paid on the phone a moment ago; the server still has the open table.
+    const paid = settleSession(saved, "UPI", 0);
+    await expect(billLinkToken(owner.id, saved.sessionId, billFingerprint(paid))).rejects.toThrow(
+      BILL_NOT_SAVED
+    );
+    vi.stubEnv("SMTP_HOST", "smtp.example.test");
+    vi.stubEnv("SMTP_USER", "sender@krave.test");
+    vi.stubEnv("SMTP_PASS", "app-password");
+    const email = { sessionId: saved.sessionId, fingerprint: billFingerprint(paid), email: "guest@example.com" };
+    await expect(emailBill(owner.id, email, SITE)).rejects.toThrow(BILL_NOT_SAVED);
+    expect(sent).toHaveLength(0);
+
+    const [stored] = (await syncPosState(owner.id, { sessions: [paid], shift: null })).sessions;
+    // What the server keeps fingerprints the same as what the phone shows.
+    expect(billFingerprint(stored)).toBe(billFingerprint(paid));
+    const token = await billLinkToken(owner.id, saved.sessionId, billFingerprint(paid));
+    expect((await loadSharedBill(token))?.session.status).toBe("SETTLED");
+    await emailBill(owner.id, email, SITE);
+    expect(text(sent[0].attachments![0].content)).toContain("BILL - PAID");
   });
 
   it("serves the bill as it stands now, before and after it is paid", async () => {

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { billPdf } from "@/lib/pos/billPdf";
-import { calculatePosBill, type PosTableSession } from "@/lib/pos/posEngine";
+import { billFingerprint, calculatePosBill, type PosTableSession } from "@/lib/pos/posEngine";
 import { LOGIN_WINDOW_MINUTES, normalizeEmail, reserveClientQuota } from "./auth";
 import { getClaimCode } from "./dineInStore";
 import { readMailConfig, sendMail, type MailMessage } from "./mailer";
@@ -29,24 +29,34 @@ export interface SharedBill {
 /**
  * The guest's link to a bill: made once per table and kept, so a resend points to the same
  * place. Anyone who can bill the outlet may make it; the table must already be on the server.
+ * With a `fingerprint` of the bill on the waiter's screen, the server's copy must match it: a
+ * bill paid a moment ago may still be on its way, and the guest must not get the older one.
  */
-export async function billLinkToken(userId: string, sessionId: unknown): Promise<string> {
+export async function billLinkToken(
+  userId: string,
+  sessionId: unknown,
+  fingerprint?: unknown
+): Promise<string> {
   if (typeof sessionId !== "string" || !/^[\w-]{1,80}$/.test(sessionId)) {
     throw new Error("Choose a bill to send.");
   }
-  const table = await one<{ outlet_id: number }>(
-    `SELECT s.outlet_id FROM pos_sessions s
+  const table = await one<Record<string, unknown>>(
+    `SELECT s.* FROM pos_sessions s
      WHERE s.id = $3
        AND s.outlet_id IN (SELECT r.pos_outlet_id FROM managed_restaurants r WHERE ${BILLABLE_RESTAURANT_SQL})`,
     [userId, await isRestaurantAdmin(userId), sessionId]
   );
   if (!table) throw new Error(BILL_NOT_SAVED);
+  if (typeof fingerprint === "string") {
+    const [stored] = await hydrateSessions([table]);
+    if (!stored || billFingerprint(stored) !== fingerprint) throw new Error(BILL_NOT_SAVED);
+  }
   const link = await one<{ token: string }>(
     `INSERT INTO pos_bill_links (token, session_id, outlet_id, created_by, created_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (session_id) DO UPDATE SET session_id = EXCLUDED.session_id
      RETURNING token`,
-    [randomBytes(16).toString("base64url"), sessionId, table.outlet_id, userId, new Date().toISOString()]
+    [randomBytes(16).toString("base64url"), sessionId, Number(table.outlet_id), userId, new Date().toISOString()]
   );
   if (!link) throw new Error(BILL_NOT_SAVED);
   return link.token;
@@ -166,7 +176,7 @@ export async function emailBill(
     BILL_EMAILS_PER_WINDOW,
     `Too many bill emails. Try again in ${LOGIN_WINDOW_MINUTES} minutes.`
   );
-  const token = await billLinkToken(userId, body.sessionId);
+  const token = await billLinkToken(userId, body.sessionId, body.fingerprint);
   const shared = await loadSharedBill(token);
   if (!shared) throw new Error(BILL_NOT_SAVED);
   await sendMail(billEmail(to, shared, `${origin}/b/${token}`));

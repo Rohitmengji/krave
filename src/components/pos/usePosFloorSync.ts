@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
+  foldDuplicateTable,
   restorePosSessions,
   restorePosShift,
   type PosOutlet,
@@ -121,6 +122,17 @@ function refusalList(value: unknown): { sessionId: string; reason: string }[] {
     const { sessionId, reason } = entry as Record<string, unknown>;
     return typeof sessionId === "string"
       ? [{ sessionId, reason: typeof reason === "string" ? reason : "The server refused it." }]
+      : [];
+  });
+}
+
+function takenList(value: unknown): { sessionId: string; openSessionId: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { sessionId, openSessionId } = entry as Record<string, unknown>;
+    return typeof sessionId === "string" && typeof openSessionId === "string"
+      ? [{ sessionId, openSessionId }]
       : [];
   });
 }
@@ -247,7 +259,10 @@ export function usePosFloorSync({
 
       const replacements: PosTableSession[] = [];
       const messages: string[] = [];
+      const taken = takenList(result.taken).filter((entry) => saved.has(entry.openSessionId));
+      const takenIds = new Set(taken.map((entry) => entry.sessionId));
       for (const session of sent) {
+        if (takenIds.has(session.sessionId)) continue;
         const stored = saved.get(session.sessionId) ?? null;
         const refusal = refusals.get(session.sessionId);
         if (!refusal) {
@@ -273,6 +288,34 @@ export function usePosFloorSync({
         announce: false,
         force: new Set(replacements.map((session) => session.sessionId)),
       });
+
+      // Another phone seated the same table first: one table, one bill.
+      for (const { sessionId, openSessionId } of taken) {
+        const theirs = saved.get(openSessionId)!;
+        // What the server holds now is the base the folded bill is saved against.
+        syncRevisions.current.set(openSessionId, theirs.revision);
+        syncedSnapshots.current.set(openSessionId, JSON.stringify(theirs));
+        fromElsewhere.current.add(theirs);
+        const mine = readFloor().find((session) => session.sessionId === sessionId);
+        messages.push(
+          mine?.status !== "OPEN"
+            ? `Table ${theirs.tableId} is also open on another phone. Check with them before closing it.`
+            : mine.lines.length > 0
+            ? `Table ${theirs.tableId} was already open on another phone, so your order was added to that bill.`
+            : `Table ${theirs.tableId} was already open on another phone, so this phone now shows that bill.`
+        );
+      }
+      if (taken.length > 0) {
+        setSessions((current) =>
+          taken.reduce((floor, { sessionId, openSessionId }) => {
+            const theirs = saved.get(openSessionId)!;
+            const withTheirs = floor.some((session) => session.sessionId === openSessionId)
+              ? floor.map((session) => (session.sessionId === openSessionId ? theirs : session))
+              : [...floor, theirs];
+            return foldDuplicateTable(withTheirs, sessionId, openSessionId);
+          }, current)
+        );
+      }
 
       syncedShift.current = shiftJson;
       setSyncState("synced");

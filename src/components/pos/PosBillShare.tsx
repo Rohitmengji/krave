@@ -60,15 +60,25 @@ export function SendToNumber({
 }
 
 /**
- * The guest's PDF link for a table, fetched while its bill is on screen. A table settled a
- * moment ago may still be on its way to the server, so a "not saved yet" answer is retried
- * for half a minute; anything else (signed out, no access) is left alone. Null until ready.
+ * The guest's PDF link for a table, fetched while its bill is on screen. With the bill's
+ * `fingerprint`, the link comes only once the server holds that very bill: a table paid a
+ * moment ago may still be on its way, and the guest must not open the older copy. `synced`
+ * is false while this phone's saves are in flight or failing; the link is asked for again
+ * when they land. A "not saved yet" answer is retried for half a minute; anything else
+ * (signed out, no access) is left alone. Null until ready.
  */
-export function useBillLink(sessionId: string | null, signedIn: boolean): string | null {
-  const [link, setLink] = useState<{ sessionId: string; url: string } | null>(null);
+export function useBillLink(
+  sessionId: string | null,
+  signedIn: boolean,
+  fingerprint: string | null = null,
+  synced = true
+): string | null {
+  const [link, setLink] = useState<{ sessionId: string; fingerprint: string | null; url: string } | null>(
+    null
+  );
 
   useEffect(() => {
-    if (!sessionId || !signedIn) return;
+    if (!sessionId || !signedIn || !synced) return;
     const stop = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
@@ -79,13 +89,13 @@ export function useBillLink(sessionId: string | null, signedIn: boolean): string
         const response = await fetch("/api/pos/bill-link", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
+          body: JSON.stringify(fingerprint === null ? { sessionId } : { sessionId, fingerprint }),
           signal: stop.signal,
         });
         const result: unknown = await response.json().catch(() => null);
         const body = typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
         if (response.ok && typeof body.url === "string") {
-          setLink({ sessionId, url: body.url });
+          setLink({ sessionId, fingerprint, url: body.url });
           return;
         }
         retry = typeof body.message === "string" && BILL_NOT_SAVED.test(body.message);
@@ -99,9 +109,9 @@ export function useBillLink(sessionId: string | null, signedIn: boolean): string
       stop.abort();
       clearTimeout(timer);
     };
-  }, [sessionId, signedIn]);
+  }, [sessionId, signedIn, fingerprint, synced]);
 
-  return link && link.sessionId === sessionId ? link.url : null;
+  return link && link.sessionId === sessionId && link.fingerprint === fingerprint ? link.url : null;
 }
 
 type EmailState =
@@ -116,12 +126,15 @@ type EmailState =
  */
 export function BillEmailAndPdf({
   sessionId,
+  fingerprint = null,
   link,
   signedIn,
   mailEnabled,
   testId,
 }: {
   sessionId: string;
+  /** The bill on screen; the server emails only that bill, never an older copy. */
+  fingerprint?: string | null;
   link: string | null;
   signedIn: boolean;
   /** False when this deployment has no SMTP: the button would only ever fail. */
@@ -144,7 +157,11 @@ export function BillEmailAndPdf({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: AbortSignal.timeout(20_000),
-        body: JSON.stringify({ sessionId, email: email.trim() }),
+        body: JSON.stringify(
+          fingerprint === null
+            ? { sessionId, email: email.trim() }
+            : { sessionId, fingerprint, email: email.trim() }
+        ),
       });
       const result: unknown = await response.json().catch(() => null);
       const body = typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};

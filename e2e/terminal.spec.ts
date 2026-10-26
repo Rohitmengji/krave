@@ -524,6 +524,46 @@ test.describe("Dine-in terminal", () => {
       await otherContext.close();
     }
   });
+
+  test("makes one bill when two phones seat the same table before seeing each other", async ({ page, browser }) => {
+    test.slow();
+    const restaurant = await freshTerminal(page, "Same Table");
+    const otherContext = await browser.newContext();
+    try {
+      const other = await otherContext.newPage();
+      await openTerminal(other, restaurant);
+      await expect(page.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
+      await expect(other.getByTestId("pos-sync-status")).toContainText("Saved to", { timeout: 20_000 });
+
+      // The second phone has no signal while both waiters seat T3 for the same guests.
+      await other.route("**/api/webroutes/pos/**", (route) => route.abort());
+      await openTable(page, "T3");
+      await addDishAndFire(page, PANEER);
+      await openTable(other, "T3");
+      await addDishAndFire(other, KARI_FULL);
+      await expect.poll(async () => {
+        const state = await (await page.request.get("/api/webroutes/pos/state")).json();
+        return state.sessions.some(
+          (session: { outletName: string; tableId: string; status: string; lines: unknown[] }) =>
+            session.outletName === restaurant.name && session.tableId === "T3" && session.status === "OPEN" && session.lines.length === 1
+        );
+      }, { timeout: 20_000 }).toBe(true);
+
+      // Back online: its order joins the bill already open on T3, on both phones.
+      await other.unrouteAll({ behavior: "ignoreErrors" });
+      await expect(other.getByText(/already open on another phone, so your order was added/)).toBeVisible({ timeout: 30_000 });
+      await expect(other.getByTestId("pos-grand-total")).toHaveText("₹378");
+      await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378", { timeout: 20_000 });
+      const state = await (await page.request.get("/api/webroutes/pos/state")).json();
+      const openT3 = state.sessions.filter(
+        (session: { outletName: string; tableId: string; status: string }) =>
+          session.outletName === restaurant.name && session.tableId === "T3" && session.status === "OPEN"
+      );
+      expect(openT3).toHaveLength(1);
+    } finally {
+      await otherContext.close();
+    }
+  });
 });
 
 test.describe("Terminal access control", () => {

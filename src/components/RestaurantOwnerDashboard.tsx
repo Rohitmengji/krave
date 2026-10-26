@@ -131,6 +131,7 @@ type RestaurantForm = {
   taxEnabled: boolean;
   fssaiNumber: string;
   gstin: string;
+  dailySummaryEnabled: boolean;
 };
 
 const emptyRestaurantForm: RestaurantForm = {
@@ -153,6 +154,7 @@ const emptyRestaurantForm: RestaurantForm = {
   taxEnabled: false,
   fssaiNumber: "",
   gstin: "",
+  dailySummaryEnabled: true,
 };
 
 function paiseToRupees(paise: number | null): string {
@@ -189,6 +191,7 @@ function restaurantFormFrom(value: ManagedRestaurant): RestaurantForm {
     taxEnabled: value.taxEnabled,
     fssaiNumber: value.fssaiNumber,
     gstin: value.gstin,
+    dailySummaryEnabled: value.dailySummaryEnabled,
   };
 }
 
@@ -240,6 +243,7 @@ function toRestaurantPayload(form: RestaurantForm) {
     taxEnabled: form.taxEnabled,
     fssaiNumber: form.fssaiNumber,
     gstin: form.gstin,
+    dailySummaryEnabled: form.dailySummaryEnabled,
   };
 }
 
@@ -1123,6 +1127,10 @@ function RestaurantFields({
           </label>
         ))}
       </fieldset>
+      <label className="flex min-h-11 items-center gap-2 text-sm">
+        <input type="checkbox" className="h-5 w-5" checked={form.dailySummaryEnabled} onChange={(event) => update("dailySummaryEnabled", event.target.checked)} />
+        Email me yesterday&apos;s sales every morning
+      </label>
     </>
   );
 }

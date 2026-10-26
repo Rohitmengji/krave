@@ -513,6 +513,15 @@ ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS pos_pin_hash TEXT;
 -- Printed on every bill: the FSSAI licence, and the GSTIN once GST is charged. '' = not given.
 ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS fssai_number TEXT NOT NULL DEFAULT '';
 ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS gstin TEXT NOT NULL DEFAULT '';
+-- Owners get yesterday's takings by email each morning unless they switch it off.
+ALTER TABLE managed_restaurants ADD COLUMN IF NOT EXISTS daily_summary_enabled INTEGER NOT NULL DEFAULT 1;
+-- One morning summary per restaurant and day, claimed before sending so a retried run cannot repeat it.
+CREATE TABLE IF NOT EXISTS restaurant_daily_summaries (
+  restaurant_id TEXT NOT NULL REFERENCES managed_restaurants(id) ON DELETE CASCADE,
+  report_date TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  PRIMARY KEY (restaurant_id, report_date)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS managed_restaurants_pos_outlet_idx ON managed_restaurants(pos_outlet_id);
 
 -- Orders from a managed menu. Payment is collected by the restaurant (at the counter or
@@ -598,6 +607,7 @@ FOR EACH STATEMENT EXECUTE FUNCTION audit_log_append_only();
 
 /** Every table, for the test helper that empties the database between cases. */
 export const PG_TABLES = [
+  "restaurant_daily_summaries",
   "restaurant_order_lines",
   "restaurant_orders",
   "restaurant_audit",

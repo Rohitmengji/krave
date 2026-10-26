@@ -44,6 +44,8 @@ export interface ManagedRestaurant {
   fssaiNumber: string;
   /** GST registration, printed on bills; "" when the restaurant is not registered. */
   gstin: string;
+  /** Owners get yesterday's takings by email each morning. */
+  dailySummaryEnabled: boolean;
   status: RestaurantStatus;
   createdAt: string;
   updatedAt: string;
@@ -188,6 +190,7 @@ export function mapRestaurant(row: RestaurantRow): ManagedRestaurant {
     timeZone: text(row.time_zone) || "Asia/Kolkata",
     fssaiNumber: text(row.fssai_number),
     gstin: text(row.gstin),
+    dailySummaryEnabled: row.daily_summary_enabled == null || Number(row.daily_summary_enabled) === 1,
     status: text(row.status) as RestaurantStatus,
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at),
@@ -477,6 +480,10 @@ export async function updateManagedRestaurant(
     const acceptingOrders = body.acceptingOrders === undefined ? Number(current.accepting_orders) === 1 : booleanValue(body.acceptingOrders, "Accepting orders");
     const fssaiNumber = body.fssaiNumber === undefined ? text(current.fssai_number) : fssaiValue(body.fssaiNumber);
     const gstin = body.gstin === undefined ? text(current.gstin) : gstinValue(body.gstin);
+    const dailySummaryEnabled =
+      body.dailySummaryEnabled === undefined
+        ? Number(current.daily_summary_enabled) === 1
+        : booleanValue(body.dailySummaryEnabled, "Morning email");
     const hours = body.hours === undefined ? null : openingHoursValue(body.hours);
     const now = new Date().toISOString();
 
@@ -487,13 +494,13 @@ export async function updateManagedRestaurant(
        delivery_enabled = $12, takeaway_enabled = $13, dine_in_enabled = $14,
        minimum_order_paise = $15, delivery_fee_paise = $16, tax_rate_bps = $17,
        tax_enabled = $18, updated_at = $19, accepting_orders = $20,
-       fssai_number = $21, gstin = $22
+       fssai_number = $21, gstin = $22, daily_summary_enabled = $23
        WHERE id = $1 RETURNING *`,
       [
         restaurantId, slug, name, description, phone, email, address, city, state, postalCode,
         JSON.stringify(serviceAreas), Number(deliveryEnabled), Number(takeawayEnabled),
         Number(dineInEnabled), minimumOrderPaise, deliveryFeePaise, taxRateBps,
-        Number(taxEnabled), now, Number(acceptingOrders), fssaiNumber, gstin,
+        Number(taxEnabled), now, Number(acceptingOrders), fssaiNumber, gstin, Number(dailySummaryEnabled),
       ]
     );
     if (hours) {

@@ -6,6 +6,7 @@ import {
   calculatePosBill,
   closeShift,
   findKitchenTicket,
+  foldDuplicateTable,
   getShiftSessions,
   mergeTableSessions,
   openShift,
@@ -17,6 +18,7 @@ import {
   setLineNote,
   setLineQuantity,
   setSessionCharges,
+  setTableGuest,
   settleSession,
   summarizeShift,
   transferTableSession,
@@ -274,6 +276,39 @@ describe("Dine-in POS billing engine", () => {
     expect(() => addItemToSession(mergedSource, MENU[0], 1)).toThrow();
     expect(() => settleSession(mergedSource, "CASH", 10000)).toThrow();
     expect(summarizeShift(merged).settledBills).toBe(0);
+  });
+
+  it("folds a table seated on a second phone into the bill already open there, as one party", () => {
+    const open = sendPendingToKitchen(addItemToSession(freshSession("T3"), MENU[0], 1)).session;
+    const duplicate = setTableGuest(
+      sendPendingToKitchen(addItemToSession(freshSession("T3"), MENU[1], 2)).session,
+      1,
+      { name: "Ramesh", phone: "98765 43210" }
+    );
+
+    const folded = foldDuplicateTable([open, duplicate], duplicate.sessionId, open.sessionId);
+    expect(folded).toHaveLength(1);
+    const [bill] = folded;
+    expect(bill.sessionId).toBe(open.sessionId);
+    expect(bill.lines.map((line) => [line.name, line.quantity])).toEqual([
+      [MENU[0].name, 1],
+      [MENU[1].name, 2],
+    ]);
+    // Same two guests, not four; the second phone's guest details fill the empty seat.
+    expect(bill.guestCount).toBe(2);
+    expect(bill.guests).toEqual([{ seat: 1, name: "Ramesh", phone: "+919876543210" }]);
+    // The second phone's kitchen ticket keeps its history under the open bill's numbering.
+    expect(bill.tickets.map((ticket) => ticket.kotNumber)).toEqual([1, 2]);
+    expect(bill.tickets[1].mergedFrom).toBe("T3 · KOT 1");
+
+    // An empty duplicate simply goes; the open bill object is untouched.
+    const empty = freshSession("T3");
+    const [kept] = foldDuplicateTable([open, empty], empty.sessionId, open.sessionId);
+    expect(kept).toBe(open);
+
+    // A duplicate that was already paid is money taken: it is left alone.
+    const paid = settleSession(duplicate, "CASH", 100000);
+    expect(foldDuplicateTable([open, paid], paid.sessionId, open.sessionId)).toEqual([open, paid]);
   });
 
   it("refuses merges across outlets, settled tables and empty sources", () => {

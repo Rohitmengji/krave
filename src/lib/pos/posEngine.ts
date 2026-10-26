@@ -712,6 +712,42 @@ export function mergeTableSessions(
 }
 
 /**
+ * Two phones seated the same table before either saw the other. It is one party, so the
+ * second phone's order joins the bill already open there, guests are not counted twice, and
+ * the duplicate disappears: the server never stored it. A duplicate that was already paid or
+ * moved is left alone, since money or a move has happened on it.
+ */
+export function foldDuplicateTable(
+  sessions: PosTableSession[],
+  duplicateId: string,
+  openId: string
+): PosTableSession[] {
+  const duplicate = sessions.find((candidate) => candidate.sessionId === duplicateId);
+  const open = sessions.find((candidate) => candidate.sessionId === openId);
+  if (!duplicate || !open || duplicate.status !== "OPEN" || open.status !== "OPEN") return sessions;
+  if (duplicate.outletId !== open.outletId || duplicate.tableId !== open.tableId) return sessions;
+
+  const merged =
+    duplicate.lines.length > 0 ? mergeTableSessions(sessions, duplicateId, openId) : sessions;
+  const filled = new Set(open.guests.map((guest) => guest.seat));
+  const extraGuests = duplicate.guests.filter((guest) => !filled.has(guest.seat));
+  const guestCount = Math.max(open.guestCount, duplicate.guestCount);
+  const changed = duplicate.lines.length > 0 || extraGuests.length > 0 || guestCount !== open.guestCount;
+
+  return merged.flatMap((candidate) => {
+    if (candidate.sessionId === duplicateId) return [];
+    if (candidate.sessionId !== openId || !changed) return [candidate];
+    return [
+      {
+        ...candidate,
+        guestCount,
+        guests: [...open.guests, ...extraGuests].sort((a, b) => a.seat - b.seat),
+      },
+    ];
+  });
+}
+
+/**
  * Apportion the table bill across guests based on item assignments (`0` = shared equally,
  * `1..guestCount` = assigned to that specific guest), including proportional discount,
  * service charge, and GST. Shares are whole rupees that add up to exactly the bill's grand
@@ -984,6 +1020,23 @@ export function findKitchenTicket(
     throw new Error(`KOT ${kotNumber} was not found on this table.`);
   }
   return ticket;
+}
+
+/**
+ * What a guest's copy of a bill must agree with the waiter's screen on before it is sent. Prices
+ * are left out: the server may reprice a line, and its figures are the ones that count.
+ */
+export function billFingerprint(session: PosTableSession): string {
+  return JSON.stringify([
+    session.status,
+    session.payment?.method ?? null,
+    session.payment?.settledAt ?? null,
+    session.tableId,
+    session.guestCount,
+    session.discountPercent,
+    session.serviceChargePercent,
+    session.lines.map((line) => `${line.lineId}:${line.quantity}`).sort(),
+  ]);
 }
 
 /** The bill in integer paise; the grand total is also given in whole rupees, as collected. */

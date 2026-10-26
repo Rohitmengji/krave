@@ -100,6 +100,18 @@ async function capturedPrices(
 /** Thrown when a device edited a table that moved on underneath it; reloading resolves it. */
 class StaleRevisionError extends Error {}
 
+/** Thrown when a table already has an open bill from another phone. */
+class TableTakenError extends Error {
+  constructor(
+    tableId: string,
+    readonly openSessionId: string,
+    /** A table just opened here, not one moved or reopened: its phone folds it into the open bill. */
+    readonly fold: boolean
+  ) {
+    super(`Table ${tableId} is already open on another phone.`);
+  }
+}
+
 async function writeSession(
   client: Queryable,
   userId: string,
@@ -115,7 +127,7 @@ async function writeSession(
   // teammate who can bill this outlet may add to it.
   const existing = (
     await client.query(
-      "SELECT revision, bill_number, user_id, outlet_id, last_device_id FROM pos_sessions WHERE id = $1 FOR UPDATE",
+      "SELECT revision, bill_number, user_id, outlet_id, last_device_id, table_id, status FROM pos_sessions WHERE id = $1 FOR UPDATE",
       [session.sessionId]
     )
   ).rows[0] as Record<string, unknown> | undefined;
@@ -139,6 +151,22 @@ async function writeSession(
     );
   }
   const revision = storedRevision + 1;
+
+  // One open bill per table. Two phones can seat a table before either sees the other; the
+  // per-table lock makes the second save wait for the first and then find it.
+  const claimsTable =
+    session.status === "OPEN" &&
+    (!existing || String(existing.table_id) !== session.tableId || String(existing.status) !== "OPEN");
+  if (claimsTable) {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `pos-table:${session.outletId}:${session.tableId}`,
+    ]);
+    const open = await client.query(
+      "SELECT id FROM pos_sessions WHERE outlet_id = $1 AND table_id = $2 AND status = 'OPEN' AND id <> $3 LIMIT 1",
+      [session.outletId, session.tableId, session.sessionId]
+    );
+    if (open.rows[0]) throw new TableTakenError(session.tableId, String(open.rows[0].id), !existing);
+  }
 
   // A bill keeps its number for life, through corrections and a reopen; it is given one the
   // first time it is paid. The lock makes numbering per restaurant gapless across terminals.
@@ -241,6 +269,8 @@ export interface PosSyncResult {
   conflicts: { sessionId: string; reason: string }[];
   /** Not recoverable by reloading: the table cannot be stored as sent. */
   rejected: { sessionId: string; reason: string }[];
+  /** Tables just opened here that another phone had already opened; fold into `openSessionId`. */
+  taken: { sessionId: string; openSessionId: string; reason: string }[];
   /** Printed on the receipt so a guest can attach the bill to their own account. */
   claimCodes: Record<string, string>;
   /** Printed on the bill; given by the server the first time a bill is paid. */
@@ -260,6 +290,7 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
 
   const rejected: PosSyncResult["rejected"] = [];
   const conflicts: PosSyncResult["conflicts"] = [];
+  const taken: PosSyncResult["taken"] = [];
   const prices = await loadPosPriceBook(userId);
 
   await transaction(async (client) => {
@@ -299,21 +330,26 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
           reason: error instanceof Error ? error.message : "Could not store this table.",
         };
         if (error instanceof StaleRevisionError) conflicts.push(entry);
-        else rejected.push(entry);
+        else if (error instanceof TableTakenError && error.fold) {
+          taken.push({ ...entry, openSessionId: error.openSessionId });
+        } else rejected.push(entry);
       }
     }
   });
 
   const outletIds = [...prices.outlets.keys()];
   // The reply is the tables this push sent, as stored now: accepted ones carry their new
-  // revision, and a conflict carries the other terminal's version to show instead.
-  const sent = await loadTables(
-    outletIds,
-    incoming.map((session) => session.sessionId)
-  );
+  // revision, and a conflict carries the other terminal's version to show instead. A table
+  // already open elsewhere comes back too, so this phone can fold its order into it.
+  const sent = await loadTables(outletIds, [
+    ...incoming.map((session) => session.sessionId),
+    ...taken.map((entry) => entry.openSessionId),
+  ]);
   // Only tables the server accepted from this push become claimable bills.
-  const refused = new Set([...rejected, ...conflicts].map((entry) => entry.sessionId));
-  const accepted = sent.sessions.filter((session) => !refused.has(session.sessionId));
+  const refused = new Set([...rejected, ...conflicts, ...taken].map((entry) => entry.sessionId));
+  const accepted = sent.sessions.filter(
+    (session) => !refused.has(session.sessionId) && incoming.some((sentOne) => sentOne.sessionId === session.sessionId)
+  );
   await recordSettledBills(accepted);
   return {
     sessions: sent.sessions,
@@ -321,6 +357,7 @@ export async function syncPosState(userId: string, payload: unknown): Promise<Po
     settledTotal: settledTotal(sent.sessions),
     rejected,
     conflicts,
+    taken,
     claimCodes: await getClaimCodes(
       accepted.filter((session) => session.status === "SETTLED").map((session) => session.sessionId)
     ),
@@ -508,6 +545,7 @@ export async function loadPosState(userId: string): Promise<PosSyncResult> {
     settledTotal: settledTotal(sessions),
     rejected: [],
     conflicts: [],
+    taken: [],
     claimCodes: {},
     billNumbers: billNumbersOf(sessionRows),
   };

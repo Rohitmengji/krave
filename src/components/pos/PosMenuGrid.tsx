@@ -3,6 +3,8 @@
 import React, { useMemo } from "react";
 import type { PosMenuItem } from "@/lib/pos/posEngine";
 
+const DIETARY_LABEL = { veg: "Veg", "non-veg": "Non-veg", egg: "Egg" } as const;
+
 export function DietaryMark({ dietary }: { dietary: "veg" | "non-veg" | "egg" }) {
   const tone =
     dietary === "veg"
@@ -13,8 +15,9 @@ export function DietaryMark({ dietary }: { dietary: "veg" | "non-veg" | "egg" })
   const [border, background] = tone.split(" ");
   return (
     <span
-      aria-label={dietary}
-      title={dietary}
+      role="img"
+      aria-label={DIETARY_LABEL[dietary]}
+      title={DIETARY_LABEL[dietary]}
       className={`inline-flex w-3.5 h-3.5 shrink-0 items-center justify-center rounded-sm border-2 ${border}`}
     >
       <span className={`w-1.5 h-1.5 rounded-full ${background}`} />
@@ -56,6 +59,11 @@ function CountBadge({ count }: { count: number }) {
       ×{count}
     </span>
   );
+}
+
+/** One name for screen readers; the visual layout (badge, price, mark) is hidden from them. */
+function spokenName(item: PosMenuItem, count: number): string {
+  return `${item.name}, ₹${item.price}${count > 0 ? `, ${count} on this table` : ""}`;
 }
 
 /**
@@ -119,18 +127,18 @@ function SingleDish({ dish, count, onAdd }: { dish: Dish; count: number; onAdd: 
     <button
       type="button"
       data-testid={`pos-menu-${item.itemId}`}
-      aria-label={`${item.name}, ₹${item.price}`}
       onClick={() => onAdd(item)}
       className={`flex min-h-14 items-center justify-between gap-2 rounded-2xl border bg-[#121721] px-3 py-2.5 text-left transition active:scale-[0.98] ${
         count > 0 ? "border-emerald-400/70" : "border-white/10 hover:border-emerald-400/60"
       }`}
     >
-      <span className="flex min-w-0 items-center gap-2">
+      <span className="sr-only">{spokenName(item, count)}</span>
+      <span aria-hidden="true" className="flex min-w-0 items-center gap-2">
         <DietaryMark dietary={dish.dietary} />
         <span className="truncate text-sm font-bold">{dish.dishName}</span>
         <CountBadge count={count} />
       </span>
-      <span className="shrink-0 text-sm font-black text-emerald-400">₹{item.price}</span>
+      <span aria-hidden="true" className="shrink-0 text-sm font-black text-emerald-400">₹{item.price}</span>
     </button>
   );
 }
@@ -159,7 +167,6 @@ function PortionedDish({
               key={item.itemId}
               type="button"
               data-testid={`pos-menu-${item.itemId}`}
-              aria-label={`${item.name}, ₹${item.price}`}
               onClick={() => onAdd(item)}
               className={`flex min-h-11 w-[4.5rem] flex-col items-center justify-center rounded-xl border px-1 py-1.5 transition active:scale-95 xl:w-auto xl:flex-1 ${
                 count > 0
@@ -167,11 +174,12 @@ function PortionedDish({
                   : "border-white/10 bg-[#0E131D] hover:border-emerald-400/60"
               }`}
             >
-              <span className="flex items-center text-[11px] font-bold opacity-80">
+              <span className="sr-only">{spokenName(item, count)}</span>
+              <span aria-hidden="true" className="flex items-center text-[11px] font-bold text-white/80">
                 {item.portion}
                 <CountBadge count={count} />
               </span>
-              <span className="text-sm font-black text-emerald-400">₹{item.price}</span>
+              <span aria-hidden="true" className="text-sm font-black text-emerald-400">₹{item.price}</span>
             </button>
           );
         })}

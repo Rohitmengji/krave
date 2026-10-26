@@ -149,7 +149,7 @@ export function ManagedOrderStatus({ initialOrder }: { initialOrder: PublicResta
                   className={`block h-2 rounded-full ${index <= reached ? "bg-emerald-700" : "bg-slate-200"}`}
                   aria-hidden="true"
                 />
-                <span className={index <= reached ? "font-semibold" : "text-slate-500"}>
+                <span className={index <= reached ? "font-semibold" : "text-slate-600"}>
                   {ORDER_STATUS_LABELS[step]}
                   <span className="sr-only">{index <= reached ? " (done)" : ""}</span>
                 </span>

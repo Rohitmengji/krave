@@ -20,9 +20,18 @@ import {
 
 export type PosSyncState = "local" | "pending" | "synced" | "failed";
 
+/** Shown in place of an account that has no name. */
+export const UNNAMED_ACCOUNT = "your account";
+
 const REQUEST_TIMEOUT_MS = 8_000;
 const PUSH_TIMEOUT_MS = 10_000;
 const DEVICE_KEY = "krave.pos.device.v1";
+/**
+ * What the server last accepted from this phone, kept across a reload. Without it a reopened
+ * terminal treats every table as the server's, so taps made after a save whose answer was
+ * lost would be replaced by the server's older copy.
+ */
+const BASELINE_KEY = "krave.pos.baseline.v1";
 let unstoredDeviceId: string | null = null;
 
 function newDeviceId(): string {
@@ -43,6 +52,33 @@ function deviceId(): string {
   } catch {
     unstoredDeviceId ??= newDeviceId();
     return unstoredDeviceId;
+  }
+}
+
+/** `[sessionId, revision, table as the server last had it]` for the tables on this phone. */
+type Baseline = [string, number, string][];
+
+function readBaseline(): Baseline {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(BASELINE_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (entry): entry is [string, number, string] =>
+        Array.isArray(entry) &&
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "number" &&
+        typeof entry[2] === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeBaseline(entries: Baseline): void {
+  try {
+    localStorage.setItem(BASELINE_KEY, JSON.stringify(entries));
+  } catch {
+    // Storage full or blocked: the device still bills, it just loses this on a reload.
   }
 }
 
@@ -164,6 +200,16 @@ export function usePosFloorSync({
   const readFloor = useEffectEvent(() => sessions);
   const tellWaiter = useEffectEvent((message: string) => announce(message));
 
+  // Written whenever this device and the server agree on a table, and read back on load.
+  const rememberBaseline = useEffectEvent(() => {
+    const onThisPhone = new Set(sessions.map((session) => session.sessionId));
+    writeBaseline(
+      [...syncedSnapshots.current]
+        .filter(([sessionId]) => onThisPhone.has(sessionId))
+        .map(([sessionId, json]) => [sessionId, syncRevisions.current.get(sessionId) ?? 0, json])
+    );
+  });
+
   const adoptServerCopies = useEffectEvent(
     (remote: PosTableSession[], options: { announce: boolean; force?: ReadonlySet<string> }) => {
       if (remote.length === 0) return;
@@ -235,6 +281,7 @@ export function usePosFloorSync({
       const billNumbers = numberRecord(result.billNumbers);
       setBillNumbers((current) => ({ ...current, ...billNumbers }));
       setSyncMessage(messages.length > 0 ? messages.join(" ") : null);
+      rememberBaseline();
     }
   );
 
@@ -242,6 +289,7 @@ export function usePosFloorSync({
   useEffect(() => {
     const before = new Map(committed.current.map((session) => [session.sessionId, session]));
     const updated = new Set<string>();
+    let agreed = false;
     for (const session of sessions) {
       const copy = serverCopies.current.get(session);
       if (!copy) continue;
@@ -250,12 +298,14 @@ export function usePosFloorSync({
       if (session.revision >= (syncRevisions.current.get(session.sessionId) ?? 0)) {
         syncRevisions.current.set(session.sessionId, session.revision);
         syncedSnapshots.current.set(session.sessionId, JSON.stringify(session));
+        agreed = true;
       }
       if (copy.announce && floorItemsChanged(before.get(session.sessionId), session)) {
         updated.add(session.tableId);
       }
     }
     committed.current = sessions;
+    if (agreed) rememberBaseline();
     if (updated.size > 0) tellWaiter(`Another phone updated table ${[...updated].join(", ")}.`);
   }, [sessions]);
 
@@ -264,6 +314,11 @@ export function usePosFloorSync({
     if (!hydrated) return;
     // What the page restored from this device's storage was not edited in this visit.
     for (const session of readFloor()) fromElsewhere.current.add(session);
+    // …but taps made after the last save the server confirmed are this device's, and win.
+    for (const [sessionId, revision, json] of readBaseline()) {
+      syncRevisions.current.set(sessionId, revision);
+      syncedSnapshots.current.set(sessionId, json);
+    }
     const stop = new AbortController();
     (async () => {
       const account = await getJson("/api/webroutes/account/me", stop.signal);
@@ -277,7 +332,7 @@ export function usePosFloorSync({
       const user = account.user;
       if (typeof user !== "object" || user === null) return;
       const { displayName } = user as Record<string, unknown>;
-      setSyncAccount(typeof displayName === "string" && displayName ? displayName : "your account");
+      setSyncAccount(typeof displayName === "string" && displayName ? displayName : UNNAMED_ACCOUNT);
 
       const state = await getJson("/api/webroutes/pos/state", stop.signal);
       if (stop.signal.aborted) return;

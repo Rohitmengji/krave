@@ -63,7 +63,26 @@ function shouldTakeServerCopy(
   // server: a poll that sees an earlier save of it must not wipe the taps since.
   if (!knowledge.fromElsewhere.has(session)) return false;
   // Restored from storage: the same revision with different contents is an edit never pushed.
-  return !(incoming.revision === known && json !== JSON.stringify(incoming));
+  if (incoming.revision === known && json !== JSON.stringify(incoming)) return false;
+  // A reopened terminal has no record of what it last agreed with the server, so a save of
+  // this table whose answer was lost looks newer than the taps that followed it. Items this
+  // device holds and the server's copy lacks are those taps: keep them and let the push
+  // settle it. A real clash comes back as a refusal, which replaces this table and says so.
+  return !unpushedItems(session, incoming);
+}
+
+/** Whether this device's table carries items the server's copy has not got. */
+function unpushedItems(session: PosTableSession, incoming: PosTableSession): boolean {
+  const theirs = new Map<string, number>();
+  for (const line of incoming.lines) {
+    theirs.set(line.itemId, (theirs.get(line.itemId) ?? 0) + line.quantity);
+  }
+  for (const line of session.lines) {
+    const left = (theirs.get(line.itemId) ?? 0) - line.quantity;
+    if (left < 0) return true;
+    theirs.set(line.itemId, left);
+  }
+  return false;
 }
 
 /**

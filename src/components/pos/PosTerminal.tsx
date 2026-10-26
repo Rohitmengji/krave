@@ -65,13 +65,16 @@ import {
 import type { DietaryType } from "@/types/krave";
 import { AVAILABILITY_KEY, restoreAvailability } from "@/lib/checkout";
 import { billSmsText } from "@/lib/pos/billSms";
-import { usePosFloorSync } from "./usePosFloorSync";
+import { UNNAMED_ACCOUNT, usePosFloorSync } from "./usePosFloorSync";
 import { displayMobile, GuestContactEditor, PosGuestCard } from "./PosGuestCard";
 import { SendBill } from "./SendBill";
+import { BillEmailAndPdf, SendToNumber, useBillLink } from "./PosBillShare";
 import { PosReceiptPaper } from "./PosReceiptPaper";
 import { PosSalesHistory } from "./PosSalesHistory";
 import { DietaryMark, PosMenuGrid } from "./PosMenuGrid";
 import { PosOwnerApproval, type OwnerCorrection } from "./PosOwnerApproval";
+import { OverlayDialog } from "../OverlayDialog";
+import { POS_CLOSE_BUTTON, POS_FORM_DIALOG, POS_PAPER_DIALOG } from "./posDialog";
 
 const ZONES = [...new Set(POS_TABLES.map((table) => table.zone))];
 
@@ -120,9 +123,9 @@ function formatElapsed(openedAt: string, now: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
+export function PosTerminal({ catalog, mailEnabled }: { catalog: PosCatalog; mailEnabled: boolean }) {
   if (catalog.status === "ready" && catalog.outlets.length > 0) {
-    return <PosFloor outlets={catalog.outlets} />;
+    return <PosFloor outlets={catalog.outlets} mailEnabled={mailEnabled} />;
   }
   const message =
     catalog.status === "signed-out"
@@ -163,7 +166,7 @@ export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
           <p className="text-sm text-white/75">{message.body}</p>
           <Link
             href={message.href}
-            className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 text-sm font-black text-white hover:bg-emerald-600"
+            className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 text-sm font-black text-white hover:bg-emerald-800"
           >
             {message.action}
           </Link>
@@ -173,7 +176,7 @@ export function PosTerminal({ catalog }: { catalog: PosCatalog }) {
   );
 }
 
-function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
+function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled: boolean }) {
   const [outletId, setOutletId] = useState(outlets[0].outletId);
   const [sessions, setSessions] = useState<PosTableSession[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -229,6 +232,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     setUnavailableItemIds,
     announce,
   });
+  // A waiter on their own phone serves and cashes up under their own name, not "Front Desk".
+  const [namedAfter, setNamedAfter] = useState<string | null>(null);
+  if (syncAccount && syncAccount !== UNNAMED_ACCOUNT && syncAccount !== namedAfter) {
+    setNamedAfter(syncAccount);
+    if (serverName === "Front Desk") setServerName(syncAccount);
+    if (cashierName === "Front Desk") setCashierName(syncAccount);
+  }
   /** `sessionId:seat` of the guest whose name and mobile are being corrected. */
   const [editingGuest, setEditingGuest] = useState<string | null>(null);
   const [editingServerFor, setEditingServerFor] = useState<string | null>(null);
@@ -312,6 +322,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
   const currentOutlet = outlets.find((outlet) => outlet.outletId === outletId) ?? outlets[0];
   const menu = currentOutlet.menu;
+  const seesAllSales = currentOutlet.seesAllSales;
   const categories = useMemo(
     () => [...new Set(menu.map((item) => item.categoryName))],
     [menu]
@@ -426,6 +437,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
   const leadGuest = seatedGuests.find((guest) => guest.seat === 1);
   // The whole bill goes to whoever is paying; the lead guest first, else anyone with a number.
   const smsGuest = seatedGuests.find((guest) => guest.phone) ?? null;
+  const signedIn = syncAccount !== null;
+  const receiptLink = useBillLink(receiptSessionId, signedIn);
+  const tableLink = useBillLink(
+    smsGuest?.phone && activeSession && activeSession.lines.length > 0 ? activeSession.sessionId : null,
+    signedIn
+  );
 
   function run(action: () => void) {
     try {
@@ -436,16 +453,38 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     }
   }
 
+  /**
+   * Applies a change to the table as it stands when React runs the update, not to the copy
+   * this render captured: a floor poll may have taken another phone's save in between, and
+   * rewriting the captured copy would quietly undo it. The engine call is pure, so running it
+   * once to check it is allowed and once to apply it is safe.
+   */
+  function changeSession(
+    sessionId: string,
+    change: (session: PosTableSession) => PosTableSession
+  ) {
+    setSessions((previous) =>
+      previous.map((session) => {
+        if (session.sessionId !== sessionId) return session;
+        try {
+          return change(session);
+        } catch {
+          // The newest copy will not take this change (it was settled or moved elsewhere).
+          return session;
+        }
+      })
+    );
+  }
+
   function updateActiveSession(update: (session: PosTableSession) => PosTableSession) {
     if (!activeSession) {
       setError("Open a table before adding items.");
       return;
     }
     run(() => {
-      const next = update(activeSession);
-      setSessions((previous) =>
-        previous.map((session) => (session.sessionId === next.sessionId ? next : session))
-      );
+      // Checked against the table on screen, so the waiter sees why a change is refused.
+      update(activeSession);
+      changeSession(activeSession.sessionId, update);
     });
   }
 
@@ -462,10 +501,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
     const session = sessions.find((candidate) => candidate.sessionId === sessionId);
     if (!session) return "This table is no longer on the floor.";
     try {
-      const next = setTableGuest(session, seat, input);
-      setSessions((previous) =>
-        previous.map((candidate) => (candidate.sessionId === sessionId ? next : candidate))
-      );
+      setTableGuest(session, seat, input);
+      changeSession(sessionId, (current) => setTableGuest(current, seat, input));
       return null;
     } catch (caught) {
       return caught instanceof Error ? caught.message : "Could not save this guest.";
@@ -650,7 +687,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3">
           <Link
             href="/"
-            className="flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold hover:bg-white/5"
+            className="flex min-h-11 items-center gap-1.5 rounded-xl border border-white/10 px-3 text-xs font-bold hover:bg-white/5"
           >
             <ArrowLeft className="h-4 w-4" />
             Storefront
@@ -678,7 +715,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 setActiveTableId(null);
                 setCategoryFilter(null);
               }}
-              className="rounded-xl border border-white/15 bg-[#121721] px-3 py-2 font-bold"
+              className="min-h-11 rounded-xl border border-white/15 bg-[#121721] px-3 text-base font-bold sm:text-xs"
             >
               {outlets.map((outlet) => (
                 <option key={outlet.outletId} value={outlet.outletId}>
@@ -689,27 +726,41 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
           </label>
 
           <div className="flex flex-wrap gap-2 text-[11px]">
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
+            <span className="flex min-h-11 items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3">
               Open tables <strong className="text-emerald-400">{openSessions.length}</strong>
             </span>
-            <button
-              type="button"
-              data-testid="pos-open-settled-history"
-              onClick={() => setSalesOpen(true)}
-              className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 hover:border-emerald-400/50 transition"
-            >
-              Bills today <strong className="text-emerald-400">{today.settledBills}</strong>
-            </button>
-            <button
-              type="button"
-              data-testid="pos-open-sales"
-              onClick={() => setSalesOpen(true)}
-              className="flex items-center gap-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1.5 font-bold hover:bg-emerald-500/20 transition"
-            >
-              Sales today <strong className="text-emerald-300">₹{formatMoney(today.grossSales)}</strong>
-              <span aria-hidden="true">›</span>
-            </button>
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
+            {seesAllSales ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="pos-open-settled-history"
+                  onClick={() => setSalesOpen(true)}
+                  className="min-h-11 rounded-lg border border-white/15 bg-white/5 px-3 hover:border-emerald-400/50 transition"
+                >
+                  Bills today <strong className="text-emerald-400">{today.settledBills}</strong>
+                </button>
+                <button
+                  type="button"
+                  data-testid="pos-open-sales"
+                  onClick={() => setSalesOpen(true)}
+                  className="flex min-h-11 items-center gap-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 font-bold hover:bg-emerald-500/20 transition"
+                >
+                  Sales today <strong className="text-emerald-300">₹{formatMoney(today.grossSales)}</strong>
+                  <span aria-hidden="true">›</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid="pos-open-sales"
+                onClick={() => setSalesOpen(true)}
+                className="flex min-h-11 items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 font-bold hover:border-emerald-400/50 transition"
+              >
+                <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                Find a bill
+              </button>
+            )}
+            <span className="flex min-h-11 items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3">
               Covers <strong className="text-emerald-400">{today.covers}</strong>
             </span>
             <button
@@ -728,7 +779,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 );
                 setShiftFormOpen(true);
               }}
-              className={`rounded-lg border px-2.5 py-1.5 font-bold transition ${
+              className={`min-h-11 rounded-lg border px-3 font-bold transition ${
                 activeShift
                   ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
                   : "border-white/15 bg-white/5 hover:border-emerald-400/50"
@@ -859,7 +910,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 data-testid="pos-toggle-custom-dish"
                 onClick={() => setCustomDishOpen((prev) => !prev)}
-                className="flex items-center gap-1 rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25"
+                className="flex min-h-11 items-center gap-1 rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Custom / Off-Menu Dish
@@ -876,26 +927,29 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <input
                 type="text"
                 required
+                aria-label="Dish or drink name"
                 value={customDishName}
                 onChange={(event) => setCustomDishName(event.target.value)}
                 placeholder="Custom dish / drink name"
-                className="rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-xs sm:col-span-2"
+                className="min-h-11 rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base sm:col-span-2 sm:text-xs"
               />
               <input
                 type="number"
+                inputMode="decimal"
                 required
                 min={1}
                 max={100000}
+                aria-label="Price in rupees"
                 value={customDishPrice}
                 onChange={(event) => setCustomDishPrice(event.target.value)}
                 placeholder="Price (₹)"
-                className="rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-xs"
+                className="min-h-11 rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base sm:text-xs"
               />
               <select
                 value={customDishDietary}
                 onChange={(event) => setCustomDishDietary(event.target.value as DietaryType)}
                 aria-label="Dietary type"
-                className="rounded-xl border border-white/15 bg-[#0E131D] px-2.5 py-2 text-xs font-bold"
+                className="min-h-11 rounded-xl border border-white/15 bg-[#0E131D] px-2.5 text-base font-bold sm:text-xs"
               >
                 <option value="veg">Veg</option>
                 <option value="non-veg">Non-Veg</option>
@@ -903,15 +957,16 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               </select>
               <input
                 type="text"
+                aria-label="Cooking note (optional)"
                 value={customDishNote}
                 onChange={(event) => setCustomDishNote(event.target.value)}
                 placeholder="Cooking note (optional)"
-                className="rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-xs"
+                className="min-h-11 rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base sm:text-xs"
               />
               <button
                 type="submit"
                 data-testid="pos-submit-custom-dish"
-                className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-white"
+                className="min-h-11 rounded-xl bg-emerald-500 px-3 text-sm font-black text-black"
               >
                 Add to Table
               </button>
@@ -930,7 +985,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   revealMenuTop();
                 }}
                 placeholder="Search dishes, e.g. mutton fry"
-                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#121721] py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-400/60"
+                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#121721] py-2 pl-9 pr-3 text-base outline-none focus:border-emerald-400/60 sm:text-sm"
               />
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
@@ -940,7 +995,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   setCategoryFilter(null);
                   revealMenuTop();
                 }}
-                className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-bold ${
+                className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl border px-3.5 text-xs font-bold ${
                   categoryFilter === null
                     ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                     : "border-white/10 bg-[#121721]"
@@ -956,7 +1011,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     setCategoryFilter(category);
                     revealMenuTop();
                   }}
-                  className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-bold ${
+                  className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl border px-3.5 text-xs font-bold ${
                     categoryFilter === category
                       ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
                       : "border-white/10 bg-[#121721]"
@@ -1001,12 +1056,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     value={serverDraft}
                     maxLength={40}
                     onChange={(event) => setServerDraft(event.target.value)}
-                    className="min-h-9 w-28 rounded-lg border border-white/15 bg-[#0E131D] px-2 text-xs"
+                    className="min-h-11 w-32 rounded-lg border border-white/15 bg-[#0E131D] px-2 text-base sm:text-xs"
                   />
                   <button
                     type="submit"
                     data-testid="pos-server-save"
-                    className="min-h-9 rounded-lg bg-emerald-600 px-2.5 text-xs font-black"
+                    className="min-h-11 rounded-lg bg-emerald-500 px-3 text-xs font-black text-black"
                   >
                     Save
                   </button>
@@ -1014,9 +1069,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     type="button"
                     aria-label="Cancel"
                     onClick={() => setEditingServerFor(null)}
-                    className="min-h-9 rounded-lg px-1.5 hover:bg-white/10"
+                    className={POS_CLOSE_BUTTON}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-4 w-4" />
                   </button>
                 </form>
               ) : (
@@ -1028,7 +1083,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     setServerDraft(activeSession.serverName);
                     setEditingServerFor(activeSession.sessionId);
                   }}
-                  className="flex min-h-9 items-center gap-1 rounded-lg px-2 text-[11px] opacity-70 hover:bg-white/5 hover:opacity-100"
+                  className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-[11px] opacity-70 hover:bg-white/5 hover:opacity-100"
                 >
                   {activeSession.serverName}
                   <Pencil className="h-3 w-3" aria-hidden="true" />
@@ -1096,6 +1151,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     <span className="sr-only">Guests</span>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={1}
                       max={50}
                       value={activeSession.guestCount}
@@ -1104,7 +1160,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                           setSessionCharges(session, { guestCount: Number(event.target.value) })
                         )
                       }
-                      className="w-14 rounded-lg border border-white/15 bg-[#0E131D] px-2 py-1"
+                      className="min-h-11 w-16 rounded-lg border border-white/15 bg-[#0E131D] px-2 text-base sm:text-xs"
                     />
                   </label>
                   <span className="flex items-center gap-1 opacity-60">
@@ -1114,13 +1170,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 </div>
 
                 {freeTables.length > 0 && (
-                  <label className="flex items-center gap-1 text-[10px]">
-                    <ArrowRightLeft className="h-3 w-3 opacity-60" />
+                  <label className="flex items-center gap-1 text-xs">
+                    <ArrowRightLeft className="h-3.5 w-3.5 opacity-60" />
                     <select
                       aria-label="Move table"
                       value=""
                       onChange={(event) => handleTransferTable(event.target.value)}
-                      className="rounded-lg border border-white/15 bg-[#0E131D] px-2 py-1 font-bold"
+                      className="min-h-11 rounded-lg border border-white/15 bg-[#0E131D] px-2.5 text-base font-bold sm:text-xs"
                     >
                       <option value="">Move table...</option>
                       {freeTables.map((table) => (
@@ -1133,14 +1189,14 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 )}
 
                 {mergeCandidates.length > 0 && (
-                  <label className="flex items-center gap-1 text-[10px]">
-                    <Merge className="h-3 w-3 opacity-60" />
+                  <label className="flex items-center gap-1 text-xs">
+                    <Merge className="h-3.5 w-3.5 opacity-60" />
                     <select
                       aria-label="Merge another table into this bill"
                       data-testid="pos-merge-select"
                       value=""
                       onChange={(event) => handleMergeTable(event.target.value)}
-                      className="rounded-lg border border-white/15 bg-[#0E131D] px-2 py-1 font-bold"
+                      className="min-h-11 rounded-lg border border-white/15 bg-[#0E131D] px-2.5 text-base font-bold sm:text-xs"
                     >
                       <option value="">Merge table...</option>
                       {mergeCandidates.map((session) => (
@@ -1183,7 +1239,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                           <DietaryMark dietary={line.dietary} />
                           <span className="truncate text-xs font-bold">{line.name}</span>
                         </div>
-                        <div className="mt-0.5 text-[10px] opacity-60">
+                        <div className="mt-0.5 text-[10px] text-white/70">
                           ₹{line.unitPrice} ×{" "}
                           {line.kotNumber === null ? (
                             <span className="text-amber-400">pending</span>
@@ -1213,8 +1269,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                               setLineNote(session, line.lineId, event.target.value)
                             )
                           }
-                          placeholder="Add note (e.g. Less spicy, Jain, No onion)"
-                          className="w-full rounded-lg border border-white/10 bg-[#121721] px-2 py-1 text-[10px] outline-none"
+                          placeholder="Note: less spicy, Jain, no onion"
+                          className="min-h-11 w-full rounded-lg border border-white/10 bg-[#121721] px-3 text-base outline-none sm:text-xs"
                         />
                       </div>
                     )}
@@ -1229,11 +1285,11 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                               setLineQuantity(session, line.lineId, line.quantity - 1)
                             )
                           }
-                          className="px-2 py-1 hover:bg-white/10"
+                          className="flex h-11 w-11 items-center justify-center hover:bg-white/10"
                         >
-                          <Minus className="h-3 w-3" />
+                          <Minus className="h-4 w-4" />
                         </button>
-                        <span className="px-2.5 text-xs font-black">{line.quantity}</span>
+                        <span className="min-w-8 text-center text-sm font-black">{line.quantity}</span>
                         <button
                           type="button"
                           aria-label={`Add ${line.name}`}
@@ -1242,9 +1298,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                               setLineQuantity(session, line.lineId, line.quantity + 1)
                             )
                           }
-                          className="px-2 py-1 hover:bg-white/10"
+                          className="flex h-11 w-11 items-center justify-center hover:bg-white/10"
                         >
-                          <Plus className="h-3 w-3" />
+                          <Plus className="h-4 w-4" />
                         </button>
                       </div>
 
@@ -1259,15 +1315,15 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                             setVoidTarget({ lineId: line.lineId, name: line.name });
                           }
                         }}
-                        className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold text-rose-400 hover:bg-rose-500/15"
+                        className="flex min-h-11 items-center gap-1 rounded-lg px-3 text-xs font-bold text-rose-400 hover:bg-rose-500/15"
                       >
                         {line.kotNumber === null ? (
                           <>
-                            <Trash2 className="h-3 w-3" /> Remove
+                            <Trash2 className="h-3.5 w-3.5" /> Remove
                           </>
                         ) : (
                           <>
-                            <Ban className="h-3 w-3" /> Void
+                            <Ban className="h-3.5 w-3.5" /> Void
                           </>
                         )}
                       </button>
@@ -1281,6 +1337,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   <span className="opacity-60">Discount %</span>
                   <input
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={100}
                     value={activeSession.discountPercent}
@@ -1291,13 +1348,15 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         })
                       )
                     }
-                    className="w-full rounded-lg border border-white/15 bg-[#0E131D] px-2 py-1.5"
+                    onFocus={(event) => event.currentTarget.select()}
+                    className="min-h-11 w-full rounded-lg border border-white/15 bg-[#0E131D] px-3 text-base sm:text-xs"
                   />
                 </label>
                 <label className="space-y-1">
                   <span className="opacity-60">Service %</span>
                   <input
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={20}
                     value={activeSession.serviceChargePercent}
@@ -1308,7 +1367,8 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         })
                       )
                     }
-                    className="w-full rounded-lg border border-white/15 bg-[#0E131D] px-2 py-1.5"
+                    onFocus={(event) => event.currentTarget.select()}
+                    className="min-h-11 w-full rounded-lg border border-white/15 bg-[#0E131D] px-3 text-base sm:text-xs"
                   />
                 </label>
               </div>
@@ -1364,7 +1424,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   data-testid="pos-send-kitchen"
                   onClick={handleSendToKitchen}
                   disabled={pendingCount === 0}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-2.5 text-xs font-black text-black disabled:opacity-40"
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-amber-500 text-sm font-black text-black disabled:opacity-40"
                 >
                   <ChefHat className="h-4 w-4" />
                   Send to Kitchen{pendingCount > 0 ? ` (${pendingCount})` : ""}
@@ -1376,19 +1436,20 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                     data-testid="pos-open-split"
                     onClick={() => setSplitModalOpen(true)}
                     disabled={activeSession.lines.length === 0}
-                    className="flex items-center justify-center gap-1 rounded-xl border border-white/15 py-2.5 text-xs font-bold disabled:opacity-40"
+                    className="flex min-h-11 items-center justify-center gap-1 rounded-xl border border-white/15 text-xs font-bold disabled:opacity-40"
                   >
                     <Split className="h-3.5 w-3.5" />
                     Split Bill
                   </button>
                   <button
                     type="button"
+                    data-testid="pos-open-bill"
                     onClick={() => setReceiptSessionId(activeSession.sessionId)}
                     disabled={activeSession.lines.length === 0}
-                    className="flex items-center justify-center gap-1 rounded-xl border border-white/15 py-2.5 text-xs font-bold disabled:opacity-40"
+                    className="flex min-h-11 items-center justify-center gap-1 rounded-xl border border-white/15 text-xs font-bold disabled:opacity-40"
                   >
                     <Receipt className="h-3.5 w-3.5" />
-                    Print Bill
+                    Send / Print
                   </button>
                   <button
                     type="button"
@@ -1400,7 +1461,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                       setSettleOpen(true);
                     }}
                     disabled={activeSession.lines.length === 0}
-                    className="flex items-center justify-center gap-1 rounded-xl bg-emerald-500 py-2.5 text-xs font-black disabled:opacity-40"
+                    className="flex min-h-11 items-center justify-center gap-1 rounded-xl bg-emerald-500 text-xs font-black text-black disabled:opacity-40"
                   >
                     <Wallet className="h-3.5 w-3.5" />
                     Settle
@@ -1420,6 +1481,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                       guestCount: activeSession.guestCount,
                       share: null,
                       paid: false,
+                      link: tableLink,
                     })}
                   />
                 )}
@@ -1432,7 +1494,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
               {activeSession.tickets.length > 0 && (
                 <details className="text-[11px] opacity-70">
-                  <summary className="cursor-pointer font-bold">
+                  <summary className="min-h-11 cursor-pointer py-3 font-bold">
                     Kitchen tickets ({activeSession.tickets.length})
                   </summary>
                   <ul className="mt-1 space-y-1">
@@ -1446,7 +1508,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                           type="button"
                           data-testid={`pos-reprint-kot-${ticket.kotNumber}`}
                           onClick={() => handleReprintTicket(ticket.kotNumber)}
-                          className="flex items-center gap-1 rounded-lg border border-white/15 px-2 py-1 font-bold hover:bg-white/10"
+                          className="flex min-h-11 items-center gap-1 rounded-lg border border-white/15 px-3 font-bold hover:bg-white/10"
                         >
                           <Printer className="h-3 w-3" /> Reprint
                         </button>
@@ -1458,7 +1520,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
               {activeSession.voids.length > 0 && (
                 <details className="text-[11px] opacity-70">
-                  <summary className="cursor-pointer font-bold">
+                  <summary className="min-h-11 cursor-pointer py-3 font-bold">
                     Voided items ({activeSession.voids.length})
                   </summary>
                   <ul className="mt-1 space-y-1">
@@ -1515,15 +1577,16 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
       {/* Seat guests */}
       {openTableForm && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Seat guests"
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setOpenTableForm(null)}
+          label="Seat guests"
+          className={POS_FORM_DIALOG}
+          closeOnBackdrop={false}
         >
           <form
             onSubmit={handleOpenTable}
-            className="w-full max-w-sm space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
+            className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
           >
             <div className="flex items-center justify-between">
               <h2 className="text-base font-black">Seat guests at {openTableForm.tableId}</h2>
@@ -1531,9 +1594,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 aria-label="Cancel"
                 onClick={() => setOpenTableForm(null)}
-                className="rounded-lg p-1 hover:bg-white/10"
+                className={POS_CLOSE_BUTTON}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -1541,12 +1604,14 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <span className="opacity-70">Number of guests</span>
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
                 max={50}
                 required
                 value={guestCount}
                 onChange={(event) => setGuestCount(Number(event.target.value))}
-                className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                onFocus={(event) => event.currentTarget.select()}
+                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
               />
             </label>
 
@@ -1557,7 +1622,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 required
                 value={serverName}
                 onChange={(event) => setServerName(event.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
               />
             </label>
 
@@ -1571,7 +1636,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   autoComplete="off"
                   value={leadGuestName}
                   onChange={(event) => setLeadGuestName(event.target.value)}
-                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
                 />
               </label>
               <label className="block space-y-1 text-xs">
@@ -1585,7 +1650,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   value={leadGuestPhone}
                   onChange={(event) => setLeadGuestPhone(event.target.value)}
                   placeholder="10 digits"
-                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
                 />
               </label>
             </div>
@@ -1602,25 +1667,29 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <button
               type="submit"
               data-testid="pos-confirm-open-table"
-              className="w-full rounded-xl bg-emerald-500 py-2.5 text-xs font-black"
+              className="min-h-12 w-full rounded-xl bg-emerald-500 text-sm font-black text-black"
             >
               Open Table
             </button>
           </form>
-        </div>
+        </OverlayDialog>
       )}
 
       {/* Void reason */}
       {voidTarget && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Void item"
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => {
+            setVoidTarget(null);
+            setVoidReason("");
+          }}
+          label="Void item"
+          className={POS_FORM_DIALOG}
+          closeOnBackdrop={false}
         >
           <form
             onSubmit={handleVoid}
-            className="w-full max-w-sm space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
+            className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
           >
             <h2 className="text-base font-black">Void {voidTarget.name}</h2>
             <p className="text-xs opacity-65">
@@ -1630,10 +1699,11 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               type="text"
               required
               autoFocus
+              aria-label="Reason"
               value={voidReason}
               onChange={(event) => setVoidReason(event.target.value)}
               placeholder="e.g. Guest changed order"
-              className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-xs"
+              className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
             />
             {error && (
               <p role="alert" className="text-xs text-rose-400">
@@ -1647,29 +1717,30 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   setVoidTarget(null);
                   setVoidReason("");
                 }}
-                className="rounded-xl border border-white/15 py-2.5 text-xs font-bold"
+                className="min-h-11 rounded-xl border border-white/15 text-sm font-bold"
               >
                 Cancel
               </button>
-              <button type="submit" className="rounded-xl bg-rose-500 py-2.5 text-xs font-black">
+              <button type="submit" className="min-h-11 rounded-xl bg-rose-500 text-sm font-black text-black">
                 Void Item
               </button>
             </div>
           </form>
-        </div>
+        </OverlayDialog>
       )}
 
       {/* Settle payment */}
       {settleOpen && activeSession && bill && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Settle bill"
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setSettleOpen(false)}
+          label="Settle bill"
+          className={POS_FORM_DIALOG}
+          closeOnBackdrop={false}
         >
           <form
             onSubmit={handleSettle}
-            className="w-full max-w-sm space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
+            className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
           >
             <div className="flex items-center justify-between">
               <h2 className="text-base font-black">Settle Table {activeSession.tableId}</h2>
@@ -1677,9 +1748,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 aria-label="Cancel"
                 onClick={() => setSettleOpen(false)}
-                className="rounded-lg p-1 hover:bg-white/10"
+                className={POS_CLOSE_BUTTON}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -1715,10 +1786,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 <span className="opacity-70">Cash received</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={bill.grandTotal}
                   value={tendered}
                   onChange={(event) => setTendered(event.target.value)}
-                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-base font-black"
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base font-black"
                 />
                 <span className="block pt-1 text-[11px] opacity-70">
                   Change due:{" "}
@@ -1738,23 +1811,23 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <button
               type="submit"
               data-testid="pos-confirm-settle"
-              className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black"
+              className="min-h-12 w-full rounded-xl bg-emerald-500 text-sm font-black text-black"
             >
               Confirm Payment & Close Table
             </button>
           </form>
-        </div>
+        </OverlayDialog>
       )}
 
       {/* Kitchen ticket */}
       {kitchenTicket && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Kitchen ticket"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setKitchenTicket(null)}
+          label="Kitchen ticket"
+          className={POS_PAPER_DIALOG}
         >
-          <div className="pos-receipt w-full max-w-xs rounded-2xl border border-white/15 bg-white p-5 font-mono text-xs text-black">
+          <div className="pos-receipt rounded-2xl bg-white p-5 font-mono text-xs text-black">
             <div className="text-center">
               <div className="text-sm font-black">
                 {isReprint ? "KITCHEN TICKET — REPRINT" : "KITCHEN ORDER TICKET"}
@@ -1785,7 +1858,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex items-center justify-center gap-1 rounded-lg border border-black/20 py-2 font-bold"
+                className="flex min-h-11 items-center justify-center gap-1 rounded-lg border border-black/20 font-bold"
               >
                 <Printer className="h-3.5 w-3.5" /> Print
               </button>
@@ -1793,24 +1866,24 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 data-testid="pos-close-kot"
                 onClick={() => setKitchenTicket(null)}
-                className="rounded-lg bg-black py-2 font-bold text-white"
+                className="min-h-11 rounded-lg bg-black font-bold text-white"
               >
                 Done
               </button>
             </div>
           </div>
-        </div>
+        </OverlayDialog>
       )}
 
       {/* Bill / receipt */}
       {receiptSession && receiptBill && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Bill"
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setReceiptSessionId(null)}
+          label="Bill"
+          className={POS_PAPER_DIALOG}
         >
-          <div className="pos-receipt my-auto w-full max-w-xs rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
+          <div className="pos-receipt rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
             <PosReceiptPaper
               session={receiptSession}
               bill={receiptBill}
@@ -1819,6 +1892,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             />
 
             <div className="pos-no-print mt-4 space-y-2">
+              <h3 className="font-sans text-xs font-black uppercase tracking-wide text-black/70">Send bill</h3>
               {receiptSmsGuests.map((guest) =>
                 editingGuest === `${receiptSession.sessionId}:${guest.seat}` ? (
                   <GuestContactEditor
@@ -1840,7 +1914,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         data-testid={`pos-receipt-edit-${guest.seat}`}
                         aria-label={`Edit ${guest.name || "guest"}'s number`}
                         onClick={() => setEditingGuest(`${receiptSession.sessionId}:${guest.seat}`)}
-                        className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg border border-black/20 px-2.5 font-bold"
+                        className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg border border-black/20 px-3 font-bold"
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                         Edit
@@ -1858,31 +1932,41 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         guestCount: receiptSession.guestCount,
                         share: null,
                         paid: receiptSession.status === "SETTLED",
+                        link: receiptLink,
                       })}
                     />
                   </div>
                 )
               )}
-              {receiptSmsGuests.length === 0 &&
-                (editingGuest === `${receiptSession.sessionId}:1` ? (
-                  <GuestContactEditor
-                    seat={1}
-                    guest={receiptSession.guests.find((guest) => guest.seat === 1)}
-                    tone="light"
-                    onSave={(input) => saveGuest(receiptSession.sessionId, 1, input)}
-                    onDone={() => setEditingGuest(null)}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    data-testid="pos-receipt-add-guest"
-                    onClick={() => setEditingGuest(`${receiptSession.sessionId}:1`)}
-                    className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-black/30 font-sans text-xs font-bold"
-                  >
-                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                    Add a mobile number to text this bill
-                  </button>
-                ))}
+              {receiptSmsGuests.length === 0 && (
+                <SendToNumber
+                  testId="pos-receipt-quick"
+                  numberTestId="pos-receipt-number"
+                  label={`SMS ₹${receiptBill.grandTotal}`}
+                  text={billSmsText({
+                    outletName: receiptSession.outletName,
+                    tableId: receiptSession.tableId,
+                    guestName: receiptSession.guests.find((guest) => guest.seat === 1)?.name ?? "",
+                    total: receiptBill.grandTotal,
+                    guestCount: receiptSession.guestCount,
+                    share: null,
+                    paid: receiptSession.status === "SETTLED",
+                    link: receiptLink,
+                  })}
+                  onSend={(phone) => {
+                    const name = receiptSession.guests.find((guest) => guest.seat === 1)?.name ?? "";
+                    // After the messaging app has opened, keep the number on the table for a resend.
+                    setTimeout(() => saveGuest(receiptSession.sessionId, 1, { name, phone }), 0);
+                  }}
+                />
+              )}
+              <BillEmailAndPdf
+                sessionId={receiptSession.sessionId}
+                link={receiptLink}
+                signedIn={signedIn}
+                mailEnabled={mailEnabled}
+                testId="pos-receipt"
+              />
             </div>
 
             {receiptSession.status === "SETTLED" && (
@@ -1922,7 +2006,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex items-center justify-center gap-1 rounded-lg border border-black/20 py-2 font-bold"
+                className="flex min-h-11 items-center justify-center gap-1 rounded-lg border border-black/20 font-bold"
               >
                 <Printer className="h-3.5 w-3.5" /> Print
               </button>
@@ -1930,13 +2014,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 data-testid="pos-close-receipt"
                 onClick={() => setReceiptSessionId(null)}
-                className="flex items-center justify-center gap-1 rounded-lg bg-black py-2 font-bold text-white"
+                className="flex min-h-11 items-center justify-center gap-1 rounded-lg bg-black font-bold text-white"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" /> Close
               </button>
             </div>
           </div>
-        </div>
+        </OverlayDialog>
       )}
 
       {ownerAction &&
@@ -1958,14 +2042,15 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
       {/* Interactive Guest Bill Splitter Modal */}
       {splitModalOpen && activeSession && bill && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Split bill by guest"
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto"
+        <OverlayDialog
+          isOpen
+          onClose={() => setSplitModalOpen(false)}
+          label="Split bill by guest"
+          className="pos-no-print m-auto w-full max-w-xl bg-transparent p-4 text-white backdrop:bg-black/80"
+          closeOnBackdrop={false}
         >
-          <div className="my-auto w-full max-w-xl space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5">
-            <div className="flex items-center justify-between">
+          <div className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5">
+            <div className="flex items-start justify-between gap-2">
               <div>
                 <h2 className="text-base font-black">
                   Split Bill — Table {activeSession.tableId} ({activeSession.guestCount} Guests)
@@ -1979,9 +2064,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 aria-label="Close split calculator"
                 onClick={() => setSplitModalOpen(false)}
-                className="rounded-lg p-1 hover:bg-white/10"
+                className={POS_CLOSE_BUTTON}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -1989,7 +2074,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               {activeSession.lines.map((line) => (
                 <div
                   key={line.lineId}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#0E131D] p-2.5 text-xs"
+                  className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[#0E131D] p-2.5 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                 >
                   <div>
                     <div className="font-bold">
@@ -2008,7 +2093,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                         [line.lineId]: Number(event.target.value),
                       }))
                     }
-                    className="rounded-lg border border-white/15 bg-[#121721] px-2.5 py-1.5 text-xs font-bold"
+                    className="min-h-11 rounded-lg border border-white/15 bg-[#121721] px-2.5 text-base font-bold sm:text-xs"
                   >
                     <option value={0}>Shared Equally (All Guests)</option>
                     {guestSplitShares.map((share) => (
@@ -2036,11 +2121,11 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               ))}
             </div>
 
-            <div className="flex justify-between border-t border-white/10 pt-3">
+            <div className="flex justify-between gap-2 border-t border-white/10 pt-3">
               <button
                 type="button"
                 onClick={() => setLineAssignments({})}
-                className="rounded-xl border border-white/15 px-3 py-2 text-xs font-bold"
+                className="min-h-11 rounded-xl border border-white/15 px-3 text-xs font-bold"
               >
                 Reset to Equal Split
               </button>
@@ -2048,19 +2133,21 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 data-testid="pos-close-split"
                 onClick={() => setSplitModalOpen(false)}
-                className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black"
+                className="min-h-11 rounded-xl bg-emerald-500 px-5 text-sm font-black text-black"
               >
                 Done
               </button>
             </div>
           </div>
-        </div>
+        </OverlayDialog>
       )}
 
       {salesOpen && (
         <PosSalesHistory
           outletId={outletId}
           outletName={currentOutlet.name}
+          seesAllSales={seesAllSales}
+          mailEnabled={mailEnabled}
           localSessions={sessions}
           onClose={() => setSalesOpen(false)}
         />
@@ -2068,15 +2155,16 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
 
       {/* Shift open / cash-up */}
       {shiftFormOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={activeShift ? "Close shift" : "Open shift"}
-          className="pos-no-print fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setShiftFormOpen(false)}
+          label={activeShift ? "Close shift" : "Open shift"}
+          className={POS_FORM_DIALOG}
+          closeOnBackdrop={false}
         >
           <form
             onSubmit={activeShift ? handleCloseShift : handleOpenShift}
-            className="w-full max-w-sm space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
+            className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5"
           >
             <div className="flex items-center justify-between">
               <h2 className="text-base font-black">
@@ -2086,9 +2174,9 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 aria-label="Cancel"
                 onClick={() => setShiftFormOpen(false)}
-                className="rounded-lg p-1 hover:bg-white/10"
+                className={POS_CLOSE_BUTTON}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -2099,7 +2187,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 required
                 value={cashierName}
                 onChange={(event) => setCashierName(event.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2"
+                className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
               />
             </label>
 
@@ -2124,11 +2212,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                   <span className="opacity-70">Cash counted in the drawer</span>
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     required
                     value={countedCash}
                     onChange={(event) => setCountedCash(event.target.value)}
-                    className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-base font-black"
+                    onFocus={(event) => event.currentTarget.select()}
+                    className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base font-black"
                   />
                 </label>
                 <p className="text-[11px] opacity-60">
@@ -2140,11 +2230,12 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 <span className="opacity-70">Opening cash float (₹)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   required
                   value={openingCash}
                   onChange={(event) => setOpeningCash(event.target.value)}
-                  className="w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 py-2 text-base font-black"
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base font-black"
                 />
               </label>
             )}
@@ -2158,25 +2249,26 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
             <button
               type="submit"
               data-testid="pos-confirm-shift"
-              className="w-full rounded-xl bg-emerald-500 py-2.5 text-xs font-black"
+              className="min-h-12 w-full rounded-xl bg-emerald-500 text-sm font-black text-black"
             >
               {activeShift ? "Close Shift & Print Z-Report" : "Open Shift"}
             </button>
           </form>
-        </div>
+        </OverlayDialog>
       )}
 
       {/* Z-report */}
       {zReport && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Z report"
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4"
+        <OverlayDialog
+          isOpen
+          onClose={() => setZReport(null)}
+          label="Z report"
+          className={POS_PAPER_DIALOG}
+          closeOnBackdrop={false}
         >
           <div
             data-testid="pos-z-report"
-            className="pos-receipt my-auto w-full max-w-xs rounded-2xl bg-white p-5 font-mono text-[11px] text-black"
+            className="pos-receipt rounded-2xl bg-white p-5 font-mono text-[11px] text-black"
           >
             <div className="text-center">
               <div className="text-sm font-black">Z-REPORT</div>
@@ -2271,7 +2363,7 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex items-center justify-center gap-1 rounded-lg border border-black/20 py-2 font-bold"
+                className="flex min-h-11 items-center justify-center gap-1 rounded-lg border border-black/20 font-bold"
               >
                 <Printer className="h-3.5 w-3.5" /> Print
               </button>
@@ -2279,13 +2371,13 @@ function PosFloor({ outlets }: { outlets: PosOutlet[] }) {
                 type="button"
                 data-testid="pos-close-z-report"
                 onClick={() => setZReport(null)}
-                className="flex items-center justify-center gap-1 rounded-lg bg-black py-2 font-bold text-white"
+                className="flex min-h-11 items-center justify-center gap-1 rounded-lg bg-black font-bold text-white"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" /> Close
               </button>
             </div>
           </div>
-        </div>
+        </OverlayDialog>
       )}
 
       <footer className="pos-no-print mx-auto max-w-[1600px] px-4 pb-8 text-[11px] opacity-50">

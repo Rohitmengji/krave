@@ -143,7 +143,7 @@ export function RestaurantOrdersPanel({ restaurantId, acceptingOrders }: { resta
               type="button"
               aria-pressed={view === option}
               onClick={() => dispatch({ type: "view", view: option })}
-              className="min-h-10 rounded-lg px-3 text-sm font-bold aria-pressed:bg-emerald-600 aria-pressed:text-white"
+              className="min-h-10 rounded-lg px-3 text-sm font-bold aria-pressed:bg-emerald-700 aria-pressed:text-white"
             >
               {VIEW_LABELS[option]}
             </button>
@@ -294,7 +294,7 @@ function OrderCard({ order, busy, onChange }: { order: OwnerOrder; busy: boolean
               disabled={busy}
               onClick={() => onChange(to)}
               className={`min-h-11 rounded-xl px-4 font-bold disabled:opacity-50 ${
-                to === "rejected" || to === "cancelled" ? "border border-red-400/50 text-red-200" : "bg-emerald-600 text-white"
+                to === "rejected" || to === "cancelled" ? "border border-red-400/50 text-red-200" : "bg-emerald-700 text-white"
               }`}
             >
               {ACTION_LABELS[to]} <span className="sr-only">order #{order.orderNumber}</span>

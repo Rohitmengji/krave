@@ -68,6 +68,8 @@ export interface PosOutlet {
   locality: string;
   /** GST the restaurant charges, in basis points; 0 when it charges none. */
   taxRateBps: number;
+  /** Owners and managers see every bill and the day's takings; a waiter looks one bill up. */
+  seesAllSales: boolean;
   menu: PosMenuItem[];
 }
 

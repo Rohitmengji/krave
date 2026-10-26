@@ -746,7 +746,7 @@ export function RestaurantOwnerDashboard() {
       <div className="mx-auto max-w-6xl space-y-8">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <a href="/" className="text-sm text-emerald-300 hover:text-emerald-200">← KRAVE storefront</a>
+            <a href="/" className="inline-flex min-h-11 items-center text-sm text-emerald-300 hover:text-emerald-200">← KRAVE storefront</a>
             <h1 className="mt-2 text-3xl font-black tracking-tight">Restaurant workspace</h1>
             <p className="mt-1 text-sm text-slate-400">Manage your real menu. Imported dishes stay unpublished until you approve them.</p>
           </div>
@@ -761,13 +761,13 @@ export function RestaurantOwnerDashboard() {
         {state.phase === "error" ? (
           <section className="rounded-2xl border border-white/10 bg-[#121721] p-6">
             <p>{state.error}</p>
-            {state.error?.includes("Sign in") ? <a className="mt-4 inline-block rounded-xl bg-emerald-600 px-4 py-2 font-bold" href="/">Sign in from the storefront</a> : null}
+            {state.error?.includes("Sign in") ? <a className="mt-4 inline-block rounded-xl bg-emerald-700 px-4 py-2 font-bold" href="/">Sign in from the storefront</a> : null}
           </section>
         ) : !state.user ? (
           <section className="rounded-2xl border border-white/10 bg-[#121721] p-6">
             <h2 className="text-xl font-bold">Sign in to continue</h2>
             <p className="mt-2 text-slate-300">Use your KRAVE account. The server checks your restaurant membership before every change.</p>
-            <a className="mt-4 inline-block rounded-xl bg-emerald-600 px-4 py-2 font-bold" href="/">Go to KRAVE sign-in</a>
+            <a className="mt-4 inline-block rounded-xl bg-emerald-700 px-4 py-2 font-bold" href="/">Go to KRAVE sign-in</a>
           </section>
         ) : (
           <>
@@ -799,7 +799,7 @@ export function RestaurantOwnerDashboard() {
                     <p className="mt-1 text-sm text-slate-400">This starts unpublished. Confirm the details from your real restaurant before publishing.</p>
                   </div>
                   <RestaurantFields form={restaurantForm} setForm={setRestaurantForm} />
-                  <button disabled={state.busy} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold disabled:opacity-50">
+                  <button disabled={state.busy} className="rounded-xl bg-emerald-700 px-5 py-3 font-bold disabled:opacity-50">
                     {state.busy ? "Saving…" : "Save restaurant draft"}
                   </button>
                 </form>
@@ -810,7 +810,7 @@ export function RestaurantOwnerDashboard() {
                     Ask the restaurant&apos;s owner to add <strong className="text-white">{state.user.email}</strong> under
                     Team in their workspace. Waiters then take orders on the table POS.
                   </p>
-                  <a className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-emerald-600 px-4 font-bold" href="/pos">Open table POS</a>
+                  <a className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-bold" href="/pos">Open table POS</a>
                 </section>
               )
             ) : state.restaurant ? (
@@ -832,12 +832,12 @@ export function RestaurantOwnerDashboard() {
                   <form onSubmit={saveRestaurant} className="space-y-5">
                     <RestaurantFields form={restaurantForm} setForm={setRestaurantForm} />
                     <div className="flex flex-wrap gap-3">
-                      <button disabled={state.busy} className="rounded-xl border border-white/20 px-4 py-2 font-bold disabled:opacity-50">Save details</button>
+                      <button disabled={state.busy} className="min-h-11 rounded-xl border border-white/20 px-4 font-bold disabled:opacity-50">Save details</button>
                       <button
                         type="button"
                         disabled={state.busy}
                         onClick={() => void toggleRestaurantPublication()}
-                        className={`rounded-xl px-4 py-2 font-bold disabled:opacity-50 ${state.restaurant?.status === "published" ? "border border-amber-300/40 text-amber-100" : "bg-emerald-600"}`}
+                        className={`min-h-11 rounded-xl px-4 font-bold disabled:opacity-50 ${state.restaurant?.status === "published" ? "border border-amber-300/40 text-amber-100" : "bg-emerald-700"}`}
                       >
                         {state.restaurant.status === "published" ? "Unpublish restaurant" : "Publish restaurant"}
                       </button>
@@ -896,7 +896,7 @@ export function RestaurantOwnerDashboard() {
                     {filteredCategories.map((category) => (
                       <div key={category.id} className="rounded-xl border border-white/10 p-4">
                         <h3 className="font-bold">{category.name}</h3>
-                        {category.items.length === 0 ? <p className="mt-2 text-sm text-slate-500">No dishes in this category.</p> : (
+                        {category.items.length === 0 ? <p className="mt-2 text-sm text-slate-400">No dishes in this category.</p> : (
                           <ul className="mt-3 divide-y divide-white/10">
                             {category.items.map((item) => (
                               <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
@@ -948,26 +948,26 @@ export function RestaurantOwnerDashboard() {
                       <fieldset className="flex flex-wrap gap-4 text-sm">
                         <legend className="mb-2 font-semibold">Dietary labels (confirm before selecting)</legend>
                         {["vegetarian", "non-vegetarian", "vegan", "contains-egg"].map((tag) => (
-                          <label key={tag} className="flex items-center gap-2">
-                            <input type="checkbox" checked={itemForm.dietaryTags.includes(tag)} onChange={(event) => setItemForm({ ...itemForm, dietaryTags: event.target.checked ? [...itemForm.dietaryTags, tag] : itemForm.dietaryTags.filter((value) => value !== tag) })} />
+                          <label key={tag} className="flex min-h-11 items-center gap-2">
+                            <input type="checkbox" className="h-5 w-5" checked={itemForm.dietaryTags.includes(tag)} onChange={(event) => setItemForm({ ...itemForm, dietaryTags: event.target.checked ? [...itemForm.dietaryTags, tag] : itemForm.dietaryTags.filter((value) => value !== tag) })} />
                             {tag.replace("-", " ")}
                           </label>
                         ))}
                       </fieldset>
                       <div className="flex flex-wrap gap-4 text-sm">
-                        <label className="flex items-center gap-2"><input type="checkbox" checked={itemForm.available} onChange={(event) => setItemForm({ ...itemForm, available: event.target.checked })} />Available</label>
-                        <label className="flex items-center gap-2"><input type="checkbox" checked={itemForm.published} onChange={(event) => setItemForm({ ...itemForm, published: event.target.checked })} />Publish this dish</label>
-                        <label className="flex items-center gap-2"><input type="checkbox" checked={itemForm.featured} onChange={(event) => setItemForm({ ...itemForm, featured: event.target.checked })} />Featured</label>
+                        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={itemForm.available} onChange={(event) => setItemForm({ ...itemForm, available: event.target.checked })} />Available</label>
+                        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={itemForm.published} onChange={(event) => setItemForm({ ...itemForm, published: event.target.checked })} />Publish this dish</label>
+                        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={itemForm.featured} onChange={(event) => setItemForm({ ...itemForm, featured: event.target.checked })} />Featured</label>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Field label="Dish photo (optional) — capture with your phone or upload">
                           <input type="file" disabled={!state.uploadsConfigured} accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadItemPhoto(file); }} className="field" />
                         </Field>
-                        {itemForm.imageAssetId ? <p className="self-end text-sm text-emerald-200">Image stored and selected. Save the dish to attach it.</p> : <p className="self-end text-sm text-slate-500">No image is okay; customers see a neutral placeholder, not a stock photo.</p>}
+                        {itemForm.imageAssetId ? <p className="self-end text-sm text-emerald-200">Image stored and selected. Save the dish to attach it.</p> : <p className="self-end text-sm text-slate-400">No image is okay; customers see a neutral placeholder, not a stock photo.</p>}
                       </div>
                       <VariantEditor itemForm={itemForm} setItemForm={setItemForm} />
                       <AddonEditor itemForm={itemForm} setItemForm={setItemForm} />
-                      <button disabled={state.busy} className="min-h-11 rounded-xl bg-emerald-600 px-5 py-2.5 font-bold disabled:opacity-50">{state.busy ? "Saving…" : itemForm.id ? "Save dish" : itemForm.published ? "Add and publish dish" : "Add dish as draft"}</button>
+                      <button disabled={state.busy} className="min-h-11 rounded-xl bg-emerald-700 px-5 py-2.5 font-bold disabled:opacity-50">{state.busy ? "Saving…" : itemForm.id ? "Save dish" : itemForm.published ? "Add and publish dish" : "Add dish as draft"}</button>
                     </form>
                   ) : null}
                 </section>
@@ -984,7 +984,7 @@ export function RestaurantOwnerDashboard() {
                       Menu pages or PDF
                       <input type="file" multiple disabled={!state.uploadsConfigured} accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setMenuFiles(Array.from(event.target.files ?? []))} className="field mt-2" />
                     </label>
-                    <button type="button" disabled={state.busy || !state.uploadsConfigured || menuFiles.length === 0} onClick={() => void uploadMenuPages(menuFiles)} className="rounded-xl bg-emerald-600 px-4 py-2.5 font-bold disabled:opacity-50">
+                    <button type="button" disabled={state.busy || !state.uploadsConfigured || menuFiles.length === 0} onClick={() => void uploadMenuPages(menuFiles)} className="rounded-xl bg-emerald-700 px-4 py-2.5 font-bold disabled:opacity-50">
                       {state.busy ? "Uploading…" : `Upload ${menuFiles.length || ""} page(s)`}
                     </button>
                   </div>
@@ -1005,7 +1005,7 @@ export function RestaurantOwnerDashboard() {
                         {job.status === "imported" ? <p className="mt-2 text-xs text-emerald-200">Imported as draft items. They remain hidden until each dish is explicitly published.</p> : null}
                       </div>
                     ))}
-                    {state.imports.length === 0 ? <p className="text-sm text-slate-500">No menu pages uploaded yet.</p> : null}
+                    {state.imports.length === 0 ? <p className="text-sm text-slate-400">No menu pages uploaded yet.</p> : null}
                   </div>
 
                   {selectedImport && reviewItems.length ? (
@@ -1044,16 +1044,16 @@ export function RestaurantOwnerDashboard() {
                                   <button type="button" onClick={() => updateReviewItem(item.id, { variants: item.variants.filter((_, index) => index !== variantIndex) })} className="self-end rounded-lg border border-white/20 px-3 py-2 text-sm">Remove</button>
                                 </div>
                               ))}
-                              <button type="button" disabled={item.variants.length >= 20} onClick={() => updateReviewItem(item.id, { variants: [...item.variants, { name: "", pricePaise: null }] })} className="text-sm text-emerald-200 underline disabled:opacity-50">Add portion</button>
+                              <button type="button" disabled={item.variants.length >= 20} onClick={() => updateReviewItem(item.id, { variants: [...item.variants, { name: "", pricePaise: null }] })} className="min-h-11 text-sm text-emerald-200 underline disabled:opacity-50">Add portion</button>
                             </div>
-                            <p className="text-xs text-slate-500">Source: {item.sourceText || "No source excerpt returned"}</p>
+                            <p className="text-xs text-slate-400">Source: {item.sourceText || "No source excerpt returned"}</p>
                             {item.warnings.length ? <ul className="list-inside list-disc text-xs text-amber-200">{item.warnings.map((warning, index) => <li key={`${item.id}-${index}`}>{warning}</li>)}</ul> : null}
                           </article>
                         ))}
                       </div>
                       <div className="flex flex-wrap gap-3">
                         <button type="button" disabled={state.busy} onClick={() => void saveReviewDraft()} className="rounded-lg border border-white/20 px-4 py-2 font-semibold">Save review corrections</button>
-                        <button type="button" disabled={state.busy || selectedDraftIds.length === 0} onClick={() => void importSelectedDrafts()} className="rounded-lg bg-emerald-600 px-4 py-2 font-bold disabled:opacity-50">Import selected as drafts</button>
+                        <button type="button" disabled={state.busy || selectedDraftIds.length === 0} onClick={() => void importSelectedDrafts()} className="rounded-lg bg-emerald-700 px-4 py-2 font-bold disabled:opacity-50">Import selected as drafts</button>
                       </div>
                     </div>
                   ) : null}
@@ -1134,7 +1134,7 @@ function VariantEditor({
           <button type="button" onClick={() => setItemForm((current) => ({ ...current, variants: current.variants.filter((_, row) => row !== index) }))} className="rounded-lg border border-white/20 px-3">Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => setItemForm((current) => ({ ...current, variants: [...current.variants, { name: "", price: "" }] }))} className="text-sm text-emerald-200 underline">Add portion</button>
+      <button type="button" onClick={() => setItemForm((current) => ({ ...current, variants: [...current.variants, { name: "", price: "" }] }))} className="min-h-11 text-sm text-emerald-200 underline">Add portion</button>
     </fieldset>
   );
 }
@@ -1156,7 +1156,7 @@ function AddonEditor({
           <button type="button" onClick={() => setItemForm((current) => ({ ...current, addons: current.addons.filter((_, row) => row !== index) }))} className="rounded-lg border border-white/20 px-3">Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => setItemForm((current) => ({ ...current, addons: [...current.addons, { name: "", price: "" }] }))} className="text-sm text-emerald-200 underline">Add extra</button>
+      <button type="button" onClick={() => setItemForm((current) => ({ ...current, addons: [...current.addons, { name: "", price: "" }] }))} className="min-h-11 text-sm text-emerald-200 underline">Add extra</button>
     </fieldset>
   );
 }

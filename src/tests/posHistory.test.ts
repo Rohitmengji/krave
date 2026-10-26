@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/lib/server/auth";
 import { one, run } from "@/lib/server/pg";
 import { listSalesHistory, SalesHistoryAccessError } from "@/lib/server/posHistory";
+import { grantTeamAccess } from "@/lib/server/restaurantTeam";
 import { loadPosState, syncPosState } from "@/lib/server/posStore";
 import {
   addItemToSession,
@@ -171,7 +172,7 @@ describe.skipIf(!hasTestDatabase)("sales history", () => {
     const bill = paidBill(outlet, "T1", "CASH");
     await syncPosState(user.id, { sessions: [bill] });
     await run("UPDATE pos_sessions SET grand_total = NULL");
-    expect((await history(user.id, outlet)).summary.total).toBe(calculatePosBill(bill).grandTotal);
+    expect((await history(user.id, outlet)).summary?.total).toBe(calculatePosBill(bill).grandTotal);
     expect(await one("SELECT grand_total FROM pos_sessions")).toEqual({
       grand_total: calculatePosBill(bill).grandTotal,
     });
@@ -215,5 +216,76 @@ describe.skipIf(!hasTestDatabase)("sales history", () => {
     const floor = await loadPosState(user.id);
     expect(floor.sessions.filter((session) => session.status === "OPEN").map((s) => s.tableId)).toEqual(["T4"]);
     expect(floor.sessions.length).toBeLessThanOrEqual(101);
+  });
+
+  describe("a waiter", () => {
+    async function restaurantWithWaiter() {
+      const { user, outlet } = await owner();
+      const waiter = await registerUser({ email: "hemant@sales.test", password: PASSWORD });
+      const restaurantId = String(
+        (await one<{ id: string }>("SELECT id FROM managed_restaurants LIMIT 1"))!.id
+      );
+      await grantTeamAccess(user.id, restaurantId, { email: waiter.email, role: "staff" });
+      return { user, waiter, outlet };
+    }
+
+    it("cannot list the restaurant's bills or see its takings", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      await syncPosState(user.id, { sessions: [paidBill(outlet, "T1", "CASH")] });
+
+      await expect(history(waiter.id, outlet)).rejects.toBeInstanceOf(SalesHistoryAccessError);
+      // Nor by searching a name, a table or an amount: only a bill number or a whole mobile.
+      for (const q of ["", "Asha", "T1", "Ram", "12"]) {
+        const lookup = history(waiter.id, outlet, { q });
+        if (q === "12") await expect(lookup).resolves.toMatchObject({ scope: "lookup" });
+        else await expect(lookup).rejects.toBeInstanceOf(SalesHistoryAccessError);
+      }
+      expect((await history(waiter.id, outlet, { q: "1" })).summary).toBeNull();
+    });
+
+    it("finds one bill by its number or the guest's mobile, and nothing else", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      await syncPosState(user.id, {
+        sessions: [paidBill(outlet, "T1", "CASH", { name: "Ramesh", phone: "9876543210" })],
+      });
+      await syncPosState(waiter.id, { sessions: [paidBill(outlet, "T2", "UPI")] });
+
+      // Bill 2 is the waiter's own; bill 1 is the owner's and is not theirs to look up.
+      const own = await history(waiter.id, outlet, { q: "2" });
+      expect(own.entries.map((entry) => entry.session.tableId)).toEqual(["T2"]);
+      expect(own.nextCursor).toBeNull();
+      expect((await history(waiter.id, outlet, { q: "1" })).entries).toEqual([]);
+
+      // The guest gives their number, so their bill can be sent again from any phone.
+      const byMobile = await history(waiter.id, outlet, { q: "98765 43210" });
+      expect(byMobile.entries.map((entry) => entry.session.tableId)).toEqual(["T1"]);
+      // Part of a number is not a number: it is read as a bill number and finds nothing.
+      expect((await history(waiter.id, outlet, { q: "98765" })).entries).toEqual([]);
+    });
+
+    it("is sent back only the paid bills it took, not the restaurant's", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      await syncPosState(user.id, { sessions: [paidBill(outlet, "T1", "CASH")] });
+      await syncPosState(waiter.id, { sessions: [paidBill(outlet, "T2", "UPI")] });
+
+      const waiterFloor = await loadPosState(waiter.id);
+      expect(waiterFloor.sessions.map((session) => session.tableId)).toEqual(["T2"]);
+      const ownerFloor = await loadPosState(user.id);
+      expect(ownerFloor.sessions.map((session) => session.tableId).sort()).toEqual(["T1", "T2"]);
+    });
+
+    it("still sees every open table, because the floor is shared", async () => {
+      const { user, waiter, outlet } = await restaurantWithWaiter();
+      const open = openTableSession({
+        outletId: outlet.outletId,
+        outletName: outlet.name,
+        taxRateBps: outlet.taxRateBps,
+        tableId: "T5",
+        guestCount: 2,
+        serverName: "Asha",
+      });
+      await syncPosState(user.id, { sessions: [open] });
+      expect((await loadPosState(waiter.id)).sessions.map((session) => session.tableId)).toEqual(["T5"]);
+    });
   });
 });

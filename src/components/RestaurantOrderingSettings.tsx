@@ -122,7 +122,7 @@ export function RestaurantOrderingSettings({
             )
           }
           className={`min-h-11 rounded-xl px-5 font-bold disabled:opacity-50 ${
-            restaurant.acceptingOrders ? "border border-amber-300/50 text-amber-100" : "bg-emerald-600 text-white"
+            restaurant.acceptingOrders ? "border border-amber-300/50 text-amber-100" : "bg-emerald-700 text-white"
           }`}
         >
           {restaurant.acceptingOrders ? "Pause online orders" : "Start taking orders"}

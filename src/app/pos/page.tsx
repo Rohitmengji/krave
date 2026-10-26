@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { PosTerminal } from "@/components/pos/PosTerminal";
 import { getUserForToken, SESSION_COOKIE } from "@/lib/server/auth";
+import { readMailConfig } from "@/lib/server/mailer";
 import { listPosOutlets } from "@/lib/server/posCatalog";
 import type { PosCatalog } from "@/lib/pos/posEngine";
 
@@ -23,8 +24,17 @@ async function loadCatalog(token: string | undefined): Promise<PosCatalog> {
   }
 }
 
+/** A half-finished SMTP setup can send nothing, so the terminal offers WhatsApp and SMS only. */
+function mailEnabled(): boolean {
+  try {
+    return readMailConfig() !== null;
+  } catch {
+    return false;
+  }
+}
+
 export default async function PosPage() {
   // Read outside the try: cookies() is what marks this page as rendered per request.
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return <PosTerminal catalog={await loadCatalog(token)} />;
+  return <PosTerminal catalog={await loadCatalog(token)} mailEnabled={mailEnabled()} />;
 }

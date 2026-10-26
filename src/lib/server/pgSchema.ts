@@ -199,6 +199,16 @@ CREATE TABLE IF NOT EXISTS pos_voids (
 );
 CREATE INDEX IF NOT EXISTS pos_voids_session_idx ON pos_voids(session_id);
 
+-- The unguessable link a guest gets to open their bill as a PDF. No foreign key: every sync
+-- deletes and re-inserts the table's row, and a cascade would drop the link each time.
+CREATE TABLE IF NOT EXISTS pos_bill_links (
+  token TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE,
+  outlet_id INTEGER NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 -- Keyed by outlet, not by device or account: a dish sold out at the counter is sold out
 -- for everyone looking at that menu.
 CREATE TABLE IF NOT EXISTS dish_availability (
@@ -604,6 +614,7 @@ export const PG_TABLES = [
   "delivery_tickets",
   "notifications",
   "dish_availability",
+  "pos_bill_links",
   "pos_voids",
   "pos_tickets",
   "pos_lines",

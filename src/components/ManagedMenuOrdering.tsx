@@ -140,7 +140,7 @@ export function ManagedMenuOrdering({
                 ))}
               </ul>
             ) : (
-              <p className="py-4 text-sm text-slate-500">No dishes available in this category.</p>
+              <p className="py-4 text-sm text-slate-600">No dishes available in this category.</p>
             )}
           </section>
         ))}
@@ -206,7 +206,7 @@ function MenuItemRow({ item, ordering, onAdd }: { item: MenuDisplayItem; orderin
           <div>
             <h3 className="font-bold">{item.name}</h3>
             {item.description ? <p className="mt-1 max-w-2xl text-sm text-slate-600">{item.description}</p> : null}
-            {item.portionSize ? <p className="mt-1 text-xs text-slate-500">{item.portionSize}</p> : null}
+            {item.portionSize ? <p className="mt-1 text-xs text-slate-600">{item.portionSize}</p> : null}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -214,7 +214,7 @@ function MenuItemRow({ item, ordering, onAdd }: { item: MenuDisplayItem; orderin
             {item.discountedPricePaise !== null ? (
               <>
                 <span>{formatPaise(item.discountedPricePaise)}</span>
-                <span className="ml-2 text-sm font-normal text-slate-500 line-through">{formatPaise(item.pricePaise)}</span>
+                <span className="ml-2 text-sm font-normal text-slate-600 line-through">{formatPaise(item.pricePaise)}</span>
               </>
             ) : (
               formatPaise(item.pricePaise)

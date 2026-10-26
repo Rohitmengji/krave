@@ -23,11 +23,14 @@ export function SendBill({
   text,
   label,
   testId,
+  onSend,
 }: {
   phone: string;
   text: string;
   label: string;
   testId: string;
+  /** Called as the messaging app opens, e.g. to keep the number on the table. */
+  onSend?: () => void;
 }) {
   const canText = useCanTextFromThisDevice();
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -40,7 +43,7 @@ export function SendBill({
     <div className="space-y-1.5">
       <div className="grid grid-cols-2 gap-1.5">
         {canText ? (
-          <a href={smsHref(phone, text)} data-testid={testId} className={primary}>
+          <a href={smsHref(phone, text)} data-testid={testId} onClick={onSend} className={primary}>
             <MessageSquare className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="truncate">{label}</span>
           </a>
@@ -61,7 +64,8 @@ export function SendBill({
           target="_blank"
           rel="noopener noreferrer"
           data-testid={`${testId}-whatsapp`}
-          aria-label={`WhatsApp: ${label}`}
+          aria-label={label.replace(/^SMS\b/, "WhatsApp")}
+          onClick={onSend}
           className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-[#128C4A] px-3 font-sans text-xs font-black text-white hover:bg-[#0f7a40]"
         >
           <MessageCircle className="h-4 w-4" aria-hidden="true" />

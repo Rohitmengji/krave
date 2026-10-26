@@ -1,7 +1,7 @@
 import { one, rows, transaction, type Queryable } from "./pg";
 import {
   BILLABLE_RESTAURANT_SQL,
-  billableOutletIds,
+  billableOutletScopes,
   loadPosPriceBook,
   type PosPriceBook,
 } from "./posCatalog";
@@ -482,8 +482,9 @@ async function loadTables(
 /** Everything a terminal needs when it starts: the shared floor, recent bills and its shift. */
 export async function loadPosState(userId: string): Promise<PosSyncResult> {
   // Open tables belong to the outlet, so every waiter who can bill it sees the same floor.
-  // Older closed bills are read through listSalesHistory instead.
-  const outletIds = await billableOutletIds(userId);
+  // Paid bills are the restaurant's takings: a waiter gets back only the ones they billed,
+  // and finds any other through listSalesHistory. Older bills are read there too.
+  const { outletIds, salesOutletIds } = await billableOutletScopes(userId);
   const sessionRows =
     outletIds.length === 0
       ? []
@@ -494,9 +495,10 @@ export async function loadPosState(userId: string): Promise<PosSyncResult> {
              UNION
              (SELECT * FROM pos_sessions
               WHERE outlet_id = ANY($1::int[]) AND status <> 'OPEN'
+                AND (outlet_id = ANY($2::int[]) OR user_id = $3)
               ORDER BY COALESCE(payment_settled_at, opened_at) DESC LIMIT 100)
            ) AS floor ORDER BY opened_at`,
-          [outletIds]
+          [outletIds, salesOutletIds, userId]
         );
   const sessions = await hydrateSessions(sessionRows);
 

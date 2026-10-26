@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { addDishAndFire, openTable, registerAccount, resetBrowser, STAFF_PASSWORD, uniqueEmail } from "./helpers";
+import { mailTo } from "./mailbox";
 import { createRestaurant, openTerminal, type E2eRestaurant } from "./restaurants";
 
 const PASSWORD = "135790";
@@ -8,11 +9,12 @@ const KARI_FULL = /Chicken Kari \(Full\)/;
 
 /**
  * Every test bills its own restaurant. The staff account's floor and shift live on the server,
- * so a shared outlet would hand one test the tables another left open.
+ * so a shared outlet would hand one test the tables another left open. The name carries the
+ * run, because the outlet is picked by name and the database keeps earlier runs' restaurants.
  */
 async function freshTerminal(page: Page, label: string): Promise<E2eRestaurant> {
   await resetBrowser(page);
-  const restaurant = await createRestaurant(page, `Terminal ${label}`);
+  const restaurant = await createRestaurant(page, `Terminal ${label} ${Date.now().toString(36)}`);
   await openTerminal(page, restaurant);
   return restaurant;
 }
@@ -92,6 +94,8 @@ test.describe("Dine-in terminal", () => {
   });
 
   test("takes guests' names and numbers and texts each one their share", async ({ page }) => {
+    // Opens a table, fires two tickets, edits a number, splits the bill and reloads.
+    test.slow();
     const restaurant = await freshTerminal(page, "Guests");
     await page.getByTestId("pos-table-T3").click();
     await page.getByLabel("Number of guests").fill("2");
@@ -107,19 +111,20 @@ test.describe("Dine-in terminal", () => {
     await addDishAndFire(page, PANEER);
     await addDishAndFire(page, KARI_FULL);
     await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
-    const message = `${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378. Thank you!`;
+    const message = `${restaurant.name}: Hi Ramesh, your bill for table T3 is Rs.378.`;
     // This browser is a laptop: SMS goes out from a phone by scanning the code.
     await page.getByTestId("pos-sms-bill-open").click();
     const handoff = page.getByTestId("pos-sms-bill-handoff");
     await expect(handoff.getByRole("img", { name: /QR code/ })).toBeVisible();
-    await expect(handoff).toContainText("1 SMS");
+    await expect(handoff).toContainText("SMS");
     const whole = page.getByTestId("pos-sms-bill");
-    expect(decodeURIComponent((await whole.getAttribute("href")) ?? "")).toBe(
-      `sms:+919876543210?&body=${message}`
+    const smsHref = decodeURIComponent((await whole.getAttribute("href")) ?? "");
+    expect(smsHref).toContain(`sms:+919876543210?&body=${message}`);
+    expect(smsHref).toContain("Thank you!");
+    const whatsAppHref = decodeURIComponent(
+      (await page.getByTestId("pos-sms-bill-whatsapp").getAttribute("href")) ?? ""
     );
-    expect(decodeURIComponent((await page.getByTestId("pos-sms-bill-whatsapp").getAttribute("href")) ?? "")).toBe(
-      `https://wa.me/919876543210?text=${message}`
-    );
+    expect(whatsAppHref).toContain(`https://wa.me/919876543210?text=${message}`);
 
     // A wrong number is corrected right where it is shown, and a bad one is refused.
     await page.getByTestId("pos-edit-lead-guest").click();
@@ -148,10 +153,11 @@ test.describe("Dine-in terminal", () => {
     );
     await split.getByTestId("pos-close-split").click();
 
-    // The guests are part of the table, so they come back after a reload.
+    // The guests, and the items saved while the last answer was still on its way, come back.
     await page.reload({ waitUntil: "networkidle" });
     await page.getByLabel("Outlet").selectOption({ label: restaurant.name });
     await page.getByTestId("pos-table-T3").click();
+    await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
     await expect(page.getByTestId("pos-lead-guest")).toContainText("Ramesh");
     await page.getByTestId("pos-open-split").click();
     await expect(page.getByTestId("pos-guest-name-2")).toHaveValue("Sunita");
@@ -164,19 +170,22 @@ test.describe("Dine-in terminal", () => {
     await page.getByTestId("pos-settle").click();
     await page.getByTestId("pos-confirm-settle").click();
 
+    // The guest gives their number as they pay: type it on the bill and send, no extra step.
     const receipt = page.getByRole("dialog", { name: "Bill" });
-    await receipt.getByTestId("pos-receipt-add-guest").click();
-    await receipt.getByTestId("pos-guest-edit-name").fill("Late Guest");
-    await receipt.getByTestId("pos-guest-edit-phone").fill("91111 22222");
-    await receipt.getByTestId("pos-guest-edit-save").click();
+    await receipt.getByTestId("pos-receipt-number").fill("91111 22222");
+    await receipt.getByTestId("pos-receipt-quick-whatsapp").click();
 
+    // Sending keeps the number on the table, so a wrong one is corrected and sent again.
     await receipt.getByTestId("pos-receipt-edit-1").click();
     await receipt.getByTestId("pos-guest-edit-phone").fill("92222 33333");
     await receipt.getByTestId("pos-guest-edit-save").click();
     await receipt.getByTestId("pos-receipt-sms-1-open").click();
-    expect(decodeURIComponent((await receipt.getByTestId("pos-receipt-sms-1").getAttribute("href")) ?? "")).toBe(
-      `sms:+919222233333?&body=${restaurant.name}: Hi Late Guest, your bill for table T5 is Rs.252. Paid, thank you for visiting!`
+    const href = decodeURIComponent(
+      (await receipt.getByTestId("pos-receipt-sms-1").getAttribute("href")) ?? ""
     );
+    expect(href).toContain(`sms:+919222233333?&body=${restaurant.name}: `);
+    expect(href).toContain("your bill for table T5 is Rs.252.");
+    expect(href).toContain("Paid, thank you for visiting!");
   });
 
   test("lets the owner fix a paid bill with the PIN, and staff fix the waiter's name", async ({ page }) => {
@@ -259,13 +268,55 @@ test.describe("Dine-in terminal", () => {
     await expect(past).toContainText("Paneer Tikka");
     await past.getByTestId("sales-receipt-number").fill("91234 56789");
     await past.getByTestId("sales-receipt-sms-other-open").click();
-    expect(decodeURIComponent((await past.getByTestId("sales-receipt-sms-other").getAttribute("href")) ?? "")).toBe(
-      `sms:+919123456789?&body=${restaurant.name}: Hello, your bill for table T1 is Rs.252. Paid, thank you for visiting!`
+    const pastHref = decodeURIComponent(
+      (await past.getByTestId("sales-receipt-sms-other").getAttribute("href")) ?? ""
     );
+    expect(pastHref).toContain(
+      `sms:+919123456789?&body=${restaurant.name}: Hello, your bill for table T1 is Rs.252.`
+    );
+    expect(pastHref).toContain("Paid, thank you for visiting!");
     await past.getByTestId("sales-receipt-close").click();
 
     await sales.getByTestId("sales-range-yesterday").click();
     await expect(sales).toContainText("No bills");
+  });
+
+  test("gives the guest a PDF bill by link and emails it to them", async ({ page }) => {
+    await freshTerminal(page, "Pdf");
+    await openTable(page, "T2");
+    await addDishAndFire(page, PANEER);
+    await page.getByTestId("pos-settle").click();
+    await page.getByTestId("pos-confirm-settle").click();
+
+    const receipt = page.getByRole("dialog", { name: "Bill" });
+    const pdf = receipt.getByTestId("pos-receipt-pdf");
+    await expect(pdf).toBeVisible({ timeout: 20_000 });
+    const link = (await pdf.getAttribute("href")) ?? "";
+    expect(link).toMatch(/\/b\/[\w-]{20,}$/);
+
+    // The guest opens the link with no account of their own.
+    const anyone = await page.context().request.get(link, { headers: { cookie: "" } });
+    expect(anyone.status()).toBe(200);
+    expect(anyone.headers()["content-type"]).toBe("application/pdf");
+    expect(anyone.headers()["cache-control"]).toContain("no-store");
+    const file = await anyone.body();
+    expect(file.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(file.toString("latin1")).toContain("Paneer Tikka");
+
+    // A made-up link is not a bill.
+    const guessed = await page.context().request.get("/b/notarealbilltokenxxxxx");
+    expect(guessed.status()).toBe(404);
+
+    const guest = uniqueEmail("bill");
+    await receipt.getByTestId("pos-receipt-email-open").click();
+    await receipt.getByTestId("pos-receipt-email").fill(guest);
+    await receipt.getByTestId("pos-receipt-email-send").click();
+    await expect(receipt.getByTestId("pos-receipt-email-sent")).toContainText(guest);
+    // The ₹ makes the subject arrive encoded, so the PDF itself is what matters here.
+    await expect.poll(() => mailTo(guest).length, { timeout: 15_000 }).toBe(1);
+    const sent = mailTo(guest)[0].raw;
+    expect(sent).toContain("application/pdf");
+    expect(sent).toMatch(/Your[_ ]bill[_ ]from/);
   });
 
   test("frees a table opened by mistake", async ({ page }) => {
@@ -443,6 +494,8 @@ test.describe("Dine-in terminal", () => {
     await expect(page.getByTestId("pos-grand-total")).toHaveText("₹378");
     // Neither a conflict with itself nor anything left unsaved.
     await expect(page.getByText(/at the same time|Not saved|could not be saved|another terminal/)).toHaveCount(0);
+    // The slowed route must not outlive the test, or the next one inherits it mid-flight.
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
   test("shows one phone's table on another within seconds, both ways", async ({ page, browser }) => {

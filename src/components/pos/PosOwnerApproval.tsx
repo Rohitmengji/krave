@@ -3,6 +3,8 @@
 import React, { useState } from "react";
 import { Lock, X } from "lucide-react";
 import type { PosPaymentMethod } from "@/lib/pos/posEngine";
+import { OverlayDialog } from "../OverlayDialog";
+import { POS_CLOSE_BUTTON, POS_FORM_DIALOG } from "./posDialog";
 
 export type OwnerCorrection =
   | { kind: "payment"; method: PosPaymentMethod; reason: string }
@@ -76,15 +78,18 @@ export function PosOwnerApproval({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={kind === "payment" ? "Change payment" : "Reopen bill"}
-      className="pos-no-print fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+    <OverlayDialog
+      isOpen
+      onClose={onClose}
+      // While the PIN is being checked, closing would let the answer change a bill nobody is looking at.
+      onDismiss={busy ? () => {} : onClose}
+      label={kind === "payment" ? "Change payment" : "Reopen bill"}
+      className={POS_FORM_DIALOG}
+      closeOnBackdrop={false}
     >
       <form
         onSubmit={submit}
-        className="w-full max-w-sm space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5 text-white"
+        className="space-y-4 rounded-2xl border border-white/15 bg-[#121721] p-5 text-white"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -96,8 +101,8 @@ export function PosOwnerApproval({
               Table {tableId} · ₹{total} · paid by {currentMethod}
             </p>
           </div>
-          <button type="button" aria-label="Cancel" onClick={onClose} className="rounded-lg p-1 hover:bg-white/10">
-            <X className="h-4 w-4" />
+          <button type="button" aria-label="Cancel" onClick={onClose} disabled={busy} className={`${POS_CLOSE_BUTTON} disabled:opacity-40`}>
+            <X className="h-5 w-5" />
           </button>
         </div>
 
@@ -141,7 +146,7 @@ export function PosOwnerApproval({
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder={kind === "payment" ? "e.g. Paid by GPay, marked cash" : "e.g. Guests ordered dessert"}
-            className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-sm"
+            className="min-h-11 w-full rounded-xl border border-white/15 bg-[#0E131D] px-3 text-base"
           />
         </label>
 
@@ -175,6 +180,6 @@ export function PosOwnerApproval({
           {busy ? "Checking…" : kind === "payment" ? `Change to ${method}` : "Reopen bill"}
         </button>
       </form>
-    </div>
+    </OverlayDialog>
   );
 }

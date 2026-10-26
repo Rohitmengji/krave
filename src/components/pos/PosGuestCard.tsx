@@ -99,7 +99,7 @@ export function GuestContactEditor({
         <button
           type="submit"
           data-testid="pos-guest-edit-save"
-          className="min-h-11 rounded-lg bg-emerald-600 text-xs font-black text-white"
+          className="min-h-11 rounded-lg bg-emerald-700 text-xs font-black text-white"
         >
           Save
         </button>

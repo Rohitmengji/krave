@@ -122,7 +122,7 @@ export default async function RestaurantPage({ params }: RestaurantPageProps) {
             categories={displayCategories}
           />
         )}
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-600">
           Contact the restaurant about allergens or dietary requirements; menu information may be incomplete.
         </p>
       </div>

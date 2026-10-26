@@ -77,6 +77,18 @@ describe("adoptRemoteFloor", () => {
     expect(adopted.sessions[0]).toBe(newer);
   });
 
+  it("keeps items a reopened terminal holds that the server's newer copy has not got", () => {
+    // The save that carried them timed out, so the server's copy is newer but emptier.
+    const restored = withLines("s1", [
+      { lineId: "l1", name: "Paneer Tikka", quantity: 1 },
+      { lineId: "l2", name: "Chicken Kari", quantity: 1 },
+    ]);
+    const emptier = { ...table("s1", 4, 0), lines: [] } as unknown as PosTableSession;
+    const adopted = adoptRemoteFloor([restored], [emptier], knowing([], [], { fromElsewhere: [restored] }));
+    expect(adopted.sessions[0]).toBe(restored);
+    expect(adopted.changed).toBe(false);
+  });
+
   it("replaces a dirty table after the server refused the write", () => {
     const local = table("s1", 2, 3);
     const remote = table("s1", 3, 4);

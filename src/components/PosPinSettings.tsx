@@ -116,7 +116,7 @@ export function PosPinSettings({ restaurantId }: { restaurantId: string }) {
         <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
           <button
             disabled={busy}
-            className="min-h-11 rounded-xl bg-emerald-600 px-5 font-bold disabled:opacity-50"
+            className="min-h-11 rounded-xl bg-emerald-700 px-5 font-bold disabled:opacity-50"
           >
             {busy ? "Saving…" : pinSet ? "Change PIN" : "Set PIN"}
           </button>

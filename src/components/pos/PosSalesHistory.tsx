@@ -5,7 +5,6 @@ import { CalendarDays, Printer, RotateCw, Search, X } from "lucide-react";
 import { billSmsText } from "@/lib/pos/billSms";
 import {
   calculatePosBill,
-  normalizeIndianMobile,
   restorePosSessions,
   type PosPaymentMethod,
   type PosTableSession,
@@ -13,6 +12,9 @@ import {
 import { PosReceiptPaper } from "./PosReceiptPaper";
 import { SendBill } from "./SendBill";
 import { displayMobile } from "./PosGuestCard";
+import { BillEmailAndPdf, SendToNumber, useBillLink } from "./PosBillShare";
+import { FULL_SCREEN_DIALOG, OverlayDialog } from "../OverlayDialog";
+import { POS_PAPER_DIALOG } from "./posDialog";
 
 type Preset = "today" | "yesterday" | "week" | "month" | "day";
 
@@ -125,19 +127,33 @@ function matches(entry: Entry, query: string): boolean {
   );
 }
 
+/** A waiter's search must name one bill; anything vaguer would list the restaurant's takings. */
+function isBillLookup(query: string): boolean {
+  const digits = query.replace(/\D/g, "");
+  return digits.length >= 10 || /^\d{1,9}$/.test(query);
+}
+
 /**
  * Every paid bill of the restaurant, by day, from all of its terminals: totals for the
  * period, search by guest, mobile, table, bill number or amount, and any bill reopened as a
  * receipt to print or text again. Offline it falls back to the bills saved on this phone.
+ *
+ * A waiter (`seesAllSales` false) gets the same screen as a one-bill lookup: no list and no
+ * totals until they type a bill number or the guest's mobile number.
  */
 export function PosSalesHistory({
   outletId,
   outletName,
+  seesAllSales,
+  mailEnabled,
   localSessions,
   onClose,
 }: {
   outletId: number;
   outletName: string;
+  /** False for a waiter: one bill at a time, found by number or mobile. */
+  seesAllSales: boolean;
+  mailEnabled: boolean;
   /** This device's bills, shown when the server cannot be reached. */
   localSessions: PosTableSession[];
   onClose: () => void;
@@ -188,6 +204,14 @@ export function PosSalesHistory({
   useEffect(() => {
     moreController.current?.abort();
     const controller = new AbortController();
+    if (!seesAllSales && !isBillLookup(debouncedQuery)) {
+      setEntries([]);
+      setSummary(null);
+      setNextCursor(null);
+      setStatus("ready");
+      setErrorText(null);
+      return () => controller.abort();
+    }
     setStatus("loading");
     setErrorText(null);
     const params = new URLSearchParams({
@@ -209,9 +233,10 @@ export function PosSalesHistory({
         if (controller.signal.aborted) return;
         if (error instanceof TypeError) {
           // No network: show what this phone has, so a guest can still get their bill.
+          // A waiter's phone keeps only their own bills, and gets no totals.
           const local = savedOnThisPhone(debouncedQuery);
           setEntries(local);
-          setSummary(summarise(local));
+          setSummary(seesAllSales ? summarise(local) : null);
           setNextCursor(null);
           setStatus("offline");
           return;
@@ -220,7 +245,7 @@ export function PosSalesHistory({
         setErrorText(error instanceof Error ? error.message : "Could not load sales.");
       });
     return () => controller.abort();
-  }, [outletId, period, debouncedQuery, reloadKey]);
+  }, [outletId, period, debouncedQuery, reloadKey, seesAllSales]);
 
   function loadMore() {
     if (!nextCursor) return;
@@ -275,22 +300,25 @@ export function PosSalesHistory({
 
   return (
     <>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Sales history"
-        className="pos-no-print fixed inset-0 z-50 overflow-y-auto bg-[#0A0D12] text-white"
+      <OverlayDialog
+        isOpen
+        onClose={onClose}
+        label={seesAllSales ? "Sales history" : "Find a bill"}
+        className={`${FULL_SCREEN_DIALOG} pos-no-print bg-[#0A0D12] text-white`}
+        closeOnBackdrop={false}
       >
         <div className="mx-auto max-w-3xl space-y-4 p-4 pb-16">
           <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b border-white/10 bg-[#0A0D12]/95 px-4 pb-3 pt-1 backdrop-blur">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-black">Sales</h2>
-                <p className="text-xs opacity-60">{outletName} · every paid bill</p>
+                <h2 className="text-lg font-black">{seesAllSales ? "Sales" : "Find a bill"}</h2>
+                <p className="text-xs opacity-60">
+                  {outletName} · {seesAllSales ? "every paid bill" : "search the bill number or mobile"}
+                </p>
               </div>
               <button
                 type="button"
-                aria-label="Close sales"
+                aria-label={seesAllSales ? "Close sales" : "Close"}
                 onClick={onClose}
                 className="flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-white/10 hover:bg-white/5"
               >
@@ -395,8 +423,15 @@ export function PosSalesHistory({
           )}
 
           {status !== "loading" && status !== "error" && entries.length === 0 && (
-            <p className="rounded-2xl border border-dashed border-white/15 p-6 text-center text-sm opacity-70">
-              {debouncedQuery ? `No bills match “${debouncedQuery}” in this period.` : "No bills in this period."}
+            <p
+              data-testid="sales-empty"
+              className="rounded-2xl border border-dashed border-white/15 p-6 text-center text-sm opacity-70"
+            >
+              {!seesAllSales && !isBillLookup(debouncedQuery)
+                ? "Type the bill number of a bill you took, or the 10-digit mobile number the bill was sent to."
+                : debouncedQuery
+                ? `No bills match “${debouncedQuery}” in this period.`
+                : "No bills in this period."}
             </p>
           )}
 
@@ -470,19 +505,29 @@ export function PosSalesHistory({
             </button>
           )}
         </div>
-      </div>
+      </OverlayDialog>
 
-      {selected && <SalesReceipt entry={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <SalesReceipt entry={selected} mailEnabled={mailEnabled} onClose={() => setSelected(null)} />
+      )}
     </>
   );
 }
 
 /** A past bill, as printed, with print and send again. */
-function SalesReceipt({ entry, onClose }: { entry: Entry; onClose: () => void }) {
+function SalesReceipt({
+  entry,
+  mailEnabled,
+  onClose,
+}: {
+  entry: Entry;
+  mailEnabled: boolean;
+  onClose: () => void;
+}) {
   const { session } = entry;
   const bill = calculatePosBill(session);
-  const [otherNumber, setOtherNumber] = useState("");
-  const otherPhone = normalizeIndianMobile(otherNumber);
+  // Sales history is only reachable signed in, so the link can always be made.
+  const link = useBillLink(session.sessionId, true);
   const guestsWithPhones = session.guests.flatMap((guest) =>
     guest.phone ? [{ seat: guest.seat, name: guest.name, phone: guest.phone }] : []
   );
@@ -495,16 +540,12 @@ function SalesReceipt({ entry, onClose }: { entry: Entry; onClose: () => void })
       guestCount: session.guestCount,
       share: null,
       paid: session.status === "SETTLED",
+      link,
     });
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Past bill"
-      className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/80 p-4"
-    >
-      <div className="pos-receipt my-auto w-full max-w-xs rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
+    <OverlayDialog isOpen onClose={onClose} label="Past bill" className={POS_PAPER_DIALOG}>
+      <div className="pos-receipt rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
         <PosReceiptPaper session={session} bill={bill} billNumber={entry.billNumber} claimCode={entry.claimCode} />
 
         <div className="pos-no-print mt-4 space-y-2 font-sans">
@@ -521,32 +562,19 @@ function SalesReceipt({ entry, onClose }: { entry: Entry; onClose: () => void })
               />
             </div>
           ))}
-          <div className="space-y-1.5 rounded-xl border border-dashed border-black/30 p-2">
-            <label className="block space-y-1 text-xs">
-              <span className="font-bold">Send this bill to a number</span>
-              <input
-                type="tel"
-                inputMode="tel"
-                data-testid="sales-receipt-number"
-                value={otherNumber}
-                maxLength={16}
-                onChange={(event) => setOtherNumber(event.target.value)}
-                placeholder="Mobile (10 digits)"
-                className="min-h-11 w-full rounded-lg border border-black/30 px-2.5 text-sm"
-              />
-            </label>
-            {otherNumber.trim() && !otherPhone && (
-              <p className="text-xs text-red-700">Enter a 10-digit Indian mobile number.</p>
-            )}
-            {otherPhone && (
-              <SendBill
-                phone={otherPhone}
-                text={textFor("")}
-                label={`SMS ${rupees(bill.grandTotal)}`}
-                testId="sales-receipt-sms-other"
-              />
-            )}
-          </div>
+          <SendToNumber
+            text={textFor("")}
+            label={`SMS ${rupees(bill.grandTotal)}`}
+            testId="sales-receipt-sms-other"
+            numberTestId="sales-receipt-number"
+          />
+          <BillEmailAndPdf
+            sessionId={session.sessionId}
+            link={link}
+            signedIn
+            mailEnabled={mailEnabled}
+            testId="sales-receipt"
+          />
         </div>
 
         <div className="pos-no-print mt-4 grid grid-cols-2 gap-2 font-sans">
@@ -567,6 +595,6 @@ function SalesReceipt({ entry, onClose }: { entry: Entry; onClose: () => void })
           </button>
         </div>
       </div>
-    </div>
+    </OverlayDialog>
   );
 }

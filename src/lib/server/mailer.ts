@@ -1,10 +1,17 @@
 import nodemailer from "nodemailer";
 
+export interface MailAttachment {
+  readonly filename: string;
+  readonly content: Uint8Array;
+  readonly contentType: string;
+}
+
 export interface MailMessage {
   readonly to: string;
   readonly subject: string;
   readonly text: string;
   readonly html: string;
+  readonly attachments?: readonly MailAttachment[];
 }
 
 export interface MailConfig {
@@ -78,6 +85,11 @@ export async function sendMail(
       subject: message.subject,
       text: message.text,
       html: message.html,
+      attachments: message.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: Buffer.from(attachment.content),
+        contentType: attachment.contentType,
+      })),
     });
   } finally {
     transport.close();

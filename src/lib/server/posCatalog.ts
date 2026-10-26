@@ -1,5 +1,5 @@
 import { rows } from "./pg";
-import { isRestaurantAdmin } from "./restaurantStore";
+import { isRestaurantAdmin, type RestaurantRole } from "./restaurantStore";
 import { unitPricePaise } from "@/lib/managedOrders";
 import type { PosMenuItem, PosOutlet } from "@/lib/pos/posEngine";
 import type { DietaryType } from "@/types/krave";
@@ -117,15 +117,27 @@ export const BILLABLE_RESTAURANT_SQL = `r.status <> 'suspended'
   AND ($2::boolean OR EXISTS (
     SELECT 1 FROM restaurant_memberships m WHERE m.restaurant_id = r.id AND m.user_id = $1))`;
 
+const ROLES: readonly RestaurantRole[] = ["owner", "admin", "manager", "staff"];
+
+/** Owners and managers run the money side: every bill of the restaurant, and its totals. */
+export function seesAllSales(role: RestaurantRole): boolean {
+  return role !== "staff";
+}
+
 async function billableRestaurants(
   userId: string
-): Promise<{ id: string; outletId: number; name: string; city: string; taxRateBps: number }[]> {
+): Promise<
+  { id: string; outletId: number; name: string; city: string; taxRateBps: number; role: RestaurantRole }[]
+> {
+  const admin = await isRestaurantAdmin(userId);
   const found = await rows<Row>(
-    `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps
+    `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps,
+            (SELECT m.role FROM restaurant_memberships m
+             WHERE m.restaurant_id = r.id AND m.user_id = $1) AS role
      FROM managed_restaurants r
      WHERE ${BILLABLE_RESTAURANT_SQL}
      ORDER BY r.name, r.id`,
-    [userId, await isRestaurantAdmin(userId)]
+    [userId, admin]
   );
   return found.map((row) => ({
     id: String(row.id),
@@ -134,12 +146,8 @@ async function billableRestaurants(
     city: String(row.city),
     // The same setting online orders use, so a table and an online order cost the same.
     taxRateBps: Number(row.tax_enabled) === 1 ? Number(row.tax_rate_bps) : 0,
+    role: ROLES.find((known) => known === row.role) ?? (admin ? "admin" : "staff"),
   }));
-}
-
-/** The outlets whose floor this account shares, without loading any menu. */
-export async function billableOutletIds(userId: string): Promise<number[]> {
-  return (await billableRestaurants(userId)).map((restaurant) => restaurant.outletId);
 }
 
 /** The restaurant's name when this account may bill (and so see the bills of) an outlet. */
@@ -148,6 +156,30 @@ export async function billableOutletName(userId: string, outletId: number): Prom
     (candidate) => candidate.outletId === outletId
   );
   return restaurant?.name ?? null;
+}
+
+/** The restaurant's name and this account's role there, or null when it cannot bill for it. */
+export async function billableOutletAccess(
+  userId: string,
+  outletId: number
+): Promise<{ name: string; role: RestaurantRole } | null> {
+  const restaurant = (await billableRestaurants(userId)).find(
+    (candidate) => candidate.outletId === outletId
+  );
+  return restaurant ? { name: restaurant.name, role: restaurant.role } : null;
+}
+
+/** Outlets this account may bill for, and whether it may see all of their sales. */
+export async function billableOutletScopes(
+  userId: string
+): Promise<{ outletIds: number[]; salesOutletIds: number[] }> {
+  const restaurants = await billableRestaurants(userId);
+  return {
+    outletIds: restaurants.map((restaurant) => restaurant.outletId),
+    salesOutletIds: restaurants
+      .filter((restaurant) => seesAllSales(restaurant.role))
+      .map((restaurant) => restaurant.outletId),
+  };
 }
 
 /** The restaurants this account may bill for at a table, each with its orderable dishes. */
@@ -159,6 +191,7 @@ export async function listPosOutlets(userId: string): Promise<PosOutlet[]> {
     name: restaurant.name,
     locality: restaurant.city,
     taxRateBps: restaurant.taxRateBps,
+    seesAllSales: seesAllSales(restaurant.role),
     menu: dishes
       .filter((dish) => dish.orderable && dish.restaurantId === restaurant.id)
       .map((dish) => dish.item),

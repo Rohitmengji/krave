@@ -278,7 +278,7 @@ export function RestaurantTeamPanel({ restaurantId }: { restaurantId: string }) 
               </div>
               <button
                 disabled={busy}
-                className="min-h-11 rounded-xl bg-emerald-600 px-5 font-bold disabled:opacity-50"
+                className="min-h-11 rounded-xl bg-emerald-700 px-5 font-bold disabled:opacity-50"
               >
                 {busy ? "Saving…" : "Give access"}
               </button>

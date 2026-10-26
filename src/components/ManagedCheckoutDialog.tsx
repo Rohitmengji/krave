@@ -310,7 +310,7 @@ export function ManagedCheckoutDialog(props: CheckoutDialogProps) {
           ) : null}
 
           <label className="block font-semibold">
-            Note for the kitchen <span className="font-normal text-slate-500">(optional)</span>
+            Note for the kitchen <span className="font-normal text-slate-600">(optional)</span>
             <textarea
               className={fieldClass}
               rows={2}
@@ -319,7 +319,7 @@ export function ManagedCheckoutDialog(props: CheckoutDialogProps) {
               onChange={(event) => updateCart({ type: "setNote", note: event.target.value })}
             />
           </label>
-          <p className="text-xs text-slate-500">Your name, phone and address are remembered on this device for next time.</p>
+          <p className="text-xs text-slate-600">Your name, phone and address are remembered on this device for next time.</p>
         </fieldset>
 
         {review.totals ? (

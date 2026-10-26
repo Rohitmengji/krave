@@ -31,7 +31,7 @@ test.describe("Dine-in bill claiming", () => {
   test("carries a table bill onto the guest's own account", async ({ page, browser }) => {
     // The counter settles a table. It never learns who the guest is.
     await resetBrowser(page);
-    const restaurant = await createRestaurant(page, "Claim Counter");
+    const restaurant = await createRestaurant(page, `Claim Counter ${Date.now().toString(36)}`);
     await openTerminal(page, restaurant);
     const code = await settleTableAndReadCode(page, "T1");
     expect(code).toMatch(/^[2345679BCDFGHJKLMNPQRSTVWXYZ]{10}$/);
@@ -60,7 +60,7 @@ test.describe("Dine-in bill claiming", () => {
 
   test("lets only the first holder claim a bill", async ({ page, browser }) => {
     await resetBrowser(page);
-    const restaurant = await createRestaurant(page, "Claim Counter Two");
+    const restaurant = await createRestaurant(page, `Claim Counter Two ${Date.now().toString(36)}`);
     await openTerminal(page, restaurant);
     const code = await settleTableAndReadCode(page, "T2");
 

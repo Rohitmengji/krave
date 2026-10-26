@@ -12,18 +12,21 @@ export interface BillSmsInput {
   /** This guest's part of a split bill; null when one person pays the whole bill. */
   share: number | null;
   paid: boolean;
+  /** Where the guest opens the bill as a PDF; left out until the server has the table. */
+  link?: string | null;
 }
 
 export function billSmsText(input: BillSmsInput): string {
   const greeting = input.guestName.trim() ? `Hi ${input.guestName.trim()}` : "Hello";
   const thanks = input.paid ? "Paid, thank you for visiting!" : "Thank you!";
+  const pdf = input.link ? ` Bill (PDF): ${input.link}` : "";
   if (input.share !== null && input.guestCount > 1) {
     return (
       `${input.outletName}: ${greeting}, the bill for table ${input.tableId} is ` +
-      `Rs.${input.total} for ${input.guestCount} guests. Your share is Rs.${input.share}. ${thanks}`
+      `Rs.${input.total} for ${input.guestCount} guests. Your share is Rs.${input.share}.${pdf} ${thanks}`
     );
   }
-  return `${input.outletName}: ${greeting}, your bill for table ${input.tableId} is Rs.${input.total}. ${thanks}`;
+  return `${input.outletName}: ${greeting}, your bill for table ${input.tableId} is Rs.${input.total}.${pdf} ${thanks}`;
 }
 
 /** `?&body=` is the form both Android and iOS messaging apps read. */

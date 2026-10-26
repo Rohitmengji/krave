@@ -22,6 +22,8 @@ export interface SharedBill {
   billNumber: number | null;
   claimCode: string | null;
   timeZone: string;
+  fssaiNumber: string;
+  gstin: string;
 }
 
 /**
@@ -53,8 +55,14 @@ export async function billLinkToken(userId: string, sessionId: unknown): Promise
 /** The bill behind a link, as it stands now: paid or not, after any correction. */
 export async function loadSharedBill(token: string): Promise<SharedBill | null> {
   if (!TOKEN_PATTERN.test(token)) return null;
-  const link = await one<{ session_id: string; outlet_id: number; time_zone: string | null }>(
-    `SELECT l.session_id, l.outlet_id, r.time_zone
+  const link = await one<{
+    session_id: string;
+    outlet_id: number;
+    time_zone: string | null;
+    fssai_number: string | null;
+    gstin: string | null;
+  }>(
+    `SELECT l.session_id, l.outlet_id, r.time_zone, r.fssai_number, r.gstin
      FROM pos_bill_links l
      LEFT JOIN managed_restaurants r ON r.pos_outlet_id = l.outlet_id
      WHERE l.token = $1`,
@@ -77,6 +85,8 @@ export async function loadSharedBill(token: string): Promise<SharedBill | null> 
     billNumber: found[0].bill_number == null ? null : Number(found[0].bill_number),
     claimCode: session.status === "SETTLED" ? await getClaimCode(session.sessionId) : null,
     timeZone: link.time_zone || DEFAULT_TIME_ZONE,
+    fssaiNumber: link.fssai_number ?? "",
+    gstin: link.gstin ?? "",
   };
 }
 
@@ -103,6 +113,8 @@ export function sharedBillPdf(shared: SharedBill): Uint8Array {
     billNumber: shared.billNumber,
     claimCode: shared.claimCode,
     dateText: formatWhen(session.payment?.settledAt ?? session.openedAt, shared.timeZone),
+    fssaiNumber: shared.fssaiNumber,
+    gstin: shared.gstin,
   });
 }
 

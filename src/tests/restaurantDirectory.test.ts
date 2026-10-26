@@ -25,6 +25,8 @@ function restaurant(overrides: Partial<ManagedRestaurant> = {}): ManagedRestaura
     taxEnabled: false,
     acceptingOrders: false,
     timeZone: "Asia/Kolkata",
+    fssaiNumber: "",
+    gstin: "",
     status: "published",
     createdAt: "2026-10-23T00:00:00.000Z",
     updatedAt: "2026-10-23T00:00:00.000Z",

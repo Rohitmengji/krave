@@ -40,6 +40,10 @@ export interface ManagedRestaurant {
   acceptingOrders: boolean;
   /** IANA zone the opening hours are written in. */
   timeZone: string;
+  /** FSSAI licence or registration number, printed on every bill; "" when not given. */
+  fssaiNumber: string;
+  /** GST registration, printed on bills; "" when the restaurant is not registered. */
+  gstin: string;
   status: RestaurantStatus;
   createdAt: string;
   updatedAt: string;
@@ -182,6 +186,8 @@ export function mapRestaurant(row: RestaurantRow): ManagedRestaurant {
     taxEnabled: Number(row.tax_enabled) === 1,
     acceptingOrders: Number(row.accepting_orders) === 1,
     timeZone: text(row.time_zone) || "Asia/Kolkata",
+    fssaiNumber: text(row.fssai_number),
+    gstin: text(row.gstin),
     status: text(row.status) as RestaurantStatus,
     createdAt: text(row.created_at),
     updatedAt: text(row.updated_at),
@@ -331,6 +337,30 @@ function stringList(value: unknown, label: string, maxItems = 30, maxLength = 10
   return normalized;
 }
 
+/** 14 digits: 1… for a licence, 2… for a registration. Spaces are ignored; empty clears it. */
+export function fssaiValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value !== "string") throw new Error("FSSAI number must be text.");
+  const digits = value.replace(/\s+/g, "");
+  if (!digits) return "";
+  if (!/^[12]\d{13}$/.test(digits)) {
+    throw new Error("Enter the 14-digit FSSAI licence or registration number.");
+  }
+  return digits;
+}
+
+/** The 15-character GSTIN from the registration certificate. Spaces are ignored; empty clears it. */
+export function gstinValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value !== "string") throw new Error("GSTIN must be text.");
+  const gstin = value.replace(/\s+/g, "").toUpperCase();
+  if (!gstin) return "";
+  if (!/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z][A-Z0-9][0-9A-Z]$/.test(gstin)) {
+    throw new Error("Enter the 15-character GSTIN, for example 29ABCDE1234F1Z5.");
+  }
+  return gstin;
+}
+
 export async function createManagedRestaurant(userId: string, input: unknown): Promise<ManagedRestaurant> {
   if (!(await isRestaurantAdmin(userId))) {
     throw new Error("A restaurant administrator must approve your owner account first.");
@@ -351,14 +381,17 @@ export async function createManagedRestaurant(userId: string, input: unknown): P
     body.deliveryFeePaise === undefined ? 0 : nonNegativeInteger(body.deliveryFeePaise, "Delivery fee");
   const taxRateBps =
     body.taxRateBps === undefined ? 0 : nonNegativeInteger(body.taxRateBps, "Tax rate", 10000);
+  const fssaiNumber = fssaiValue(body.fssaiNumber);
+  const gstin = gstinValue(body.gstin);
 
   return transaction(async (client) => {
     const inserted = await client.query<RestaurantRow>(
       `INSERT INTO managed_restaurants
        (id, owner_user_id, slug, name, description, phone, email, address, city, state,
         postal_code, service_areas, delivery_enabled, takeaway_enabled, dine_in_enabled,
-        minimum_order_paise, delivery_fee_paise, tax_rate_bps, tax_enabled, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $20)
+        minimum_order_paise, delivery_fee_paise, tax_rate_bps, tax_enabled, created_at, updated_at,
+        fssai_number, gstin)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $20, $21, $22)
        RETURNING *`,
       [
         id,
@@ -381,6 +414,8 @@ export async function createManagedRestaurant(userId: string, input: unknown): P
         taxRateBps,
         Number(body.taxEnabled === undefined ? false : booleanValue(body.taxEnabled, "Tax")),
         now,
+        fssaiNumber,
+        gstin,
       ]
     );
     await client.query(
@@ -440,6 +475,8 @@ export async function updateManagedRestaurant(
     const taxRateBps = body.taxRateBps === undefined ? Number(current.tax_rate_bps) : nonNegativeInteger(body.taxRateBps, "Tax rate", 10000);
     const taxEnabled = body.taxEnabled === undefined ? Number(current.tax_enabled) === 1 : booleanValue(body.taxEnabled, "Tax");
     const acceptingOrders = body.acceptingOrders === undefined ? Number(current.accepting_orders) === 1 : booleanValue(body.acceptingOrders, "Accepting orders");
+    const fssaiNumber = body.fssaiNumber === undefined ? text(current.fssai_number) : fssaiValue(body.fssaiNumber);
+    const gstin = body.gstin === undefined ? text(current.gstin) : gstinValue(body.gstin);
     const hours = body.hours === undefined ? null : openingHoursValue(body.hours);
     const now = new Date().toISOString();
 
@@ -449,13 +486,14 @@ export async function updateManagedRestaurant(
        city = $8, state = $9, postal_code = $10, service_areas = $11::jsonb,
        delivery_enabled = $12, takeaway_enabled = $13, dine_in_enabled = $14,
        minimum_order_paise = $15, delivery_fee_paise = $16, tax_rate_bps = $17,
-       tax_enabled = $18, updated_at = $19, accepting_orders = $20
+       tax_enabled = $18, updated_at = $19, accepting_orders = $20,
+       fssai_number = $21, gstin = $22
        WHERE id = $1 RETURNING *`,
       [
         restaurantId, slug, name, description, phone, email, address, city, state, postalCode,
         JSON.stringify(serviceAreas), Number(deliveryEnabled), Number(takeawayEnabled),
         Number(dineInEnabled), minimumOrderPaise, deliveryFeePaise, taxRateBps,
-        Number(taxEnabled), now, Number(acceptingOrders),
+        Number(taxEnabled), now, Number(acceptingOrders), fssaiNumber, gstin,
       ]
     );
     if (hours) {

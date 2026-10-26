@@ -378,6 +378,11 @@ function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled:
     [receiptSession]
   );
 
+  // The bill's own restaurant, which need not be the outlet picked in the header.
+  const receiptOutlet = receiptSession
+    ? outlets.find((outlet) => outlet.outletId === receiptSession.outletId)
+    : undefined;
+
   const receiptSmsGuests = (receiptSession?.guests ?? []).flatMap((guest) =>
     guest.phone && receiptSession && guest.seat <= receiptSession.guestCount
       ? [{ seat: guest.seat, name: guest.name, phone: guest.phone }]
@@ -1889,6 +1894,10 @@ function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled:
               bill={receiptBill}
               billNumber={billNumbers[receiptSession.sessionId] ?? null}
               claimCode={claimCodes[receiptSession.sessionId] ?? null}
+              registrations={{
+                fssaiNumber: receiptOutlet?.fssaiNumber ?? "",
+                gstin: receiptOutlet?.gstin ?? "",
+              }}
             />
 
             <div className="pos-no-print mt-4 space-y-2">
@@ -2146,6 +2155,7 @@ function PosFloor({ outlets, mailEnabled }: { outlets: PosOutlet[]; mailEnabled:
         <PosSalesHistory
           outletId={outletId}
           outletName={currentOutlet.name}
+          registrations={{ fssaiNumber: currentOutlet.fssaiNumber, gstin: currentOutlet.gstin }}
           seesAllSales={seesAllSales}
           mailEnabled={mailEnabled}
           localSessions={sessions}

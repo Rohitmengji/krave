@@ -12,6 +12,8 @@ export const TEST_OUTLETS: PosOutlet[] = RESTAURANTS_DATA.map((restaurant) => ({
   // 5% GST, so the engine tests keep exercising tax and its rounding.
   taxRateBps: 500,
   seesAllSales: true,
+  fssaiNumber: "",
+  gstin: "",
   menu: restaurant.menus.flatMap((menu) =>
     menu.categories.flatMap((category) =>
       category.items.map(

@@ -38,6 +38,7 @@ function table(...dishes: [PosMenuItem, number][]): PosTableSession {
 }
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const UNREGISTERED = { fssaiNumber: "", gstin: "" };
 
 describe("bill PDF", () => {
   const paid = (() => {
@@ -46,7 +47,7 @@ describe("bill PDF", () => {
   })();
 
   it("is a well-formed PDF whose cross-reference table points at every object", () => {
-    const pdf = decode(billPdf({ session: paid, bill: calculatePosBill(paid), billNumber: 12, claimCode: null, dateText: "25/10/2026, 3:20 pm" }));
+    const pdf = decode(billPdf({ session: paid, bill: calculatePosBill(paid), billNumber: 12, claimCode: null, dateText: "25/10/2026, 3:20 pm", ...UNREGISTERED }));
     expect(pdf.startsWith("%PDF-1.4\n")).toBe(true);
     expect(pdf.endsWith("%%EOF\n")).toBe(true);
 
@@ -62,7 +63,7 @@ describe("bill PDF", () => {
 
   it("carries the order, the total in rupees and the payment, with brackets escaped", () => {
     const bill = calculatePosBill(paid);
-    const pdf = decode(billPdf({ session: paid, bill, billNumber: 12, claimCode: "ABCD2345", dateText: "25/10/2026, 3:20 pm" }));
+    const pdf = decode(billPdf({ session: paid, bill, billNumber: 12, claimCode: "ABCD2345", dateText: "25/10/2026, 3:20 pm", ...UNREGISTERED }));
     expect(pdf).toContain("(Chicken Biriyani \\(Full\\)    2      200.00)");
     expect(pdf).toContain("BILL - PAID");
     expect(pdf).toContain("Bill No. 12");
@@ -70,6 +71,27 @@ describe("bill PDF", () => {
     expect(pdf).toContain("CASH)");
     expect(pdf).toContain("ABCD2345");
     expect(pdf).toContain("Not a GST tax invoice");
+    expect(pdf).not.toContain("FSSAI");
+  });
+
+  it("prints the FSSAI licence and GSTIN under the name, and is then a tax invoice", () => {
+    const pdf = decode(
+      billPdf({
+        session: paid,
+        bill: calculatePosBill(paid),
+        billNumber: 12,
+        claimCode: null,
+        dateText: "now",
+        fssaiNumber: "11223344556677",
+        gstin: "29ABCDE1234F1Z5",
+      })
+    );
+    const order = ["Jagadamba", "GSTIN 29ABCDE1234F1Z5", "FSSAI Lic. No. 11223344556677", "BILL - PAID"].map(
+      (text) => pdf.indexOf(text)
+    );
+    expect(order.every((at) => at > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(pdf).not.toContain("Not a GST tax invoice");
   });
 
   it("never lets an unusual name break the file or the columns", () => {
@@ -77,7 +99,7 @@ describe("bill PDF", () => {
       [dish("a", "मटण थाळी Special ₹ Thali with extra Solai and Papad", 120), 1],
       [dish("b", "Crème brûlée", 90), 1]
     );
-    const pdf = decode(billPdf({ session, bill: calculatePosBill(session), billNumber: null, claimCode: null, dateText: "now" }));
+    const pdf = decode(billPdf({ session, bill: calculatePosBill(session), billNumber: null, claimCode: null, dateText: "now", ...UNREGISTERED }));
     // Every byte is 7-bit, Latin accents are octal escapes and other scripts are "?".
     expect([...pdf].every((char) => char.charCodeAt(0) < 0x80)).toBe(true);
     expect(pdf).toContain("Cr\\350me br\\373l\\351e");

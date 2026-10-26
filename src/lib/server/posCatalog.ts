@@ -127,11 +127,20 @@ export function seesAllSales(role: RestaurantRole): boolean {
 async function billableRestaurants(
   userId: string
 ): Promise<
-  { id: string; outletId: number; name: string; city: string; taxRateBps: number; role: RestaurantRole }[]
+  {
+    id: string;
+    outletId: number;
+    name: string;
+    city: string;
+    taxRateBps: number;
+    role: RestaurantRole;
+    fssaiNumber: string;
+    gstin: string;
+  }[]
 > {
   const admin = await isRestaurantAdmin(userId);
   const found = await rows<Row>(
-    `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps,
+    `SELECT r.id, r.pos_outlet_id, r.name, r.city, r.tax_enabled, r.tax_rate_bps, r.fssai_number, r.gstin,
             (SELECT m.role FROM restaurant_memberships m
              WHERE m.restaurant_id = r.id AND m.user_id = $1) AS role
      FROM managed_restaurants r
@@ -147,6 +156,8 @@ async function billableRestaurants(
     // The same setting online orders use, so a table and an online order cost the same.
     taxRateBps: Number(row.tax_enabled) === 1 ? Number(row.tax_rate_bps) : 0,
     role: ROLES.find((known) => known === row.role) ?? (admin ? "admin" : "staff"),
+    fssaiNumber: String(row.fssai_number ?? ""),
+    gstin: String(row.gstin ?? ""),
   }));
 }
 
@@ -192,6 +203,8 @@ export async function listPosOutlets(userId: string): Promise<PosOutlet[]> {
     locality: restaurant.city,
     taxRateBps: restaurant.taxRateBps,
     seesAllSales: seesAllSales(restaurant.role),
+    fssaiNumber: restaurant.fssaiNumber,
+    gstin: restaurant.gstin,
     menu: dishes
       .filter((dish) => dish.orderable && dish.restaurantId === restaurant.id)
       .map((dish) => dish.item),

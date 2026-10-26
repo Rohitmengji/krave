@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/lib/server/auth";
 import { one, run } from "@/lib/server/pg";
+import { listPosOutlets } from "@/lib/server/posCatalog";
 import {
   cancelOrderByCustomer,
   changeRestaurantOrderStatus,
@@ -330,5 +331,23 @@ describe.skipIf(!hasTestDatabase)("restaurant ordering", () => {
     const saved = (await getPublishedRestaurantBySlug(SLUG))!;
     expect(saved.acceptingOrders).toBe(false);
     expect(saved.description).toBe("Home-style Maratha food");
+  });
+
+  it("keeps the FSSAI licence and GSTIN printed on bills, as typed on a phone, and refuses typos", async () => {
+    const { owner, restaurantId } = await openRestaurant();
+    const saved = await updateManagedRestaurant(owner.id, restaurantId, {
+      fssaiNumber: " 1122 3344 5566 77 ",
+      gstin: "29abcde1234f1z5",
+    });
+    expect(saved).toMatchObject({ fssaiNumber: "11223344556677", gstin: "29ABCDE1234F1Z5" });
+    // A save that leaves them out keeps them; the terminal bills with them.
+    await updateManagedRestaurant(owner.id, restaurantId, { description: "Home-style" });
+    const [outlet] = await listPosOutlets(owner.id);
+    expect(outlet).toMatchObject({ fssaiNumber: "11223344556677", gstin: "29ABCDE1234F1Z5" });
+
+    await expect(updateManagedRestaurant(owner.id, restaurantId, { fssaiNumber: "1234" })).rejects.toThrow(/14-digit/);
+    await expect(updateManagedRestaurant(owner.id, restaurantId, { gstin: "29ABCDE1234" })).rejects.toThrow(/15-character/);
+    // Emptying a field removes it from the bill.
+    expect(await updateManagedRestaurant(owner.id, restaurantId, { gstin: "" })).toMatchObject({ gstin: "" });
   });
 });

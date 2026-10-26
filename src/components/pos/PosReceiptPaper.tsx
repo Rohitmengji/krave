@@ -5,23 +5,35 @@ function formatMoney(value: number): string {
   return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** The restaurant's registrations printed on its bills; "" when not on record. */
+export interface BillRegistrations {
+  fssaiNumber: string;
+  gstin: string;
+}
+
 /** The printed part of a bill: what goes to the thermal printer and what the guest keeps. */
 export function PosReceiptPaper({
   session,
   bill,
   billNumber,
   claimCode,
+  registrations,
 }: {
   session: PosTableSession;
   bill: PosBill;
   billNumber: number | null;
   claimCode: string | null;
+  registrations: BillRegistrations;
 }) {
   const paidAt = session.payment ? new Date(session.payment.settledAt) : null;
   return (
     <>
       <div className="text-center">
         <div className="text-sm font-black">{session.outletName}</div>
+        {registrations.gstin && <div data-testid="pos-receipt-gstin">GSTIN {registrations.gstin}</div>}
+        {registrations.fssaiNumber && (
+          <div data-testid="pos-receipt-fssai">FSSAI Lic. No. {registrations.fssaiNumber}</div>
+        )}
         <div>{session.status === "SETTLED" ? "BILL · PAID" : "BILL"}</div>
         {billNumber !== null && (
           <div data-testid="pos-receipt-bill-number" className="font-black">
@@ -149,7 +161,7 @@ export function PosReceiptPaper({
           <div className="text-[9px]">Enter it under Your Orders. Valid for 30 days.</div>
         </div>
       )}
-      {bill.taxTotal > 0 && (
+      {bill.taxTotal > 0 && !registrations.gstin && (
         <p className="mt-1 text-center text-[9px]">
           Not a GST tax invoice: no GSTIN is on record for this restaurant.
         </p>

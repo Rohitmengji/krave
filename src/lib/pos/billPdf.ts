@@ -15,6 +15,9 @@ export interface BillPdfInput {
   claimCode: string | null;
   /** When it was paid, or opened if unpaid, already written in the restaurant's time zone. */
   dateText: string;
+  /** Printed under the restaurant's name; "" when not on record. */
+  fssaiNumber: string;
+  gstin: string;
 }
 
 interface Line {
@@ -105,13 +108,16 @@ function itemRows(name: string, quantity: number, amount: number): Line[] {
   return [{ text: first.padEnd(NAME_COLUMNS) + qty + value }, ...rest.map((text) => ({ text: `  ${text}` }))];
 }
 
-function billLines({ session, bill, billNumber, claimCode, dateText }: BillPdfInput): Line[] {
+function billLines(input: BillPdfInput): Line[] {
+  const { session, bill, billNumber, claimCode, dateText } = input;
   const rule: Line = { text: "-".repeat(COLUMNS) };
   const guests = `${session.guestCount} guest${session.guestCount === 1 ? "" : "s"}`;
   const lines: Line[] = [
     ...wrap(session.outletName, COLUMNS).map((text) => ({ text: center(text), bold: true })),
-    { text: center(session.status === "SETTLED" ? "BILL - PAID" : "BILL") },
   ];
+  if (input.gstin) lines.push({ text: center(`GSTIN ${input.gstin}`) });
+  if (input.fssaiNumber) lines.push({ text: center(`FSSAI Lic. No. ${input.fssaiNumber}`) });
+  lines.push({ text: center(session.status === "SETTLED" ? "BILL - PAID" : "BILL") });
   if (billNumber !== null) lines.push({ text: center(`Bill No. ${billNumber}`), bold: true });
   lines.push(
     { text: center(`Table ${session.tableId} - ${guests}`) },
@@ -165,7 +171,7 @@ function billLines({ session, bill, billNumber, claimCode, dateText }: BillPdfIn
       ...wrap("Enter it under Your Orders. Valid for 30 days.", COLUMNS).map((text) => ({ text: center(text) }))
     );
   }
-  if (bill.taxTotal > 0) {
+  if (bill.taxTotal > 0 && !input.gstin) {
     lines.push(
       { text: "" },
       ...wrap("Not a GST tax invoice: no GSTIN is on record for this restaurant.", COLUMNS).map(

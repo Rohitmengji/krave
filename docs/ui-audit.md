@@ -93,6 +93,16 @@ on a wet hand in a busy room.
 
 Both are covered by tests: the reload case in `src/tests/floorSync.test.ts` and the whole flow in `e2e/terminal.spec.ts`.
 
+## 7a. Added on 26 October
+
+| # | Change | Why |
+|---|---|---|
+| 30 | **FSSAI licence and GSTIN on every bill** (screen, printout, PDF). The owner enters them once under Restaurant details; spaces are ignored, typos are refused (14-digit FSSAI, 15-character GSTIN) | FSSAI expects the licence number on bills. With a GSTIN on record, a bill that charges GST no longer says "Not a GST tax invoice" |
+| 31 | **The public menu link names the restaurant.** The tab title and the WhatsApp/Google preview read "Jagadamba Maratha Khanawali — Menu and prices" instead of the generic KRAVE title | A menu link shared with customers should say whose menu it is |
+| 32 | Service-mode checkboxes in Restaurant details enlarged to a 44 px row | They were 13 px squares on a phone |
+
+The public menu and home page were also measured on the live site at phone width: no control under 44 px, no sideways scrolling.
+
 ## 8. Known gaps (not fixed, with the reason)
 
 | Gap | Why it is left, and the plan |

@@ -70,6 +70,9 @@ export interface PosOutlet {
   taxRateBps: number;
   /** Owners and managers see every bill and the day's takings; a waiter looks one bill up. */
   seesAllSales: boolean;
+  /** Printed at the top of the bill; "" when the restaurant has not given them. */
+  fssaiNumber: string;
+  gstin: string;
   menu: PosMenuItem[];
 }
 

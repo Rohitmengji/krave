@@ -1,3 +1,5 @@
+import { cache } from "react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ManagedMenuOrdering, type MenuDisplayCategory } from "@/components/ManagedMenuOrdering";
 import { orderingState } from "@/lib/server/restaurantOrderStore";
@@ -14,6 +16,21 @@ type RestaurantPageProps = {
   params: Promise<{ slug: string }>;
 };
 
+// The metadata and the page read the same restaurant once per request.
+const publishedRestaurant = cache(getPublishedRestaurantBySlug);
+
+/** What a shared link shows on WhatsApp and in the browser tab: this restaurant, not KRAVE. */
+export async function generateMetadata({ params }: RestaurantPageProps): Promise<Metadata> {
+  const restaurant = await publishedRestaurant((await params).slug);
+  if (!restaurant) return { title: "Menu not found · KRAVE" };
+  const title = `${restaurant.name} — Menu and prices`;
+  const description = (
+    restaurant.description.trim() ||
+    `The menu and prices of ${restaurant.name}${restaurant.city ? `, ${restaurant.city}` : ""}, published by the restaurant itself.`
+  ).slice(0, 160);
+  return { title, description, openGraph: { title, description, type: "website" } };
+}
+
 function formatRupees(paise: number): string {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -24,7 +41,7 @@ function formatRupees(paise: number): string {
 
 export default async function RestaurantPage({ params }: RestaurantPageProps) {
   const { slug } = await params;
-  const restaurant = await getPublishedRestaurantBySlug(slug);
+  const restaurant = await publishedRestaurant(slug);
   if (!restaurant) notFound();
   const [categories, hours] = await Promise.all([
     getManagedMenu("", restaurant.id, true),

@@ -9,7 +9,7 @@ import {
   type PosPaymentMethod,
   type PosTableSession,
 } from "@/lib/pos/posEngine";
-import { PosReceiptPaper } from "./PosReceiptPaper";
+import { PosReceiptPaper, type BillRegistrations } from "./PosReceiptPaper";
 import { SendBill } from "./SendBill";
 import { displayMobile } from "./PosGuestCard";
 import { BillEmailAndPdf, SendToNumber, useBillLink } from "./PosBillShare";
@@ -144,6 +144,7 @@ function isBillLookup(query: string): boolean {
 export function PosSalesHistory({
   outletId,
   outletName,
+  registrations,
   seesAllSales,
   mailEnabled,
   localSessions,
@@ -151,6 +152,7 @@ export function PosSalesHistory({
 }: {
   outletId: number;
   outletName: string;
+  registrations: BillRegistrations;
   /** False for a waiter: one bill at a time, found by number or mobile. */
   seesAllSales: boolean;
   mailEnabled: boolean;
@@ -508,7 +510,12 @@ export function PosSalesHistory({
       </OverlayDialog>
 
       {selected && (
-        <SalesReceipt entry={selected} mailEnabled={mailEnabled} onClose={() => setSelected(null)} />
+        <SalesReceipt
+          entry={selected}
+          registrations={registrations}
+          mailEnabled={mailEnabled}
+          onClose={() => setSelected(null)}
+        />
       )}
     </>
   );
@@ -517,10 +524,12 @@ export function PosSalesHistory({
 /** A past bill, as printed, with print and send again. */
 function SalesReceipt({
   entry,
+  registrations,
   mailEnabled,
   onClose,
 }: {
   entry: Entry;
+  registrations: BillRegistrations;
   mailEnabled: boolean;
   onClose: () => void;
 }) {
@@ -546,7 +555,13 @@ function SalesReceipt({
   return (
     <OverlayDialog isOpen onClose={onClose} label="Past bill" className={POS_PAPER_DIALOG}>
       <div className="pos-receipt rounded-2xl bg-white p-5 font-mono text-[11px] text-black">
-        <PosReceiptPaper session={session} bill={bill} billNumber={entry.billNumber} claimCode={entry.claimCode} />
+        <PosReceiptPaper
+          session={session}
+          bill={bill}
+          billNumber={entry.billNumber}
+          claimCode={entry.claimCode}
+          registrations={registrations}
+        />
 
         <div className="pos-no-print mt-4 space-y-2 font-sans">
           {guestsWithPhones.map((guest) => (

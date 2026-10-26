@@ -129,6 +129,8 @@ type RestaurantForm = {
   deliveryFee: string;
   taxRate: string;
   taxEnabled: boolean;
+  fssaiNumber: string;
+  gstin: string;
 };
 
 const emptyRestaurantForm: RestaurantForm = {
@@ -149,6 +151,8 @@ const emptyRestaurantForm: RestaurantForm = {
   deliveryFee: "0",
   taxRate: "0",
   taxEnabled: false,
+  fssaiNumber: "",
+  gstin: "",
 };
 
 function paiseToRupees(paise: number | null): string {
@@ -183,6 +187,8 @@ function restaurantFormFrom(value: ManagedRestaurant): RestaurantForm {
     deliveryFee: paiseToRupees(value.deliveryFeePaise),
     taxRate: (value.taxRateBps / 100).toString(),
     taxEnabled: value.taxEnabled,
+    fssaiNumber: value.fssaiNumber,
+    gstin: value.gstin,
   };
 }
 
@@ -232,6 +238,8 @@ function toRestaurantPayload(form: RestaurantForm) {
     deliveryFeePaise,
     taxRateBps: Math.round(taxRate * 100),
     taxEnabled: form.taxEnabled,
+    fssaiNumber: form.fssaiNumber,
+    gstin: form.gstin,
   };
 }
 
@@ -1097,6 +1105,8 @@ function RestaurantFields({
         <Field label="Minimum order (₹)"><input type="number" min="0" step="0.01" value={form.minimumOrder} onChange={(event) => update("minimumOrder", event.target.value)} className="field" /></Field>
         <Field label="Delivery fee (₹)"><input type="number" min="0" step="0.01" value={form.deliveryFee} onChange={(event) => update("deliveryFee", event.target.value)} className="field" /></Field>
         <Field label="GST/tax rate (%)"><input type="number" min="0" max="100" step="0.01" value={form.taxRate} onChange={(event) => update("taxRate", event.target.value)} className="field" /></Field>
+        <Field label="FSSAI licence number (printed on every bill)"><input inputMode="numeric" autoComplete="off" maxLength={20} placeholder="14 digits" value={form.fssaiNumber} onChange={(event) => update("fssaiNumber", event.target.value)} className="field" /></Field>
+        <Field label="GSTIN (only if registered for GST)"><input autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={20} placeholder="e.g. 29ABCDE1234F1Z5" value={form.gstin} onChange={(event) => update("gstin", event.target.value)} className="field" /></Field>
       </div>
       <Field label="Description"><textarea maxLength={2000} value={form.description} onChange={(event) => update("description", event.target.value)} className="field min-h-20" /></Field>
       <fieldset className="flex flex-wrap gap-4 text-sm">
@@ -1107,8 +1117,8 @@ function RestaurantFields({
           ["dineInEnabled", "Dine-in"],
           ["taxEnabled", "Add this tax to online orders and table bills"],
         ] as const).map(([key, label]) => (
-          <label key={key} className="flex items-center gap-2">
-            <input type="checkbox" checked={form[key]} onChange={(event) => update(key, event.target.checked)} />
+          <label key={key} className="flex min-h-11 items-center gap-2">
+            <input type="checkbox" className="h-5 w-5" checked={form[key]} onChange={(event) => update(key, event.target.checked)} />
             {label}
           </label>
         ))}
